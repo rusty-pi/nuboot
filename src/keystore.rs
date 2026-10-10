@@ -1,12 +1,15 @@
-//! The boot key: a secret the VPU derives from the device private key and
-//! what was booted, and hands to the ARM once.
+//! The boot measurement and the boot key: a secret the VPU derives from the
+//! device private key and what was booted, and hands to the ARM once.
 //!
-//! The UEFI firmware measures every image it loads and extends the boot
-//! measurement ([`extend`]): `SHA-256(measurement || digest)`, from zero.
-//! The OS (or whatever runs last) asks for the boot key ([`take`]), which is
-//! `HMAC-SHA256(private key, LABEL || measurement)` over OTP rows 56-63. A
-//! different payload, or the same one booted through a different chain,
-//! measures differently and gets a different key.
+//! The VPU keeps a bank of [`PCRS`] SHA-256 registers, as a TPM does. UEFI
+//! extends them as it boots (`EFI_TCG2_PROTOCOL`, which shim, GRUB and the
+//! Linux EFI stub measure into): `PCR = SHA-256(PCR || digest)`, from zero.
+//! The OS (or whatever runs last) asks for the boot key ([`take`]) with a
+//! mask of the registers it wants it bound to. The key is
+//! `HMAC-SHA256(private key, LABEL || mask || the selected registers)` over
+//! OTP rows 56-63. An empty mask binds it to nothing: one stable key per
+//! board. Binding to PCR 7 (Secure Boot policy and the certificates that
+//! verified each stage) or PCR 4 (the images) makes it change when those do.
 //!
 //! The private key is read when the key is asked for and never leaves this
 //! module: the ARM cannot reach the OTP block, and this firmware answers no
@@ -14,11 +17,11 @@
 //! overwritten ([`scrub`]) before it returns, since anything left in SDRAM or
 //! the L2 is readable from an ARM that has raw memory access.
 //!
-//! Measurements close at [`lock`] (UEFI calls it as it exits boot services)
+//! The registers close at [`lock`] (UEFI calls it as it exits boot services)
 //! and once the key has been taken, and the key goes out once.
 //!
 //! None of this holds against a payload that can write the VPU's memory: it
-//! can change the measurement, or the code that checks it.
+//! can change the registers, or the code that checks them.
 
 use core::ptr::{read_volatile, write_volatile};
 
@@ -27,31 +30,37 @@ use crate::{cache, critical, otp, sha256};
 const FIRST_ROW: u32 = 56;
 const ROWS: usize = 8;
 const LABEL: &[u8] = b"pi4-server-firmware boot key v1";
+pub const PCRS: usize = 24;
 
-static mut MEASUREMENT: [u8; 32] = [0; 32];
+static mut PCR: [[u8; 32]; PCRS] = [[0; 32]; PCRS];
 static mut OPEN: bool = true;
 static mut COUNT: u32 = 0;
 static mut TAKEN: bool = false;
 
 pub enum Refused {
     Closed,
+    NoSuchRegister,
 }
 
-/// Fold `digest` into the boot measurement. How many images that makes.
-pub fn extend(digest: &[u8; 32]) -> Result<u32, Refused> {
+/// Fold `digest` into register `pcr`. How many extends that makes.
+pub fn extend(pcr: usize, digest: &[u8; 32]) -> Result<u32, Refused> {
     if !unsafe { read_volatile(&raw const OPEN) } {
         return Err(Refused::Closed);
     }
+    if pcr >= PCRS {
+        return Err(Refused::NoSuchRegister);
+    }
+    let register = unsafe { &mut (*(&raw mut PCR))[pcr] };
     let mut data = [0u8; 64];
-    data[..32].copy_from_slice(unsafe { &*(&raw const MEASUREMENT) });
+    data[..32].copy_from_slice(register);
     data[32..].copy_from_slice(digest);
-    unsafe { *(&raw mut MEASUREMENT) = sha256::digest(&data) };
+    *register = sha256::digest(&data);
     let count = unsafe { read_volatile(&raw const COUNT) } + 1;
     unsafe { write_volatile(&raw mut COUNT, count) };
     Ok(count)
 }
 
-/// Close the measurement.
+/// Close the registers.
 pub fn lock() {
     unsafe { write_volatile(&raw mut OPEN, false) };
 }
@@ -60,25 +69,22 @@ pub fn count() -> u32 {
     unsafe { read_volatile(&raw const COUNT) }
 }
 
-pub fn measurement() -> [u8; 32] {
-    unsafe { *(&raw const MEASUREMENT) }
-}
-
-/// The boot key, once, if the board's private key is fused.
-pub fn take() -> Option<[u8; 32]> {
-    if unsafe { read_volatile(&raw const TAKEN) } {
+/// The boot key bound to the registers `mask` selects, once, if the board's
+/// private key is fused. An empty mask binds it to nothing.
+pub fn take(mask: u32) -> Option<[u8; 32]> {
+    if unsafe { read_volatile(&raw const TAKEN) } || mask >> PCRS != 0 {
         return None;
     }
     lock();
     unsafe { write_volatile(&raw mut TAKEN, true) };
     let _section = critical::enter();
-    let key = derive();
+    let key = derive(mask);
     scrub();
     key
 }
 
 #[inline(never)]
-fn derive() -> Option<[u8; 32]> {
+fn derive(mask: u32) -> Option<[u8; 32]> {
     let mut private = [0u8; ROWS * 4];
     let mut fused = 0;
     for (i, chunk) in private.chunks_exact_mut(4).enumerate() {
@@ -89,10 +95,17 @@ fn derive() -> Option<[u8; 32]> {
     if fused == 0 {
         return None;
     }
-    let mut message = [0u8; 64];
+    let mut message = [0u8; LABEL.len() + 4 + 32 * PCRS];
     message[..LABEL.len()].copy_from_slice(LABEL);
-    message[LABEL.len()..LABEL.len() + 32].copy_from_slice(&measurement());
-    let key = sha256::hmac(&private, &message[..LABEL.len() + 32]);
+    message[LABEL.len()..LABEL.len() + 4].copy_from_slice(&mask.to_le_bytes());
+    let mut len = LABEL.len() + 4;
+    for (i, register) in unsafe { &*(&raw const PCR) }.iter().enumerate() {
+        if mask >> i & 1 != 0 {
+            message[len..len + 32].copy_from_slice(register);
+            len += 32;
+        }
+    }
+    let key = sha256::hmac(&private, &message[..len]);
     zero(&mut private);
     Some(key)
 }

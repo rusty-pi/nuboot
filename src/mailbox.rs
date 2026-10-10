@@ -34,11 +34,13 @@ const MAX_BUFFER: u32 = 0x1_0000;
 /// with it a VL805 that keeps no firmware of its own.
 const TAG_NOTIFY_XHCI_RESET: u32 = 0x0003_0058;
 
-/// The boot key, once: 32 bytes, then not answered again ([`keystore`]).
+/// The boot key, once: the mask of the PCRs it is bound to in, 32 bytes out,
+/// then not answered again ([`keystore`]).
 /// Tags of this firmware's own, in the range the stock firmware keeps for its
 /// crypto service.
 const TAG_GET_BOOT_KEY: u32 = 0x0003_00a0;
-/// Fold 32 bytes into the boot measurement, until it is locked.
+/// Extend a PCR with 32 bytes (the PCR's number, then the digest), until the
+/// measurement is locked.
 const TAG_EXTEND_BOOT_MEASUREMENT: u32 = 0x0003_00a1;
 /// Close the boot measurement.
 const TAG_LOCK_BOOT_MEASUREMENT: u32 = 0x0003_00a2;
@@ -101,34 +103,39 @@ fn answer(bus: u32) {
                 }
                 set(i + 2, RESPONSE | 4);
             }
-            TAG_GET_BOOT_KEY if room >= 32 => match keystore::take() {
-                Some(mut key) => {
-                    for (n, bytes) in key.chunks_exact(4).enumerate() {
-                        set(value + n as u32, u32::from_le_bytes(bytes.try_into().unwrap()));
-                    }
-                    keystore::zero(&mut key);
-                    info!("keystore", "boot key handed over"; images = keystore::count());
-                    set(i + 2, RESPONSE | 32);
-                }
-                None => warn!("keystore", "no boot key to hand over"),
-            },
-            TAG_EXTEND_BOOT_MEASUREMENT if room >= 32 => {
-                let mut digest = [0u8; 32];
-                for (n, bytes) in digest.chunks_exact_mut(4).enumerate() {
-                    bytes.copy_from_slice(&word(value + n as u32).to_le_bytes());
-                }
-                match keystore::extend(&digest) {
-                    Ok(images) => {
-                        info!("keystore", "boot measurement extended"; images = images,
-                            digest = format_args!("{:02x}{:02x}{:02x}{:02x}", digest[0], digest[1], digest[2], digest[3]));
+            TAG_GET_BOOT_KEY if room >= 32 => {
+                let mask = word(value);
+                match keystore::take(mask) {
+                    Some(mut key) => {
+                        for (n, bytes) in key.chunks_exact(4).enumerate() {
+                            set(value + n as u32, u32::from_le_bytes(bytes.try_into().unwrap()));
+                        }
+                        keystore::zero(&mut key);
+                        info!("keystore", "boot key handed over"; mask = format_args!("{mask:#x}"), extends = keystore::count());
                         set(i + 2, RESPONSE | 32);
                     }
-                    Err(keystore::Refused::Closed) => warn!("keystore", "boot measurement is closed"),
+                    None => warn!("keystore", "no boot key to hand over"; mask = format_args!("{mask:#x}")),
+                }
+            }
+            TAG_EXTEND_BOOT_MEASUREMENT if room >= 36 => {
+                let pcr = word(value);
+                let mut digest = [0u8; 32];
+                for (n, bytes) in digest.chunks_exact_mut(4).enumerate() {
+                    bytes.copy_from_slice(&word(value + 1 + n as u32).to_le_bytes());
+                }
+                match keystore::extend(pcr as usize, &digest) {
+                    Ok(extends) => {
+                        info!("keystore", "boot measurement extended"; pcr = pcr, extends = extends,
+                            digest = format_args!("{:02x}{:02x}{:02x}{:02x}", digest[0], digest[1], digest[2], digest[3]));
+                        set(i + 2, RESPONSE | 36);
+                    }
+                    Err(keystore::Refused::Closed) => warn!("keystore", "boot measurement is closed"; pcr = pcr),
+                    Err(keystore::Refused::NoSuchRegister) => warn!("keystore", "no such PCR"; pcr = pcr),
                 }
             }
             TAG_LOCK_BOOT_MEASUREMENT => {
                 keystore::lock();
-                info!("keystore", "boot measurement closed"; images = keystore::count());
+                info!("keystore", "boot measurement closed"; extends = keystore::count());
                 set(i + 2, RESPONSE);
             }
             _ => debug!("mailbox", "property tag not answered"; tag = format_args!("{tag:#010x}")),

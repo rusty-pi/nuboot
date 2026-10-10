@@ -38,6 +38,7 @@ mod secure;
 #[allow(dead_code)]
 mod sha256;
 mod stc;
+mod tcg2;
 mod sync;
 mod tables;
 mod usbdisk;
@@ -166,12 +167,14 @@ extern "C" fn pi4_main(tree_addr: u64) -> ! {
     tables::init(console, con_in, con_out);
     tables::install_table(tables::DTB_GUID, tree_addr as *mut c_void);
     rng::install();
+    tcg2::init();
     secure::init();
     let parent = firmware_handle();
 
     sd::init();
     xhci::init();
 
+    tcg2::separators();
     boot(parent);
     error!("boot", "nothing to boot, the boot watchdog will reset the board"; looked_for = REMOVABLE_PATH);
     util::halt()

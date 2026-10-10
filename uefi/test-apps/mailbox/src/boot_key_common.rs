@@ -14,6 +14,36 @@ const RESPONSE: u32 = 0x8000_0000;
 pub const TAG_GET_BOOT_KEY: u32 = 0x0003_00a0;
 pub const TAG_EXTEND_BOOT_MEASUREMENT: u32 = 0x0003_00a1;
 
+/// Ask for the boot key bound to `mask`, then try to extend a PCR and to ask
+/// again: the key comes once and nothing is measured after it.
+pub fn boot_key_test(system_table: *mut SystemTable, mask: u32) -> r_efi::efi::Status {
+    use r_efi::efi::Status;
+    say(system_table, "boot key test: asking\r\n");
+    let Some(buf) = page_below_1gib(system_table) else {
+        say(system_table, "boot key test: no page below 1 GiB\r\n");
+        return Status::OUT_OF_RESOURCES;
+    };
+    match call(buf, TAG_GET_BOOT_KEY, &[mask]) {
+        Some(key) => {
+            say(system_table, "boot key test: first answer ");
+            hex(system_table, &key);
+            say(system_table, "\r\n");
+        }
+        None => say(system_table, "boot key test: first request not answered\r\n"),
+    }
+    let mut extend = [0x5a5a_5a5a; 9];
+    extend[0] = 7;
+    match call(buf, TAG_EXTEND_BOOT_MEASUREMENT, &extend) {
+        Some(_) => say(system_table, "boot key test: extend after the key answered\r\n"),
+        None => say(system_table, "boot key test: extend after the key not answered\r\n"),
+    }
+    match call(buf, TAG_GET_BOOT_KEY, &[mask]) {
+        Some(_) => say(system_table, "boot key test: second request answered\r\n"),
+        None => say(system_table, "boot key test: second request not answered\r\n"),
+    }
+    Status::SUCCESS
+}
+
 pub fn say(system_table: *mut SystemTable, text: &str) {
     let mut buf = [0 as Char16; 128];
     for (i, b) in text.bytes().take(buf.len() - 1).enumerate() {
@@ -32,27 +62,32 @@ fn flush(at: usize, len: usize) {
     unsafe { core::arch::asm!("dsb sy") };
 }
 
-/// Post one tag whose value is `words` (8 words of room) and give the words
-/// it answered with, or `None` if the tag was not answered.
-pub fn call(buf: usize, tag: u32, words: &[u32; 8]) -> Option<[u32; 8]> {
-    let message_words = [14 * 4, 0, tag, 32, 0, words[0], words[1], words[2], words[3], words[4], words[5], words[6], words[7], 0];
-    for (i, w) in message_words.iter().enumerate() {
+/// Post one tag whose value is `words` (at least 8 words of room) and give
+/// the words it answered with, or `None` if the tag was not answered.
+pub fn call(buf: usize, tag: u32, words: &[u32]) -> Option<[u32; 8]> {
+    let room = words.len().max(8);
+    let mut message = [0u32; 16];
+    message[0] = (5 + room as u32 + 1) * 4;
+    message[2] = tag;
+    message[3] = room as u32 * 4;
+    message[5..5 + words.len()].copy_from_slice(words);
+    for (i, w) in message[..6 + room].iter().enumerate() {
         unsafe { write_volatile((buf as *mut u32).add(i), *w) };
     }
     flush(buf, 64);
-    let message = (0xc000_0000 | buf as u32) | CHANNEL_PROPERTY;
+    let reply = (0xc000_0000 | buf as u32) | CHANNEL_PROPERTY;
     unsafe {
         while read_volatile(MAIL1_STATUS as *const u32) & FULL != 0 {}
-        write_volatile(MAIL1_WRITE as *mut u32, message);
+        write_volatile(MAIL1_WRITE as *mut u32, reply);
         loop {
             while read_volatile(MAIL0_STATUS as *const u32) & EMPTY != 0 {}
-            if read_volatile(MAIL0_READ as *const u32) == message {
+            if read_volatile(MAIL0_READ as *const u32) == reply {
                 break;
             }
         }
     }
     flush(buf, 64);
-    if unsafe { read_volatile((buf as *const u32).add(4)) } != RESPONSE | 32 {
+    if unsafe { read_volatile((buf as *const u32).add(4)) } & RESPONSE == 0 {
         return None;
     }
     let mut out = [0u32; 8];

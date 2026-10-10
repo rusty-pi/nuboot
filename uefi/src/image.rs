@@ -304,7 +304,7 @@ pub fn load(parent: efi::Handle, path: *const u8, source: Option<&[u8]>) -> Resu
     };
 
     match crate::secure::check(file, &Text(&path_bytes)) {
-        Ok(hash) => crate::mailbox::extend(&hash),
+        Ok((hash, authority)) => crate::tcg2::measure_image(&hash, &authority, &path_bytes, file.len()),
         Err(why) => {
             warn!("secboot", "image refused"; reason = why, path = Text(&path_bytes));
             return Err(efi::Status::SECURITY_VIOLATION);

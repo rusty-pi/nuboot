@@ -80,8 +80,13 @@ pub fn init() {
     var::fixed("SetupMode", var::GLOBAL, state, alloc::vec![0]);
     var::fixed("AuditMode", var::GLOBAL, state, alloc::vec![0]);
     var::fixed("DeployedMode", var::GLOBAL, state, alloc::vec![1]);
-    var::fixed("db", var::SECURITY_DB, NV | BS | RT | TIME_AUTH, db);
-    var::fixed("dbx", var::SECURITY_DB, NV | BS | RT | TIME_AUTH, dbx);
+    var::fixed("db", var::SECURITY_DB, NV | BS | RT | TIME_AUTH, db.clone());
+    var::fixed("dbx", var::SECURITY_DB, NV | BS | RT | TIME_AUTH, dbx.clone());
+    crate::tcg2::measure_variable("SecureBoot", &var::GLOBAL, &[1]);
+    crate::tcg2::measure_variable("PK", &var::GLOBAL, &[]);
+    crate::tcg2::measure_variable("KEK", &var::GLOBAL, &[]);
+    crate::tcg2::measure_variable("db", &var::SECURITY_DB, &db);
+    crate::tcg2::measure_variable("dbx", &var::SECURITY_DB, &dbx);
     info!("secboot", "Secure Boot enforced"; db = TRUSTED.get().len(), dbx = hashes.len());
 }
 
@@ -139,8 +144,22 @@ fn in_dbx(hash: &[u8]) -> bool {
     DBX.chunks_exact(32).any(|h| h == hash)
 }
 
-/// Whether `image` may run: its Authenticode hash if so, the reason if not.
-pub fn check(image: &[u8], path: &dyn Display) -> Result<[u8; 32], &'static str> {
+/// An image's Authenticode hash, whether or not it is signed.
+pub fn authenticode_hash(image: &[u8]) -> Option<[u8; 32]> {
+    authenticode(image).map(|(hash, _)| hash)
+}
+
+/// The `EFI_SIGNATURE_DATA` `db` holds for a certificate: its owner, then the
+/// certificate.
+fn signature_entry(der: &[u8]) -> Vec<u8> {
+    let mut out = MICROSOFT.as_bytes().to_vec();
+    out.extend_from_slice(der);
+    out
+}
+
+/// Whether `image` may run: its Authenticode hash and the `db` entry that
+/// verified it if so, the reason if not.
+pub fn check(image: &[u8], path: &dyn Display) -> Result<([u8; 32], Vec<u8>), &'static str> {
     let (hash, mut table) = authenticode(image).ok_or("not a PE32+ image")?;
     if in_dbx(&hash) {
         return Err("image hash is in dbx");
@@ -156,7 +175,7 @@ pub fn check(image: &[u8], path: &dyn Display) -> Result<[u8; 32], &'static str>
                 Ok(signed) => match pkcs7::anchor(&signed, TRUSTED.get()) {
                     Some(anchor) => {
                         info!("secboot", "image verified"; signer = signed.chain[0].name(), db = anchor.name(), path = path);
-                        return Ok(hash);
+                        return Ok((hash, signature_entry(anchor.whole)));
                     }
                     None => why = "not signed by a key in db",
                 },

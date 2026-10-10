@@ -118,6 +118,8 @@ jobs:
             out/watchdog-exit.efi
             out/xhci-reset.efi
             out/boot-key.efi
+            out/boot-key-unbound.efi
+            out/boot-key-unbound-b.efi
             out/late-extend.efi
             out/shimaa64.efi
             out/grubaa64.efi

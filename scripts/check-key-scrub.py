@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Boot the boot-key scenario in pimu and look through the VPU's memory, as the
+"""Boot the boot-key scenarios in pimu and look through the VPU's memory, as the
 VPU sees it through the cached and the uncached alias, for what the key left
 behind: the fused rows, the pads they make, the hash states on the way and the
 key itself. Anything left in SDRAM or the L2 is readable from the ARM.
@@ -11,6 +11,7 @@ says how much memory it read.
 """
 
 import hashlib
+import hmac
 import os
 import re
 import struct
@@ -20,6 +21,7 @@ import sys
 ROWS = [0xC0DE2001 + 0x1111 * i for i in range(8)]
 LABEL = b"pi4-server-firmware boot key v1"
 IMAGE = 0x3EC00000
+MASK_IMAGES = 0x10
 SHA_ENV = {**os.environ}
 SPAN = 0x200000
 
@@ -104,8 +106,10 @@ def authenticode(path):
 def secrets(image):
     """The key, what it derives and every value on the way."""
     key = b"".join(struct.pack("<I", r) for r in ROWS)
-    measurement = hashlib.sha256(bytes(32) + authenticode(image)).digest()
-    message = LABEL + measurement
+    separator = hashlib.sha256(bytes(4)).digest()
+    pcr4 = hashlib.sha256(bytes(32) + separator).digest()
+    pcr4 = hashlib.sha256(pcr4 + authenticode(image)).digest()
+    message = LABEL + struct.pack("<I", MASK_IMAGES) + pcr4
     pad = key + bytes(32)
     ipad = bytes(b ^ 0x36 for b in pad)
     opad = bytes(b ^ 0x5C for b in pad)
@@ -125,22 +129,30 @@ def secrets(image):
     return values, derived_be.hex()
 
 
-def dump():
-    """The image's span through both aliases, from one boot."""
-    args = ["pimu", "boot", "--scenario", "scenarios/boot-key.yaml"]
-    for alias in (0, 0xC0000000):
-        args += ["--dump", f"{alias | IMAGE:#x}:{SPAN}"]
+def run(scenario, spans=()):
+    """Boot a scenario; the console, and the memory at each `spans` entry."""
+    args = ["pimu", "boot", "--scenario", f"scenarios/{scenario}.yaml"]
+    for at, length in spans:
+        args += ["--dump", f"{at:#x}:{length}"]
     text = subprocess.run(args, capture_output=True, text=True, check=True, env=SHA_ENV).stdout
-    spans, current = [], None
+    dumps, current = [], None
     for line in text.splitlines():
         if line.startswith("dump "):
             current = bytearray()
-            spans.append(current)
+            dumps.append(current)
             continue
         m = re.match(r"\s+0x[0-9a-f]+ ([0-9a-f]+)$", line)
         if m and current is not None:
             current += bytes.fromhex(m.group(1))
-    return [bytes(s) for s in spans], text
+    return [bytes(d) for d in dumps], text
+
+
+def key_of(console, scenario):
+    answer = re.search(r"boot key test: first answer ([0-9a-f]{64})", console)
+    if not answer:
+        print(f"{scenario}: the application did not get a key")
+        sys.exit(1)
+    return answer.group(1)
 
 
 def main():
@@ -150,15 +162,17 @@ def main():
         for w in ws:
             if w >= 0x10000 and 4 <= bin(w).count("1") <= 28:
                 needles.setdefault(struct.pack("<I", w), name)
+
+    spans, console = run("boot-key", [(IMAGE, SPAN), (0xC0000000 | IMAGE, SPAN)])
+    key = key_of(console, "boot-key")
+    if key != expected:
+        print(f"boot-key: the key is not the one the rows and PCR 4 make: {key} != {expected}")
+        sys.exit(1)
+
     # One word is a 1 in 2**32 coincidence per word of memory, so two words
     # side by side name a leak.
     found = []
     read = 0
-    spans, console = dump()
-    answer = re.search(r"boot key test: first answer ([0-9a-f]{64})", console)
-    if not answer or answer.group(1) != expected:
-        print(f"the application did not get the key computed from the rows: {answer and answer.group(1)} != {expected}")
-        sys.exit(1)
     for label, data in zip(("cached alias", "uncached alias"), spans):
         read += len(data)
         for off in range(0, len(data) - 8, 4):
@@ -169,7 +183,19 @@ def main():
     if found:
         print("\n".join(found))
         sys.exit(1)
-    print(f"the key is the one the rows make, and none of its material is in {read} bytes of the VPU's memory")
+
+    key_rows = b"".join(struct.pack("<I", r) for r in ROWS)
+    expected_unbound = hmac.new(key_rows, LABEL + struct.pack("<I", 0), hashlib.sha256).hexdigest()
+    unbound_a = key_of(run("boot-key-unbound")[1], "boot-key-unbound")
+    unbound_b = key_of(run("boot-key-unbound-b")[1], "boot-key-unbound-b")
+    if unbound_a != expected_unbound or unbound_b != expected_unbound:
+        print(f"the unbound key is not the one the rows make: {unbound_a}, {unbound_b} != {expected_unbound}")
+        sys.exit(1)
+    if unbound_a == key:
+        print("the unbound key is the PCR 4 key")
+        sys.exit(1)
+    print(f"the PCR 4 key is the one the rows make, none of its material is in {read} bytes of the VPU's memory,")
+    print("and two different images get the same unbound key, which the rows alone make")
 
 
 if __name__ == "__main__":

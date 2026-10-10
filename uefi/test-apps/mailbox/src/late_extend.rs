@@ -31,7 +31,9 @@ pub extern "efiapi" fn efi_main(image: Handle, system_table: *mut SystemTable) -
             continue;
         }
         if !unsafe { ((*bs).exit_boot_services)(image, key) }.is_error() {
-            call(buf, TAG_EXTEND_BOOT_MEASUREMENT, &[0x5a5a_5a5a; 8]);
+            let mut extend = [0x5a5a_5a5a; 9];
+            extend[0] = 7;
+            call(buf, TAG_EXTEND_BOOT_MEASUREMENT, &extend);
             loop {
                 core::hint::spin_loop();
             }

@@ -12,6 +12,6 @@ boot:
 
 milestones:
   - why: "UEFI closed the measurement as the application exited boot services."
-    line: "boot measurement closed  images=1"
+    line: "boot measurement closed"
   - why: "start4.elf refused a measurement after that."
     line: "boot measurement is closed"

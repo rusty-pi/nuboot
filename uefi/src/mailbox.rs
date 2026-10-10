@@ -6,7 +6,7 @@ use core::cell::UnsafeCell;
 use core::ptr::{read_volatile, write_volatile};
 
 use crate::util::{self, cache_flush};
-use crate::{info, warn};
+use crate::warn;
 
 const MAIL0_READ: u64 = 0xfe00_b880;
 const MAIL0_STATUS: u64 = 0xfe00_b898;
@@ -65,16 +65,15 @@ fn call(tag: u32, value: &[u32]) -> bool {
     status & RESPONSE != 0
 }
 
-/// Fold an image's Authenticode hash into the boot measurement.
-pub fn extend(digest: &[u8; 32]) {
-    let mut words = [0u32; 8];
-    for (w, bytes) in words.iter_mut().zip(digest.chunks_exact(4)) {
+/// Extend a PCR on the VPU.
+pub fn extend(pcr: u32, digest: &[u8; 32]) {
+    let mut words = [0u32; 9];
+    words[0] = pcr;
+    for (w, bytes) in words[1..].iter_mut().zip(digest.chunks_exact(4)) {
         *w = u32::from_le_bytes(bytes.try_into().unwrap());
     }
-    if call(TAG_EXTEND_BOOT_MEASUREMENT, &words) {
-        info!("measure", "image measured"; digest = crate::util::Hex(u32::from_be_bytes(digest[..4].try_into().unwrap())));
-    } else {
-        warn!("measure", "the VPU did not take the image's measurement");
+    if !call(TAG_EXTEND_BOOT_MEASUREMENT, &words) {
+        warn!("measure", "the VPU did not take a measurement"; pcr = pcr);
     }
 }
 

@@ -15,6 +15,14 @@ name = "boot-key"
 path = "src/boot_key.rs"
 
 [[bin]]
+name = "boot-key-unbound"
+path = "src/boot_key_unbound.rs"
+
+[[bin]]
+name = "boot-key-unbound-b"
+path = "src/boot_key_unbound_b.rs"
+
+[[bin]]
 name = "late-extend"
 path = "src/late_extend.rs"
 

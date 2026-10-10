@@ -46,11 +46,12 @@ From the boot ROM to the threads that run for as long as the board is up:
    tree ([docs/uefi.md](docs/uefi.md)), once it has brought up the PCIe link
    and given the VL805 USB controller its firmware. UEFI finds the SD card and
    any USB drive and boots `\EFI\BOOT\BOOTAA64.EFI` from them.
-   UEFI measures each image it loads into the VPU, which gives the payload
-   a boot key bound to what was booted ([docs/keystore.md](docs/keystore.md)).
+   UEFI measures what it verifies into PCRs on the VPU and offers
+   `EFI_TCG2_PROTOCOL`, which gives the payload a boot key bound to what was
+   booted ([docs/keystore.md](docs/keystore.md)).
 6. Starts the scheduler: a service thread that answers the property mailbox
    (Linux's `NOTIFY_XHCI_RESET`, which has the VL805's firmware reloaded, and
-   the boot measurement and key), and a monitor thread that reports each
+   the PCRs and the boot key), and a monitor thread that reports each
    stack's high-water mark as it grows.
 
 ```text
@@ -84,7 +85,7 @@ from the SD card.
 | Secure Boot: Ubuntu's shim and GRUB run, an image not signed by a key in `db` is refused | ✅ | ➖ | ➖ | ➖ |
 | USB: VL805 firmware from the EEPROM, an EFI application off a USB drive | ✅ | ➖ | ➖ | ➖ |
 | Property mailbox: `NOTIFY_XHCI_RESET` reloads the VL805's firmware | ✅ | ➖ | ➖ | ➖ |
-| Boot measurement of every loaded image, closed at `ExitBootServices`; a boot key bound to it from the fused private key, handed over once, nothing of it left in the VPU's memory | ✅ | ➖ | ➖ | ➖ |
+| `EFI_TCG2_PROTOCOL` over PCRs on the VPU, shim measuring into it, closed at `ExitBootServices`; a boot key bound to a PCR mask from the fused private key, handed over once, nothing of it left in the VPU's memory | ✅ | ➖ | ➖ | ➖ |
 
 ## Building
 
@@ -120,6 +121,8 @@ pimu boot --scenario scenarios/rev14-hello.yaml
 pimu boot --scenario scenarios/usb-hello.yaml
 pimu boot --scenario scenarios/xhci-reset.yaml
 pimu boot --scenario scenarios/boot-key.yaml
+pimu boot --scenario scenarios/boot-key-unbound.yaml
+pimu boot --scenario scenarios/boot-key-unbound-b.yaml
 pimu boot --scenario scenarios/late-extend.yaml
 pimu boot --scenario scenarios/watchdog-hang.yaml
 pimu boot --scenario scenarios/watchdog-exit.yaml
@@ -141,7 +144,7 @@ pimu boot --eeprom out/pieeprom.bin --sd boot/
 | `src/sched.rs`, `src/critical.rs`, `src/sync.rs`, `src/stack.rs` | Threads, critical sections, semaphores, queues and locks, stack guards |
 | `src/idle.rs`, `src/timer.rs`, `src/stc.rs` | Interrupts, sleeping, the system timer |
 | `src/watchdog.rs`, `src/handover.rs` | The boot watchdog, and the state the bootloader hands over |
-| `src/keystore.rs` | The boot measurement and the boot key derived from the device private key |
+| `src/keystore.rs` | The PCRs and the boot key derived from the device private key |
 | `src/console.rs`, `src/cm.rs`, `src/otp.rs`, `src/board.rs` | The PL011, clock generators, OTP and the board's identity |
 | `src/sdram.rs`, `src/spi_flash.rs`, `src/eeprom.rs`, `src/elf.rs`, `src/cache.rs` | SDRAM bring-up, the EEPROM and its sections, loading and entering `start4.elf` |
 | `src/i2c.rs`, `src/pmic.rs` | The GPIO expander and the PMICs |

@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "boot-key-unbound-b"
+description: "A second, different application signed by the same key asks for the unbound key: scripts/check-key-scrub.py checks that it gets the same one. The key here is a test key, not a board's."
+
+boot:
+  eeprom: "../out/pieeprom-test.bin"
+  otp_row:
+    - "56=0xc0de2001"
+    - "57=0xc0de3112"
+    - "58=0xc0de4223"
+    - "59=0xc0de5334"
+    - "60=0xc0de6445"
+    - "61=0xc0de7556"
+    - "62=0xc0de8667"
+    - "63=0xc0de9778"
+  sd:
+    files:
+      EFI/BOOT/BOOTAA64.EFI: "../out/boot-key-unbound-b.efi"
+  until: "boot key test: second request not answered"
+  wall_secs: 900
+
+milestones:
+  - why: "UEFI measured the Secure Boot policy and the application into the VPU's PCRs."
+    line: "boot measurement extended  pcr=4"
+  - why: "The application got the unbound key."
+    line: "boot key handed over  mask=0x0"
+  - why: "Nothing was measured after the key, and the key went once."
+    line: "boot key test: extend after the key not answered"
+  - why: "The second request was refused."
+    line: "boot key test: second request not answered"
