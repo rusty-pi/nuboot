@@ -23,11 +23,10 @@ rustc ── rustc_codegen_gcc ── libgccjit (GCC 17 + VC4 backend) ── vc
 ## Installing it
 
 Toolchain (binutils, GCC with libgccjit and libgcc, rustc_codegen_gcc), into
-`~/.local/opt/vc4` by default, then the links `.cargo/config.toml` uses:
+`~/.local/opt/vc4` by default:
 
 ```bash
 scripts/build-toolchain.sh
-scripts/setup-toolchain.sh
 ```
 
 On Ubuntu 26.04, binutils and GCC can come prebuilt instead: the `latest`
@@ -39,5 +38,10 @@ gh release download latest -R rusty-pi/binutils-vc4 -p vc4-elf-binutils.deb
 gh release download latest -R rusty-pi/gcc-vc4 -p vc4-elf-gcc.deb
 sudo apt-get install ./vc4-elf-binutils.deb ./vc4-elf-gcc.deb
 VC4_PREFIX=/opt/vc4 scripts/build-codegen.sh
-VC4_PREFIX=/opt/vc4 scripts/setup-toolchain.sh
 ```
+
+The first `cargo build` links `toolchain/` to GCC in `~/.local/opt/vc4` or
+`/opt/vc4` and to rustc_codegen_gcc in `~/src/rustc_codegen_gcc`
+(`scripts/setup-toolchain.sh`). With either somewhere else, run
+`scripts/setup-toolchain.sh` once with `VC4_PREFIX` and `CG_GCC_DIR` set to
+where they are.

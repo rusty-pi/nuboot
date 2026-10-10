@@ -1,13 +1,9 @@
 #!/bin/sh
 # Build out/pieeprom.bin: the first stage, the SDRAM training firmware and
-# out/start4.elf, which carries what it hands the ARM: the UEFI image
-# (scripts/build-uefi.sh) and the board's device tree.
+# out/start4.elf. `cargo build` (build.rs) builds what start4.elf hands the
+# ARM: the UEFI image (scripts/build-uefi.sh) and the board's device tree.
 set -eu
 
-# Raspberry Pi's device tree for the Pi 4B, from the firmware release the
-# scenarios boot.
-DTB_URL="${DTB_URL:-https://raw.githubusercontent.com/raspberrypi/firmware/1.20260915/boot/bcm2711-rpi-4-b.dtb}"
-DTB_SHA256="${DTB_SHA256:-75761b73c284e26623e4d1624bff13e67bce2ae620880efd81d6571a3739fcfb}"
 # The stock EEPROM image the SDRAM training firmware is taken from.
 STOCK_URL="${STOCK_URL:-https://raw.githubusercontent.com/raspberrypi/rpi-eeprom/v2026.09.23-2711-0138c0/firmware-2711/latest/pieeprom-2026-08-04.bin}"
 STOCK_SHA256="${STOCK_SHA256:-4bf80784983f7bd1013f880599cb8c37327fb2d84f93a08699e430d552cae693}"
@@ -24,8 +20,6 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$root"
 
 mkdir -p out
-scripts/build-uefi.sh
-fetch out/bcm2711-rpi-4-b.dtb "$DTB_URL" "$DTB_SHA256"
 fetch out/stock-pieeprom.bin "$STOCK_URL" "$STOCK_SHA256"
 
 cargo build --release "$@"

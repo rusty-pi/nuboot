@@ -83,9 +83,10 @@ from the SD card.
 
 ## Building
 
-With the VC4 toolchain in place ([docs/toolchain.md](docs/toolchain.md)), and
+With the VC4 toolchain installed ([docs/toolchain.md](docs/toolchain.md)), and
 rustup, `xz` and `curl` for the UEFI firmware and device tree it carries
-([docs/uefi.md](docs/uefi.md)):
+([docs/uefi.md](docs/uefi.md)), `cargo build` builds the first stage and
+`start4.elf`, the UEFI firmware included.
 
 ```bash
 scripts/build.sh

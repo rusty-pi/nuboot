@@ -26,9 +26,12 @@ color = []
 
 [dependencies]
 
+# The first stage has to fit the L2 beside the SDRAM training firmware, which
+# it does not at a lower level.
 [profile.dev]
 panic = "abort"
-opt-level = 1
+opt-level = 2
+codegen-units = 1
 
 [profile.release]
 panic = "abort"

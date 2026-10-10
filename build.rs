@@ -13,17 +13,76 @@ fn main() {
     arm_files(&dir);
 }
 
-/// What the firmware hands the ARM, which scripts/build.sh puts in `out/`
-/// first: the image the cores start in (scripts/build-uefi.sh) and the
-/// board's device tree.
+/// What the firmware hands the ARM: the image the cores start in, which
+/// scripts/build-uefi.sh builds into `out/`, and the board's device tree.
 fn arm_files(dir: &str) {
-    for (var, file) in [("ARM_IMAGE", "pi4-uefi.bin"), ("ARM_TREE", "bcm2711-rpi-4-b.dtb")] {
-        let path = format!("{dir}/out/{file}");
-        println!("cargo:rerun-if-changed={path}");
-        if !std::path::Path::new(&path).exists() {
-            panic!("{path} is missing: build with scripts/build.sh");
+    let out = format!("{dir}/out");
+    std::fs::create_dir_all(&out).unwrap();
+    for input in [
+        "uefi/src", "uefi/stub/src", "uefi/Cargo.toml", "uefi/Cargo.lock", "uefi/build.rs",
+        "uefi/link.ld", "uefi/rust-toolchain.toml", "uefi/.cargo/config.toml", "uefi/stub/Cargo.toml",
+        "uefi/stub/Cargo.lock", "uefi/stub/build.rs", "uefi/stub/link.ld", "patches/crabefi",
+        "scripts/build-uefi.sh", "scripts/fetch-crabefi.sh",
+    ] {
+        println!("cargo:rerun-if-changed={dir}/{input}");
+    }
+    build_uefi(dir);
+    let tree = format!("{out}/bcm2711-rpi-4-b.dtb");
+    fetch(&tree, DTB_URL, DTB_SHA256);
+    println!("cargo:rustc-env=ARM_IMAGE={out}/pi4-uefi.bin");
+    println!("cargo:rustc-env=ARM_TREE={tree}");
+}
+
+/// Raspberry Pi's device tree for the Pi 4B, from the firmware release the
+/// scenarios boot.
+const DTB_URL: &str = "https://raw.githubusercontent.com/raspberrypi/firmware/1.20260915/boot/bcm2711-rpi-4-b.dtb";
+const DTB_SHA256: &str = "75761b73c284e26623e4d1624bff13e67bce2ae620880efd81d6571a3739fcfb";
+
+/// Run scripts/build-uefi.sh, a cargo build of its own on another nightly
+/// and target: none of what this cargo set for its build script goes with it.
+fn build_uefi(dir: &str) {
+    let mut cmd = Command::new("bash");
+    cmd.arg(format!("{dir}/scripts/build-uefi.sh"));
+    for (key, _) in std::env::vars_os() {
+        let key = key.to_string_lossy().into_owned();
+        let cargo_own = key.starts_with("CARGO_") && key != "CARGO_HOME";
+        if cargo_own
+            || key.starts_with("RUSTC")
+            || key.starts_with("RUSTUP_TOOLCHAIN")
+            || key.starts_with("DEP_")
+            || ["RUSTFLAGS", "RUSTDOCFLAGS", "TARGET", "HOST", "OUT_DIR", "OPT_LEVEL", "PROFILE", "DEBUG", "NUM_JOBS"]
+                .contains(&key.as_str())
+        {
+            cmd.env_remove(&key);
         }
-        println!("cargo:rustc-env={var}={path}");
+    }
+    // Its progress goes to cargo's log, not to the directives cargo reads.
+    cmd.stdout(std::io::stderr());
+    match cmd.status() {
+        Ok(status) if status.success() => {}
+        Ok(status) => panic!("scripts/build-uefi.sh failed ({status}); see docs/uefi.md for what it needs"),
+        Err(e) => panic!("scripts/build-uefi.sh could not be run: {e}"),
+    }
+}
+
+/// Download `url` to `path` unless it is there already with checksum
+/// `sha256`.
+fn fetch(path: &str, url: &str, sha256: &str) {
+    let check = |path: &str| {
+        Command::new("sha256sum")
+            .arg(path)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .is_some_and(|o| String::from_utf8_lossy(&o.stdout).starts_with(sha256))
+    };
+    if check(path) {
+        return;
+    }
+    let status = Command::new("curl").args(["-sSfL", "-o", path, url]).status();
+    if !matches!(status, Ok(s) if s.success()) || !check(path) {
+        let _ = std::fs::remove_file(path);
+        panic!("could not download {url} with SHA-256 {sha256}");
     }
 }
 

@@ -3,7 +3,12 @@
 # rustc_codegen_gcc build, which .cargo/config.toml uses.
 set -eu
 
-VC4_PREFIX="${VC4_PREFIX:-$HOME/.local/opt/vc4}"
+# scripts/build-toolchain.sh installs into ~/.local/opt/vc4, the packages
+# into /opt/vc4.
+if [ -z "${VC4_PREFIX:-}" ]; then
+  VC4_PREFIX="$HOME/.local/opt/vc4"
+  [ -e "$VC4_PREFIX/bin/vc4-elf-gcc" ] || [ ! -e /opt/vc4/bin/vc4-elf-gcc ] || VC4_PREFIX=/opt/vc4
+fi
 CG_GCC_DIR="${CG_GCC_DIR:-$HOME/src/rustc_codegen_gcc}"
 
 root="$(cd "$(dirname "$0")/.." && pwd)"

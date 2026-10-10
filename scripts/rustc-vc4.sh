@@ -25,6 +25,16 @@ case " $* " in
       case "$arg" in metadata=*) arg="metadata=$metadata" ;; esac
       set -- "$@" "$arg"
     done
+    # A fresh checkout has no links yet: make them from the default places
+    # (scripts/setup-toolchain.sh), so a plain `cargo build` works.
+    if [ ! -e "$root/toolchain/librustc_codegen_gcc.so" ] || [ ! -e "$root/toolchain/bin/vc4-elf-gcc" ]; then
+      "$root/scripts/setup-toolchain.sh" >&2 2>/dev/null || true
+      if [ ! -e "$root/toolchain/librustc_codegen_gcc.so" ] || [ ! -e "$root/toolchain/bin/vc4-elf-gcc" ]; then
+        echo "error: no VC4 toolchain: no GCC under ${VC4_PREFIX:-~/.local/opt/vc4 or /opt/vc4}" \
+          "or no rustc_codegen_gcc build in ${CG_GCC_DIR:-~/src/rustc_codegen_gcc}; see docs/toolchain.md" >&2
+        exit 1
+      fi
+    fi
     exec "$rustc" "$@" \
       --remap-path-prefix="$src=/rustc/$commit" \
       -Zcodegen-backend="$root/toolchain/librustc_codegen_gcc.so" \
