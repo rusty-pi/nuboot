@@ -24,6 +24,7 @@ pub mod idle;
 pub mod keystore;
 pub mod log;
 pub mod lz4;
+pub mod measure;
 pub mod lzss;
 pub mod mailbox;
 pub mod mmio;

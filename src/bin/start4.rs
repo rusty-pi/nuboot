@@ -16,7 +16,7 @@ use core::cell::Cell;
 use pi4_server_firmware::board::{Board, Revision};
 use pi4_server_firmware::handover::{self, BootDevice};
 use pi4_server_firmware::{
-    arm, console, error, idle, info, mailbox, sched, stack, stc, timer, usb, warn, watchdog,
+    arm, console, error, idle, info, mailbox, measure, otp, sched, stack, stc, timer, usb, warn, watchdog,
 };
 
 /// What the ARM cores start in: an armstub and the compressed UEFI firmware
@@ -89,7 +89,19 @@ fn firmware_main() -> ! {
     announce();
     let watchdog = take_over_watchdog();
 
-    usb::bring_up(&Board::read());
+    let board = Board::read();
+    measure::platform(
+        COMMIT,
+        ARM_IMAGE,
+        ARM_TREE,
+        board.revision,
+        board.ext_revision,
+        board.serial,
+        (otp::read(otp::MAC_HIGH), otp::read(otp::MAC_LOW)),
+        otp::read(otp::BOOTMODE),
+        if handover::present() { handover::sdram_mib() } else { 0 },
+    );
+    usb::bring_up(&board);
     let started = match arm::start(ARM_IMAGE, ARM_TREE) {
         Ok(started) => {
             info!("arm", "ARM started in UEFI";

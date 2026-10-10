@@ -72,6 +72,30 @@ def pcr_read(response):
     return counter, digests
 
 
+def replay(log):
+    """The PCRs an event log makes, and its events: (pcr, type, digest, data)."""
+    if log[:4] != bytes(4) or log[8:28] != bytes(20) or log[32:48] != b"Spec ID Event03\0":
+        fail("the log does not start with a Spec ID event")
+    (first,) = struct.unpack("<I", log[28:32])
+    at = 32 + first
+    pcrs = [bytes(32)] * 24
+    events = []
+    while at < len(log):
+        pcr, kind, count = struct.unpack("<III", log[at:at + 12])
+        at += 12
+        if count != 1 or struct.unpack("<H", log[at:at + 2])[0] != 0xB:
+            fail(f"event {len(events)}: not one SHA-256 digest")
+        digest = log[at + 2:at + 34]
+        at += 34
+        (size,) = struct.unpack("<I", log[at:at + 4])
+        data = log[at + 4:at + 4 + size]
+        at += 4 + size
+        if kind != 3:
+            pcrs[pcr] = extend(pcrs[pcr], digest)
+        events.append((pcr, kind, digest, data))
+    return pcrs, events
+
+
 def main():
     r = responses()
     for name in ("startup", "pcr-extend-drtm", "pcr-extend-sha1", "pcr-extend-no-session", "unknown-command", "short-command"):
@@ -83,6 +107,32 @@ def main():
     expect_rc(r, "pcr-extend-no-session", TPM_RC["auth_missing"])
     expect_rc(r, "unknown-command", TPM_RC["command_code"])
     expect_rc(r, "short-command", TPM_RC["command_size"])
+
+    log = r.get("eventlog")
+    if not log or "pcr-read-all" not in r:
+        fail("no event log or no PCR read of all registers")
+    pcrs, events = replay(log)
+    counter, all_pcrs = pcr_read(r["pcr-read-all"])
+    if all_pcrs != pcrs:
+        for i, (a, b) in enumerate(zip(all_pcrs, pcrs)):
+            if a != b:
+                fail(f"PCR {i}: the TPM has {a.hex()}, the event log makes {b.hex()}")
+    if counter != len([e for e in events if e[1] != 3]):
+        fail(f"the update counter is {counter}, the log has {len(events)} events")
+    by_text = {}
+    for pcr, kind, digest, data in events:
+        if kind == 0xA:
+            by_text[data.decode()] = pcr
+        if kind not in (3, 0x8000000A, 0x80000001, 0x80000003, 0x800000E0) and digest != sha256(data):
+            fail(f"event type {kind:#x} in PCR {pcr}: its digest is not the hash of its data")
+    needed = ("board.revision=", "board.serial=", "board.ext_revision=", "board.mac_rows=", "otp.bootmode=", "sdram.mib=")
+    for want in needed:
+        if not any(t.startswith(want) and pcr == 1 for t, pcr in by_text.items()):
+            fail(f"the log has no {want} event in PCR 1")
+    versions = [data for pcr, kind, digest, data in events if kind == 0x8]
+    if len(versions) != 1 or not versions[0].decode("utf-16-le").startswith("pi4-server-firmware "):
+        fail("the log has no firmware version event")
+    print(f"the event log of {len(events)} events replays to the PCRs the TPM holds, with the board's identity in PCR 1")
 
     tag, rc, body = header(r["getcap-properties"])
     more, capability, count = struct.unpack(">BII", body[:9])

@@ -10,6 +10,23 @@ the same way.
 The TPM is started when the firmware is. A `TPM2_Startup` from a payload gets
 `TPM_RC_INITIALIZE`.
 
+## What is measured
+
+`start4.elf` measures the firmware and the board before it starts the ARM, and
+UEFI starts its event log with those events (tag `0x000300a4`), so the log
+replays to the PCRs as a TPM's does:
+
+| PCR | event | holds |
+|---|---|---|
+| 0 | `EV_S_CRTM_VERSION` | `pi4-server-firmware` and the commit, in UTF-16 |
+| 0 | `EV_EFI_PLATFORM_FIRMWARE_BLOB2` | the UEFI image, and the device tree it starts the ARM with |
+| 1 | `EV_PLATFORM_CONFIG_FLAGS` | `board.revision`, `board.ext_revision`, `board.serial`, `board.mac_rows`, `otp.bootmode` and `sdram.mib`, one event each, as `name=value` |
+| 7 | | the Secure Boot configuration, and the certificate that verified each image |
+| 4 | | each image UEFI loads |
+
+The shim, GRUB, systemd-boot and the Linux EFI stub measure the rest through
+`HashLogExtendEvent` (PCRs 4, 5, 8-14).
+
 ## What it implements
 
 One bank, SHA-256, of 24 PCRs. Every PCR can be extended from locality 0 but
@@ -31,6 +48,6 @@ sessions, NV storage or quotes yet.
 
 `scenarios/tpm2-commands.yaml` boots an EFI application that sends the TPM a
 series of commands through `SubmitCommand` and prints the responses.
-`scripts/check-tpm2.py` checks them: the properties, that the PCRs read back
+`scripts/check-tpm2.py` checks them: that the event log replays to the PCRs, with the board's identity in PCR 1, the properties, that the PCRs read back
 are what SHA-256 makes of what was extended, the update counter, and the
 error codes of the commands the TPM refuses.

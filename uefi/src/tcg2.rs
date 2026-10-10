@@ -284,9 +284,14 @@ pub fn init() {
     log.bytes = Vec::with_capacity(LOG_MAX);
     log.bytes.extend_from_slice(&spec_id_event());
     log.last = 0;
+    let mut early = 0;
+    while let Some(event) = crate::mailbox::early_event(early) {
+        append(event.pcr, event.kind, &event.digest, &event.data);
+        early += 1;
+    }
     let p = PROTOCOL.get() as *mut Protocol as *mut c_void;
     match crate::proto::install(core::ptr::null_mut(), &GUID, p) {
-        Ok(_) => info!("tcg2", "measured boot on the VPU's PCRs"),
+        Ok(_) => info!("tcg2", "measured boot on the VPU's PCRs"; early_events = early),
         Err(e) => warn!("tcg2", "EFI_TCG2_PROTOCOL not installed"; status = crate::log::dbg(&e)),
     }
 }

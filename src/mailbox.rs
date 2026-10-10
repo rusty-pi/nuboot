@@ -12,7 +12,7 @@
 //! firmware does not know is left as it came, and the buffer is marked
 //! answered either way, which is what the stock firmware does.
 
-use crate::{debug, error, idle, info, keystore, mmio, tpm2, vl805, warn};
+use crate::{debug, error, idle, info, keystore, measure, mmio, tpm2, vl805, warn};
 
 const VPU_VIEW: u32 = 0x7e00_b980;
 /// Mailbox 0, which the ARM reads.
@@ -44,6 +44,10 @@ const TAG_EXTEND_BOOT_MEASUREMENT: u32 = 0x0003_00a1;
 /// A TPM 2.0 command in, its response out ([`tpm2`]). The tag's length word
 /// says how long the command is, and then how long the response.
 const TAG_TPM2_COMMAND: u32 = 0x0003_00a3;
+/// Event `n` of what the VPU measured before the ARM started, for the log
+/// UEFI keeps: the index in, then the PCR, the event type, the digest, the
+/// length of the data and the data.
+const TAG_GET_EARLY_EVENT: u32 = 0x0003_00a4;
 
 /// Wait up to `timeout_us` for the ARM to post something, and answer all it
 /// has posted.
@@ -130,6 +134,20 @@ fn answer(bus: u32) {
                         set(i + 2, RESPONSE | 36);
                     }
                     Err(keystore::Refused::NoSuchRegister) => warn!("keystore", "no such PCR"; pcr = pcr),
+                }
+            }
+            TAG_GET_EARLY_EVENT if room >= 4 * (3 + 8 + measure::MAX_DATA as u32 / 4) => {
+                if let Some(event) = measure::event(word(value) as usize) {
+                    set(value, event.pcr);
+                    set(value + 1, event.kind);
+                    for (n, bytes) in event.digest.chunks_exact(4).enumerate() {
+                        set(value + 2 + n as u32, u32::from_le_bytes(bytes.try_into().unwrap()));
+                    }
+                    set(value + 10, event.len as u32);
+                    for (n, bytes) in event.data.chunks_exact(4).enumerate() {
+                        set(value + 11 + n as u32, u32::from_le_bytes(bytes.try_into().unwrap()));
+                    }
+                    set(i + 2, RESPONSE | room);
                 }
             }
             TAG_TPM2_COMMAND if room >= 10 => {

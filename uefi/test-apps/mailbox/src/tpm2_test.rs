@@ -65,6 +65,24 @@ fn hex(system_table: *mut SystemTable, bytes: &[u8]) {
     }
 }
 
+/// Print the event log `EFI_TCG2_PROTOCOL.GetEventLog` gives, whole.
+fn log_events(system_table: *mut SystemTable, protocol: *mut c_void) {
+    let get: extern "efiapi" fn(*mut c_void, u32, *mut u64, *mut u64, *mut u8) -> Status =
+        unsafe { core::mem::transmute(*(protocol as *const usize).add(1)) };
+    let (mut location, mut last, mut truncated) = (0u64, 0u64, 0u8);
+    say(system_table, "tpm2 test: eventlog ");
+    if get(protocol, 2, &mut location, &mut last, &mut truncated).is_error() {
+        say(system_table, "failed\r\n");
+        return;
+    }
+    // The log ends where the last event does; its size is in its last word.
+    let tail = last as usize + 4 + 4 + 4 + 2 + 32 + 4;
+    let size = u32::from_le_bytes(unsafe { *((tail - 4) as *const [u8; 4]) }) as usize;
+    let end = tail + size;
+    hex(system_table, unsafe { core::slice::from_raw_parts(location as *const u8, end - location as usize) });
+    say(system_table, "\r\n");
+}
+
 #[unsafe(no_mangle)]
 pub extern "efiapi" fn efi_main(_image: Handle, system_table: *mut SystemTable) -> Status {
     let bs = unsafe { (*system_table).boot_services };
@@ -76,8 +94,8 @@ pub extern "efiapi" fn efi_main(_image: Handle, system_table: *mut SystemTable) 
     }
     let submit: Submit = unsafe { core::mem::transmute(*(protocol as *const usize).add(3)) };
     let mut run = |name: &str, command: &[u8]| {
-        let mut response = [0u8; 512];
-        let status = submit(protocol, command.len() as u32, command.as_ptr(), 512, response.as_mut_ptr());
+        let mut response = [0u8; 1024];
+        let status = submit(protocol, command.len() as u32, command.as_ptr(), 1024, response.as_mut_ptr());
         say(system_table, "tpm2 test: ");
         say(system_table, name);
         say(system_table, " ");
@@ -85,13 +103,15 @@ pub extern "efiapi" fn efi_main(_image: Handle, system_table: *mut SystemTable) 
             say(system_table, "failed");
         } else {
             let len = u32::from_be_bytes(response[2..6].try_into().unwrap()) as usize;
-            hex(system_table, &response[..len.min(512)]);
+            hex(system_table, &response[..len.min(1024)]);
         }
         say(system_table, "\r\n");
     };
     let digest = [0x11u8; 32];
 
     run("startup", Command::new(0x8001, 0x144).u16(0).done());
+    run("pcr-read-all", Command::new(0x8001, 0x17e).u32(1).u16(0xb).put(&[3, 0xff, 0xff, 0xff]).done());
+    log_events(system_table, protocol);
     run("getcap-properties", Command::new(0x8001, 0x17a).u32(6).u32(0x100).u32(8).done());
     run("getcap-algs", Command::new(0x8001, 0x17a).u32(0).u32(0).u32(16).done());
     run("getcap-pcrs", Command::new(0x8001, 0x17a).u32(5).u32(0).u32(1).done());

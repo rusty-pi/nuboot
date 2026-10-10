@@ -20,6 +20,11 @@ const TIMEOUT_US: u32 = 1000;
 pub const SERIAL: u32 = 28;
 /// The board's revision code (`0x00d03115`: a Pi 4B rev 1.5).
 pub const REVISION: u32 = 30;
+/// The boot mode row, which the boot ROM reads as it starts.
+pub const BOOTMODE: u32 = 17;
+/// The MAC address rows: the customer's, or blank.
+pub const MAC_HIGH: u32 = 65;
+pub const MAC_LOW: u32 = 64;
 /// The extended revision: its bits 8-16 describe the SDRAM parts.
 pub const EXT_REVISION: u32 = 33;
 

@@ -20,6 +20,7 @@ const ANSWER_US: u64 = 200_000;
 
 const TAG_EXTEND_BOOT_MEASUREMENT: u32 = 0x0003_00a1;
 const TAG_TPM2_COMMAND: u32 = 0x0003_00a3;
+const TAG_GET_EARLY_EVENT: u32 = 0x0003_00a4;
 /// The largest TPM command or response (`src/tpm2.rs`).
 const TPM_MAX: usize = 2048;
 
@@ -114,6 +115,51 @@ pub fn tpm2_command(command: &[u8], response: &mut [u8]) -> Option<usize> {
         *b = unsafe { read_volatile(bytes.add(20 + i)) };
     }
     Some(length)
+}
+
+/// An event the VPU measured before the ARM started: the PCR it went into, its
+/// type, its digest and its data.
+pub struct EarlyEvent {
+    pub pcr: u32,
+    pub kind: u32,
+    pub digest: [u8; 32],
+    pub data: alloc::vec::Vec<u8>,
+}
+
+/// Event `index` of what the VPU measured before the ARM started, if there is
+/// one.
+pub fn early_event(index: u32) -> Option<EarlyEvent> {
+    const WORDS: usize = 31;
+    let buf = BIG.0.get() as *mut u32;
+    unsafe {
+        write_volatile(buf, (4 * (6 + WORDS + 1)) as u32);
+        write_volatile(buf.add(1), 0);
+        write_volatile(buf.add(2), TAG_GET_EARLY_EVENT);
+        write_volatile(buf.add(3), 4 * WORDS as u32);
+        write_volatile(buf.add(4), 4);
+        write_volatile(buf.add(5), index);
+        for i in 1..WORDS {
+            write_volatile(buf.add(5 + i), 0);
+        }
+        write_volatile(buf.add(5 + WORDS), 0);
+    }
+    if !post(buf as u64, 4 * (6 + WORDS + 1)) {
+        return None;
+    }
+    let word = |i: usize| unsafe { read_volatile(buf.add(5 + i)) };
+    if unsafe { read_volatile(buf.add(4)) } & RESPONSE == 0 {
+        return None;
+    }
+    let mut digest = [0u8; 32];
+    for (n, chunk) in digest.chunks_exact_mut(4).enumerate() {
+        chunk.copy_from_slice(&word(2 + n).to_le_bytes());
+    }
+    let len = (word(10) as usize).min(80);
+    let mut data = alloc::vec::Vec::with_capacity(len);
+    for n in 0..len {
+        data.push((word(11 + n / 4) >> (8 * (n % 4))) as u8);
+    }
+    Some(EarlyEvent { pcr: word(0), kind: word(1), digest, data })
 }
 
 /// Extend a PCR on the VPU.
