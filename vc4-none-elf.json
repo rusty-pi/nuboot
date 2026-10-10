@@ -1,0 +1,23 @@
+{
+  "abi": "abiv2",
+  "arch": "csky",
+  "atomic-cas": false,
+  "c-enum-min-bits": 32,
+  "data-layout": "e-m:e-p:32:32-i64:32-f64:32-a:0:32-n32-S32",
+  "disable-redzone": true,
+  "eh-frame-header": false,
+  "emit-debug-gdb-scripts": false,
+  "linker": "vc4-elf-gcc",
+  "linker-flavor": "gnu-cc",
+  "llvm-target": "vc4-none-elf",
+  "max-atomic-width": 32,
+  "metadata": {
+    "description": "VideoCore IV VPU, bare metal (rustc_codegen_gcc only)",
+    "host_tools": false,
+    "std": false,
+    "tier": 3
+  },
+  "panic-strategy": "abort",
+  "relocation-model": "static",
+  "target-pointer-width": 32
+}

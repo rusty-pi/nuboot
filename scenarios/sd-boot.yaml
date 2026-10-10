@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "sd-boot"
+description: "The stock EEPROM bootloader starts start4.elf from the SD card, which logs the board and starts its threads."
+
+boot:
+  eeprom: "https://raw.githubusercontent.com/raspberrypi/rpi-eeprom/master/firmware-2711/latest/pieeprom-2026-08-04.bin"
+  sd:
+    files:
+      start4.elf: "../out/start4.elf"
+  boot_order: "0x1"
+  bootconf:
+    - "BOOT_UART=1"
+    - "BOOT_WATCHDOG_TIMEOUT=60"
+  until: "stack high-water mark  thread=1"
+  wall_secs: 120
+  max_skipped: 0
+
+milestones:
+  - why: "The bootloader started this firmware."
+    line: "Starting start4.elf"
+  - why: "The firmware logs what it runs on."
+    line: "INFO  boot     pi4-server-firmware"
+  - why: "It found the bootloader's handover."
+    line: "medium=sd"
+  - why: "It took over the boot watchdog and handed it back."
+    line: "boot watchdog off"
+  - why: "The scheduler runs both threads."
+    line: "threads running  threads=2"
+  - why: "The second thread ran."
+    line: "stack high-water mark  thread=1"

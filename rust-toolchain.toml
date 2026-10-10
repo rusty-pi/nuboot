@@ -1,0 +1,4 @@
+[toolchain]
+# Must match the nightly pinned by rustc_codegen_gcc.
+channel = "nightly-2026-09-14"
+components = ["rust-src"]

@@ -1,0 +1,32 @@
+[package]
+name = "pi4-server-firmware"
+# Not the released version: nothing reads `CARGO_PKG_VERSION`, and the build
+# identifies itself by its commit (build.rs).
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+test = false
+bench = false
+
+[[bin]]
+name = "start4"
+test = false
+bench = false
+
+[features]
+# Colour the console log with ANSI escapes.
+color = []
+
+[dependencies]
+
+[profile.dev]
+panic = "abort"
+opt-level = 1
+
+[profile.release]
+panic = "abort"
+opt-level = 2
+codegen-units = 1
+debug = true

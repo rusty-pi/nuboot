@@ -1,0 +1,133 @@
+name: build
+
+# Every push builds start4.elf and boots each scenario in `scenarios/` in
+# pimu.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # `RUNNER_BUILD` names a self-hosted pool. Its image is `ubuntu:26.04`, the
+    # release the toolchain packages are built for, and without the variable
+    # this runs on GitHub's own runner of that release.
+    runs-on: ${{ vars.RUNNER_BUILD || 'ubuntu-26.04' }}
+    timeout-minutes: 60
+    env:
+      VC4_PREFIX: /opt/vc4
+      CLONE_BASE: https://github.com/
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the toolchain
+        run: |
+          # Not just the exit status: a binary the loader refuses ("CPU ISA
+          # level is lower than required") still leaves it 0.
+          if "$VC4_PREFIX/bin/vc4-elf-as" --version 2>/dev/null | grep -q "GNU assembler"; then
+            echo "the image's toolchain in $VC4_PREFIX"
+            exit 0
+          fi
+          gh release download latest -R rusty-pi/binutils-vc4 -p vc4-elf-binutils.deb
+          gh release download latest -R rusty-pi/gcc-vc4 -p vc4-elf-gcc.deb
+          if sudo -n true 2>/dev/null; then
+            sudo apt-get install -y --no-install-recommends \
+              ./vc4-elf-binutils.deb ./vc4-elf-gcc.deb
+          else
+            # libgccjit finds its assembler under the prefix it was built
+            # for, so the packages cannot simply be unpacked elsewhere.
+            echo "::error::installing the toolchain packages needs sudo"
+            exit 1
+          fi
+          rm vc4-elf-*.deb
+
+      # The action brings rustup itself, which a self-hosted runner has only
+      # once something has installed it; the toolchain built with is the one
+      # rust-toolchain.toml pins.
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        run: rustup toolchain install
+
+      # rustc_codegen_gcc loads libgccjit at run time, so it only depends on
+      # the commit build-codegen.sh pins and the nightly it is built with.
+      - name: Codegen cache key
+        id: key
+        run: echo "key=codegen-${{ runner.environment }}-${{ hashFiles('scripts/build-codegen.sh', 'rust-toolchain.toml') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore codegen
+        id: cache
+        uses: actions/cache/restore@v6
+        with:
+          key: ${{ steps.key.outputs.key }}
+          path: ~/src/rustc_codegen_gcc/target/release/librustc_codegen_gcc.so
+
+      - name: Build codegen
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          rustup component add rustc-dev llvm-tools-preview
+          scripts/build-codegen.sh
+
+      - name: Save codegen
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          key: ${{ steps.key.outputs.key }}
+          path: ~/src/rustc_codegen_gcc/target/release/librustc_codegen_gcc.so
+
+      - name: Build
+        run: |
+          scripts/setup-toolchain.sh
+          scripts/build.sh
+          # The optional features have to keep building too.
+          cargo build --release --features color
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: firmware
+          path: out/start4.elf
+          if-no-files-found: error
+          retention-days: 7
+
+  # Every `scenarios/*.yaml` is a job, so a new scenario needs no edit here.
+  scenarios:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: list
+        run: |
+          names=$(basename -s .yaml scenarios/*.yaml | jq -R . | jq -sc .)
+          echo "matrix=$names" >> "$GITHUB_OUTPUT"
+
+  scenario:
+    needs: [build, scenarios]
+    # `RUNNER_BOOT` names a self-hosted pool. pimu's release is built on
+    # ubuntu-24.04, so that is the hosted fallback.
+    runs-on: ${{ vars.RUNNER_BOOT || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: ${{ fromJSON(needs.scenarios.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: firmware
+          path: out
+
+      - uses: rusty-pi/pimu@main
+        with:
+          args: boot --scenario scenarios/${{ matrix.scenario }}.yaml
