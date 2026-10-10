@@ -13,7 +13,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use crate::devpath::{self, Builder};
-use crate::util::{Global, Hex, delay_us, now_us, read32, wait_for, write32};
+use crate::util::{Global, Hex, POLL_US, counter_us, delay_us, read32, wait_for, write32};
 use crate::{debug, dma, info, warn};
 
 const PCIE: u64 = 0xFD50_0000;
@@ -288,7 +288,7 @@ impl Xhci {
             dcbaa,
             control_buf,
             devices: Vec::new(),
-            started_at: now_us(),
+            started_at: counter_us(),
         };
         for port in 1..=max_ports {
             let sc = xhci.portsc(port);
@@ -319,16 +319,17 @@ impl Xhci {
     }
 
     fn wait_event(&mut self, timeout_us: u64, want: impl Fn(&[u32; 4]) -> bool) -> Result<[u32; 4], Error> {
-        let until = now_us() + timeout_us;
+        let until = counter_us() + timeout_us;
         loop {
             while let Some(e) = self.next_event() {
                 if want(&e) {
                     return Ok(e);
                 }
             }
-            if now_us() > until {
+            if counter_us() > until {
                 return Err(Error::Timeout);
             }
+            delay_us(POLL_US);
         }
     }
 
@@ -746,7 +747,7 @@ pub fn init() {
     // same while, together.
     let x = controller();
     let started = x.started_at;
-    wait_for(LINK_TRAIN_US.saturating_sub(now_us() - started), || (1..=ports).all(|p| x.portsc(p) & PORT_CCS != 0));
+    wait_for(LINK_TRAIN_US.saturating_sub(counter_us() - started), || (1..=ports).all(|p| x.portsc(p) & PORT_CCS != 0));
     let path = controller_path();
     for port in 1..=ports {
         let x = controller();

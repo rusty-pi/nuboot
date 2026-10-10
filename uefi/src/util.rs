@@ -50,24 +50,41 @@ pub fn now_us() -> u64 {
     crate::stc::now()
 }
 
+/// The generic timer's count, in microseconds. Waits spin on this rather than
+/// on the system timer: a loop that reads only the counter costs nothing in a
+/// model that skips such loops, where one polling the system timer's
+/// registers runs instruction by instruction.
+pub fn counter_us() -> u64 {
+    let (count, freq): (u64, u64);
+    unsafe {
+        core::arch::asm!("isb", "mrs {0}, CNTPCT_EL0", out(reg) count);
+        core::arch::asm!("mrs {0}, CNTFRQ_EL0", out(reg) freq);
+    }
+    (count as u128 * 1_000_000 / freq.max(1) as u128) as u64
+}
+
 pub fn delay_us(us: u64) {
-    let until = now_us() + us;
-    while now_us() < until {
+    let until = counter_us() + us;
+    while counter_us() < until {
         core::hint::spin_loop();
     }
 }
 
+/// How long `wait_for` waits between checks.
+pub const POLL_US: u64 = 20;
+
 /// Wait up to `timeout_us` for `done`; whether it came true.
 pub fn wait_for(timeout_us: u64, mut done: impl FnMut() -> bool) -> bool {
-    let until = now_us() + timeout_us;
+    let until = counter_us() + timeout_us;
     loop {
         if done() {
             return true;
         }
-        if now_us() >= until {
+        let now = counter_us();
+        if now >= until {
             return done();
         }
-        core::hint::spin_loop();
+        delay_us(POLL_US.min(until - now));
     }
 }
 

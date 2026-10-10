@@ -472,9 +472,14 @@ extern "efiapi" fn get_next_monotonic_count(count: *mut u64) -> efi::Status {
 }
 
 extern "efiapi" fn stall(us: usize) -> efi::Status {
-    let until = crate::util::now_us() + us as u64;
-    while crate::util::now_us() < until {
+    let until = crate::util::counter_us() + us as u64;
+    loop {
         event::run_timers();
+        let now = crate::util::counter_us();
+        if now >= until {
+            break;
+        }
+        crate::util::delay_us(crate::util::POLL_US.min(until - now));
     }
     efi::Status::SUCCESS
 }
