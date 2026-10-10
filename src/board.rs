@@ -6,6 +6,25 @@ use crate::otp;
 
 /// Board types in the revision code.
 pub const TYPE_4B: u32 = 0x11;
+pub const TYPE_400: u32 = 0x13;
+pub const TYPE_CM4: u32 = 0x14;
+
+/// The first 4B PCB revision whose VL805 has no SPI flash of its own and
+/// takes its firmware from the host.
+const VL805_FROM_HOST_PCB: u32 = 4;
+
+/// Which power-management parts a board has on its board I2C bus, by board
+/// revision as the stock firmware picks them.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Pmics {
+    /// 0x1D alone, with every rail: a 4B up to rev 1.3.
+    System,
+    /// 0x1D, with the core rail on 0x1E: a 4B rev 1.4, a Pi 400 or a CM4.
+    SystemAndCore,
+    /// 0x1B for the SDRAM and I/O rails, 0x1E for the core: a 4B rev 1.5.
+    RailsAndCore,
+    Unknown,
+}
 
 /// The identity rows the SDRAM bring-up needs.
 #[derive(Clone, Copy)]
@@ -32,6 +51,16 @@ impl Board {
     pub fn maker(&self) -> u32 {
         (self.revision >> 16) & 0xf
     }
+
+    pub fn pmics(&self) -> Pmics {
+        Revision(self.revision).pmics()
+    }
+
+    /// Whether the VL805 needs its firmware from the host: every board but a
+    /// 4B before rev 1.4.
+    pub fn vl805_from_host(&self) -> bool {
+        self.kind() != TYPE_4B || self.revision & 0xf >= VL805_FROM_HOST_PCB
+    }
 }
 
 /// The board's revision code, as `/proc/cpuinfo` prints it (`d03115`).
@@ -55,6 +84,18 @@ impl Revision {
             0x14 => "Compute Module 4",
             0x15 => "Compute Module 4S",
             _ => "unknown board",
+        }
+    }
+
+    pub fn pmics(self) -> Pmics {
+        match self.kind() {
+            TYPE_4B => match self.0 & 0xf {
+                0..=3 => Pmics::System,
+                4 => Pmics::SystemAndCore,
+                _ => Pmics::RailsAndCore,
+            },
+            TYPE_400 | TYPE_CM4 => Pmics::SystemAndCore,
+            _ => Pmics::Unknown,
         }
     }
 

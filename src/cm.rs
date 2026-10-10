@@ -1,6 +1,8 @@
 //! The clock manager (`0x7E10_1000`): the generators of the peripheral
 //! clocks this firmware drives.
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
 use crate::mmio::{self, PASSWD};
 use crate::timer;
 
@@ -57,8 +59,20 @@ pub const A2W_1390: u32 = 0x1390;
 const PLL_FLAGS: u32 = 0x7e50_0220;
 const PLLS_STARTED: u32 = 1 << 9;
 
+/// The VPU's clock once the first stage has moved it onto a PLL.
+const VPU_HZ_ON_PLL: u32 = 500_000_000;
+
+static PLLS_ON: AtomicBool = AtomicBool::new(false);
+
 pub fn set_plls_started() {
     mmio::write(PLL_FLAGS, mmio::read(PLL_FLAGS) | PLLS_STARTED);
+    PLLS_ON.store(true, Ordering::Relaxed);
+}
+
+/// The VPU's clock in the first stage, which the board I2C bus divides down
+/// from: the oscillator until the PLLs are started.
+pub fn bootcode_vpu_hz() -> u32 {
+    if PLLS_ON.load(Ordering::Relaxed) { VPU_HZ_ON_PLL } else { OSC_HZ as u32 }
 }
 
 /// A clock manager or A2W register, by its offset from `0x7E10_1000`; the

@@ -1,18 +1,22 @@
 //! `bootcode`: the first stage, which the boot ROM loads out of the EEPROM.
 //!
 //! The boot ROM stages it into the L2 at `0x8000_0000`, which it runs out of
-//! as SRAM since there is no SDRAM yet, and enters it at `+0x200`. It starts
-//! the PLLs and the clocks the rest of the boot runs on, brings up the LPDDR4
-//! with the training firmware the EEPROM carries, then loads `start4.elf`
-//! out of the EEPROM into SDRAM and enters it with the handover block it
-//! reads.
+//! as SRAM since there is no SDRAM yet, and enters it at `+0x200`. It
+//! power-cycles the SD card, sets up the PMIC where the board needs it,
+//! starts the PLLs and the clocks the rest of the boot runs on, brings up the
+//! LPDDR4 with the training firmware the EEPROM carries, then loads
+//! `start4.elf` out of the EEPROM into SDRAM and enters it with the handover
+//! block it reads.
 
 #![no_std]
 #![no_main]
 
-use pi4_server_firmware::board::{Board, Revision};
+use pi4_server_firmware::board::{Board, Pmics, Revision};
+use pi4_server_firmware::i2c::expander;
 use pi4_server_firmware::mmio::{self, PASSWD};
-use pi4_server_firmware::{cache, cm, console, eeprom, elf, error, halt, handover, info, sdram, spi_flash, timer};
+use pi4_server_firmware::{
+    cache, cm, console, eeprom, elf, error, halt, handover, info, pmic, sdram, spi_flash, timer,
+};
 
 /// Where `start4.elf` is read to before it is loaded: SDRAM above the image
 /// it loads, uncached.
@@ -111,6 +115,15 @@ fn firmware_main() -> ! {
     info!("boot", "pi4-server-firmware bootcode {}", &env!("FIRMWARE_COMMIT")[..7];
         board = revision.model(), revision = revision, pcb = revision.pcb());
 
+    // The SD card's power off for as long as the SDRAM takes, so the card
+    // comes up from a power cycle; the power LED lit.
+    expander::init();
+    expander::update(0, 0, expander::SD_PWR_ON, 0);
+    if revision.pmics() == Pmics::SystemAndCore {
+        pmic::bootcode_setup();
+    }
+    expander::update(expander::PWR_LED_OFF, 0, 0, 0);
+
     plls();
     peripheral_clocks();
     spi_flash::set_divider(spi_flash::PLL_DIVIDER);
@@ -126,6 +139,11 @@ fn firmware_main() -> ! {
     if sdram::verify(&sd, &board).is_err() {
         fatal();
     }
+
+    // The card back on at 3.3 V signalling.
+    expander::update(expander::VDD_SD_IO_SEL, 0, 0, 0);
+    timer::delay_us(20_000);
+    expander::update(0, 0, 0, expander::SD_PWR_ON);
 
     let entry = load_firmware();
     handover::write(env!("FIRMWARE_COMMIT").as_bytes(), sd.geometry.size_gbit, handover::DEVICE_EEPROM);

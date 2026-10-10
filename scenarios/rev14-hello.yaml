@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "rev14-hello"
+description: "uefi-hello on a Pi 4B rev 1.4, whose core rail is on its own PMIC: the first stage sets up 0x1D the way that board needs. The first stage brings up the SDRAM and starts start4.elf out of the EEPROM, which starts the ARM in CrabEFI. CrabEFI runs \\EFI\\BOOT\\BOOTAA64.EFI off the SD card."
+
+boot:
+  eeprom: "../out/pieeprom.bin"
+  board_rev: "d03114"
+  sd:
+    files:
+      EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+  input:
+    # Skip the boot menu's countdown, which takes long in the model.
+    - after: "Booting in 5 seconds"
+      text: "\r"
+  until: "EFI app executed successfully"
+  wall_secs: 900
+
+milestones:
+  - why: "The boot ROM entered the first stage."
+    line: "pi4-server-firmware bootcode"
+  - why: "It is a rev 1.4 board."
+    line: "revision=d03114 pcb=1.4"
+  - why: "The first stage loaded start4.elf out of the EEPROM after bringing up the SDRAM."
+    line: "start4.elf loaded"
+  - why: "start4.elf found the handover the first stage left."
+    line: "medium=eeprom"
+  - why: "start4.elf started the ARM."
+    line: "ARM started in UEFI"
+  - why: "The armstub took the cores to EL2 and the primary core decompressed CrabEFI and entered it."
+    line: "[CrabEFI] PL011 serial initialized"
+  - why: "CrabEFI's SDHCI driver brought up the card on EMMC2 and the boot manager found the removable-media path on it."
+    line: "Booting Boot Entry (eMMC)"
+  - why: "The EFI application ran and returned."
+    line: "Hello from CrabEFI!"

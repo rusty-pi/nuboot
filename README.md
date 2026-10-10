@@ -99,6 +99,7 @@ EFI applications the UEFI scenarios put on the card:
 pimu boot --scenario scenarios/sd-boot.yaml
 pimu boot --scenario scenarios/uefi-hello.yaml
 pimu boot --scenario scenarios/uefi-grub.yaml
+pimu boot --scenario scenarios/rev14-hello.yaml
 ```
 
 To run it by hand, boot the image with a directory as the SD card:
