@@ -11,8 +11,13 @@ is for:
   console, storage, the network and a watchdog.
 - **A readable log.** Every line says when, how important, which subsystem and
   what, with the values as named fields.
-- **UEFI with Secure Boot** as the way an operating system is started (not
-  there yet).
+- **UEFI with Secure Boot** as the way an operating system is started, with
+  Microsoft's keys by default and the owner's own keys enrolled in their place
+  (not there yet).
+- **Everything in the EEPROM**, UEFI included, so the boot medium carries only
+  the operating system. Until then, `start4.elf` is loaded from the medium.
+
+Out of scope: HATs, IPv6 and ACPI (the operating system gets a device tree).
 
 > [!NOTE]
 > This is the start of the firmware, not a usable one: it boots, logs the
