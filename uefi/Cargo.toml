@@ -3,27 +3,15 @@ name = "pi4-uefi"
 version = "0.0.0"
 edition = "2024"
 license = "MIT"
-description = "CrabEFI on the Raspberry Pi 4: the ARM payload the VPU firmware starts"
+description = "The UEFI firmware the VPU firmware starts the ARM in"
+publish = false
 
 [dependencies]
-# scripts/fetch-crabefi.sh checks it out at the pinned revision with patches/crabefi applied.
-# Without its default features it leaves out AHCI, NVMe, EHCI/OHCI, direct
-# Linux boot and El Torito, which this board does not use.
-crabefi = { package = "crabefi-core", path = "../third_party/crabefi/crabefi-core", default-features = false, features = [
-  "bundled-runtime-image",
-  "global-allocator",
-  "platform-entry",
-] }
-fdt = "0.1.5"
-# Info and debug records take a seventh of the compressed image.
-log = { version = "0.4", features = ["release_max_level_warn"] }
+r-efi = "5.3"
 
 [features]
-default = ["xhci"]
-# UEFI image verification and authenticated variables.
-secure-boot = ["crabefi/secure-boot", "crabefi/variable-store"]
-# The VL805's xHCI behind the PCIe root complex: USB keyboards and drives.
-xhci = ["crabefi/xhci"]
+# ANSI colours in the log, as the VPU firmware's `color` feature.
+color = []
 
 [[bin]]
 name = "pi4-uefi"

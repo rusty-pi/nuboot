@@ -1,17 +1,13 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "uefi-hello"
-description: "This tree's EEPROM image, with nothing stock in it but the SDRAM training firmware. The first stage brings up the SDRAM and starts start4.elf out of the EEPROM, which starts the ARM in CrabEFI. CrabEFI runs \\EFI\\BOOT\\BOOTAA64.EFI off the SD card."
+description: "This tree's EEPROM image, with nothing stock in it but the SDRAM training firmware, in its test build. The first stage brings up the SDRAM and starts start4.elf out of the EEPROM, which starts the ARM in the UEFI firmware. It finds the SD card, checks the signature on \\EFI\\BOOT\\BOOTAA64.EFI against db and runs it."
 
 boot:
-  eeprom: "../out/pieeprom.bin"
+  eeprom: "../out/pieeprom-test.bin"
   sd:
     files:
       EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
-  input:
-    # Skip the boot menu's countdown, which takes long in the model.
-    - after: "Booting in 5 seconds"
-      text: "\r"
-  until: "EFI app executed successfully"
+  until: "hello test: done"
   wall_secs: 900
 
 milestones:
@@ -23,9 +19,15 @@ milestones:
     line: "medium=eeprom"
   - why: "start4.elf started the ARM."
     line: "ARM started in UEFI"
-  - why: "The armstub took the cores to EL2 and the primary core decompressed CrabEFI and entered it."
-    line: "[CrabEFI] PL011 serial initialized"
-  - why: "CrabEFI's SDHCI driver brought up the card on EMMC2 and the boot manager found the removable-media path on it."
-    line: "Booting Boot Entry (eMMC)"
-  - why: "The EFI application ran and returned."
-    line: "Hello from CrabEFI!"
+  - why: "The armstub took the cores to EL2 and the primary core decompressed the UEFI firmware and entered it."
+    line: "UEFI firmware started"
+  - why: "The test build trusts the test key as well as Microsoft's CAs."
+    line: "Secure Boot enforced  db=3"
+  - why: "The SD driver brought up the card on EMMC2."
+    line: "sd       card ready"
+  - why: "The application's signature chains to the test key in db."
+    line: "image verified  signer=\"pi4-server-firmware test key\""
+  - why: "The application sees Secure Boot on."
+    line: "hello test: Secure Boot is on"
+  - why: "The application ran its checks and finished."
+    line: "hello test: done"

@@ -3,14 +3,10 @@ name: "xhci-reset"
 description: "An EFI application sends NOTIFY_XHCI_RESET over the property mailbox, as Linux does once it has reset the PCIe link. start4.elf reloads the VL805's firmware and answers."
 
 boot:
-  eeprom: "../out/pieeprom.bin"
+  eeprom: "../out/pieeprom-test.bin"
   sd:
     files:
       EFI/BOOT/BOOTAA64.EFI: "../out/xhci-reset.efi"
-  input:
-    # Skip the boot menu's countdown, which takes long in the model.
-    - after: "Booting in 5 seconds"
-      text: "\r"
   until: "mailbox test: NOTIFY_XHCI_RESET answered"
   wall_secs: 900
 

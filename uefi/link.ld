@@ -1,5 +1,5 @@
-/* CrabEFI on the Raspberry Pi 4. The stub in stub/ decompresses it here and
- * enters it with x0 = the device tree. */
+/* The UEFI firmware. The stub in stub/ decompresses it here and enters it
+ * with x0 = the device tree. */
 OUTPUT_FORMAT("elf64-littleaarch64")
 OUTPUT_ARCH(aarch64)
 ENTRY(_start)
@@ -10,12 +10,11 @@ PHDRS {
     code PT_LOAD FLAGS(5);
     rodata PT_LOAD FLAGS(4);
     data PT_LOAD FLAGS(6);
-    defer PT_NULL FLAGS(0);
 }
 
 SECTIONS {
     . = LOAD_BASE;
-    __boot_code_start = .;
+    _image_start = .;
     .text : {
         KEEP(*(.text.entry))
         *(.text .text.*)
@@ -23,9 +22,7 @@ SECTIONS {
     .vectors : ALIGN(2048) {
         KEEP(*(.vectors))
     } :code
-    __boot_code_end = .;
 
-    __boot_data_start = ALIGN(4096);
     .rodata : ALIGN(4096) {
         *(.rodata .rodata.*)
     } :rodata
@@ -40,36 +37,26 @@ SECTIONS {
         . = ALIGN(16);
         _bss_end = .;
     } :data
-    .stack (NOLOAD) : ALIGN(4096) {
-        _stack_bottom = .;
-        . += 0x40000;
-        _stack_top = .;
-    } :data
-    .exc_stack (NOLOAD) : ALIGN(4096) {
-        _exc_stack_bottom = .;
-        . += 0x4000;
-        _exc_stack_top = .;
-    } :data
-    __boot_data_end = ALIGN(4096);
-    _end = .;
-
-    /* Outside the boot data range: CrabEFI reserves the live page tables on
-     * their own, and a second reservation over them would fail. */
+    /* The page tables: L0, L1, and an L2 each for the first gigabyte and the
+     * fourth. */
     .page_tables (NOLOAD) : ALIGN(4096) {
         _pt_l0 = .;
         . += 4096;
         _pt_l1 = .;
         . += 4096;
-        _pt_l2 = .;
+        _pt_l2_low = .;
+        . += 4096;
+        _pt_l2_high = .;
         . += 4096;
     } :data
-
-    /* Runtime variable staging: kept across a warm reset, outside the image. */
-    .deferred_buffer (NOLOAD) : ALIGN(4096) {
-        _deferred_buffer_start = .;
-        . += 128K;
-        _deferred_buffer_end = .;
-    } :defer
+    /* EFI applications run on this stack too. */
+    .stack (NOLOAD) : ALIGN(4096) {
+        _stack_bottom = .;
+        . += 0x100000;
+        _stack_top = .;
+    } :data
+    . = ALIGN(4096);
+    _end = .;
 
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) *(.debug*) }
 }

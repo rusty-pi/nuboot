@@ -23,6 +23,10 @@ bench = false
 [features]
 # Colour the console log with ANSI escapes.
 color = []
+# Trust the key scripts/build-uefi.sh generates in out/test-keys/ besides the
+# built-in ones, and leave the image as out/pieeprom-test.bin: the scenarios'
+# EFI applications are signed with that key. Never for a real board.
+test-keys = []
 
 [dependencies]
 

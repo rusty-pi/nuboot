@@ -51,12 +51,13 @@ jobs:
           fi
           rm vc4-elf-*.deb
 
-      # scripts/mkeeprom.py puts the EEPROM image together.
-      - name: Install Python
+      # scripts/mkeeprom.py puts the EEPROM image together, and
+      # scripts/build-uefi.sh signs the test applications with sbsign.
+      - name: Install Python and sbsigntool
         run: |
-          command -v python3 >/dev/null && exit 0
+          command -v python3 >/dev/null && command -v sbsign >/dev/null && exit 0
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3
+          sudo apt-get install -y --no-install-recommends python3 sbsigntool openssl
 
       # The action brings rustup itself, which a self-hosted runner has only
       # once something has installed it; the toolchain built with is the one
@@ -97,11 +98,11 @@ jobs:
       - name: Build
         run: |
           scripts/setup-toolchain.sh
-          # The Secure Boot build of the UEFI firmware has to keep building
-          # too; the scenarios' EFI applications come with --test-apps.
-          scripts/build-uefi.sh --features secure-boot
+          # The scenarios' EFI applications, signed with the test key, and
+          # the image that trusts it beside the one that goes on a board.
           scripts/build-uefi.sh --test-apps
           scripts/build.sh
+          scripts/build.sh --test-keys
           # The optional features have to keep building too.
           cargo build --release --features color
 
@@ -110,11 +111,13 @@ jobs:
           name: firmware
           path: |
             out/pieeprom.bin
+            out/pieeprom-test.bin
             out/start4.elf
             out/hello.efi
             out/watchdog-hang.efi
             out/watchdog-exit.efi
             out/xhci-reset.efi
+            out/shimaa64.efi
             out/grubaa64.efi
           if-no-files-found: error
           retention-days: 7

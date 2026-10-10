@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "secure-boot-refused"
+description: "The EEPROM image as it goes on a board, and an EFI application signed with the test key, which only the test build trusts. The UEFI firmware refuses to run it and has nothing else to boot."
+
+boot:
+  eeprom: "../out/pieeprom.bin"
+  sd:
+    files:
+      EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+  until: "nothing to boot"
+  wall_secs: 900
+
+milestones:
+  - why: "The firmware enforces Secure Boot with Microsoft's two UEFI CAs in db."
+    line: "Secure Boot enforced  db=2"
+  - why: "The application is signed, but not by a key in db."
+    line: "image refused  reason=\"not signed by a key in db\""
+  - why: "With nothing else on the card, the firmware leaves the board to the boot watchdog."
+    line: "nothing to boot"

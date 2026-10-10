@@ -20,16 +20,18 @@ fn arm_files(dir: &str) {
     std::fs::create_dir_all(&out).unwrap();
     for input in [
         "uefi/src", "uefi/stub/src", "uefi/Cargo.toml", "uefi/Cargo.lock", "uefi/build.rs",
-        "uefi/link.ld", "uefi/rust-toolchain.toml", "uefi/.cargo/config.toml", "uefi/stub/Cargo.toml",
-        "uefi/stub/Cargo.lock", "uefi/stub/build.rs", "uefi/stub/link.ld", "patches/crabefi",
-        "scripts/build-uefi.sh", "scripts/fetch-crabefi.sh",
+        "uefi/link.ld", "uefi/keys", "uefi/rust-toolchain.toml", "uefi/.cargo/config.toml", "uefi/stub/Cargo.toml",
+        "uefi/stub/Cargo.lock", "uefi/stub/build.rs", "uefi/stub/link.ld", "src/log.rs",
+        "scripts/build-uefi.sh",
     ] {
         println!("cargo:rerun-if-changed={dir}/{input}");
     }
-    build_uefi(dir);
+    let test = std::env::var_os("CARGO_FEATURE_TEST_KEYS").is_some();
+    build_uefi(dir, test);
+    let image = if test { "pi4-uefi-test.bin" } else { "pi4-uefi.bin" };
     let tree = format!("{out}/bcm2711-rpi-4-b.dtb");
     fetch(&tree, DTB_URL, DTB_SHA256);
-    println!("cargo:rustc-env=ARM_IMAGE={out}/pi4-uefi.bin");
+    println!("cargo:rustc-env=ARM_IMAGE={out}/{image}");
     println!("cargo:rustc-env=ARM_TREE={tree}");
 }
 
@@ -40,9 +42,12 @@ const DTB_SHA256: &str = "75761b73c284e26623e4d1624bff13e67bce2ae620880efd81d657
 
 /// Run scripts/build-uefi.sh, a cargo build of its own on another nightly
 /// and target: none of what this cargo set for its build script goes with it.
-fn build_uefi(dir: &str) {
+fn build_uefi(dir: &str, test: bool) {
     let mut cmd = Command::new("bash");
     cmd.arg(format!("{dir}/scripts/build-uefi.sh"));
+    if test {
+        cmd.arg("--test-keys");
+    }
     for (key, _) in std::env::vars_os() {
         let key = key.to_string_lossy().into_owned();
         let cargo_own = key.starts_with("CARGO_") && key != "CARGO_HOME";

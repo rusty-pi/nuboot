@@ -12,10 +12,11 @@ for:
   console, storage, the network and a watchdog.
 - **A readable log.** Every line says when, how important, which subsystem and
   what, with the values as named fields.
-- **UEFI with Secure Boot** as the way an operating system is started, with
-  Microsoft's keys by default and the owner's own keys enrolled in their place
-  ([CrabEFI](https://github.com/ArthurHeymans/CrabEFI) in `uefi/`, keys not
-  there yet; see [docs/uefi.md](docs/uefi.md)).
+- **UEFI with Secure Boot** as the way an operating system is started: a
+  small UEFI of its own in `uefi/` that runs only images signed by a key in
+  `db`, Microsoft's UEFI CAs by default, so a distribution's shim and GRUB
+  boot as they are ([docs/uefi.md](docs/uefi.md)). Enrolling the owner's own
+  keys in their place is not there yet.
 - **Everything in the EEPROM**, UEFI included, so the boot medium carries only
   the operating system ([docs/eeprom.md](docs/eeprom.md)).
 
@@ -53,11 +54,11 @@ From the boot ROM to the threads that run for as long as the board is up:
 ```text
    0.001149 INFO  boot     pi4-server-firmware bootcode 1a2b3c4  board="Raspberry Pi 4 Model B" revision=d03115 pcb=1.5
    0.015312 INFO  sdram    bringing up SDRAM  ranks=2 size_gbit=64 part=0 code=0x14 odt=0
-   0.264451 INFO  boot     start4.elf loaded  bytes=234664 entry=0x3ec00200
+   0.264451 INFO  boot     start4.elf loaded  bytes=156172 entry=0x3ec00200
    0.267088 INFO  boot     pi4-server-firmware 1a2b3c4  board="Raspberry Pi 4 Model B" revision=d03115 pcb=1.5
    0.267218 INFO  boot     started by the EEPROM bootloader  medium=eeprom ram_mib=8192 bootloader=1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d
    0.583645 INFO  usb      VL805 xHCI controller up  bus=1 firmware=loaded registers=0x602000000
-   0.595415 INFO  arm      ARM started in UEFI  image_bytes=198592 tree=0xf00000 tree_bytes=56443 memory_mib=8108
+   0.595415 INFO  arm      ARM started in UEFI  image_bytes=54910 tree=0xf00000 tree_bytes=56443 memory_mib=8108
    0.595737 INFO  sched    threads running  threads=2 tick_us=1000
 ```
 
@@ -77,14 +78,15 @@ from the SD card.
 | Console log, board identity, threads | ✅ | ➖ | ➖ | ➖ |
 | Boot watchdog: a hang in UEFI resets the board, `ExitBootServices` hands it to the OS | ✅ | ➖ | ➖ | ➖ |
 | Pi 4B rev 1.4 (`d03114`) and rev 1.2 (`c03112`) | ✅ | ➖ | ➖ | ➖ |
-| ARM started in UEFI: SD card, an EFI application, Ubuntu's signed GRUB | ✅ | ➖ | ➖ | ➖ |
+| ARM started in UEFI: SD card, a signed EFI application | ✅ | ➖ | ➖ | ➖ |
+| Secure Boot: Ubuntu's shim and GRUB run, an image not signed by a key in `db` is refused | ✅ | ➖ | ➖ | ➖ |
 | USB: VL805 firmware from the EEPROM, an EFI application off a USB drive | ✅ | ➖ | ➖ | ➖ |
 | Property mailbox: `NOTIFY_XHCI_RESET` reloads the VL805's firmware | ✅ | ➖ | ➖ | ➖ |
 
 ## Building
 
 With the VC4 toolchain installed ([docs/toolchain.md](docs/toolchain.md)), and
-rustup, `xz` and `curl` for the UEFI firmware and device tree it carries
+rustup, `xz`, `openssl` and `curl` for the UEFI firmware and device tree it carries
 ([docs/uefi.md](docs/uefi.md)), `cargo build` builds the first stage and
 `start4.elf`, the UEFI firmware included.
 
@@ -101,13 +103,16 @@ with ANSI escapes.
 
 [`scenarios/`](scenarios/) holds the boots CI checks: each names an EEPROM
 image, the files of the boot medium and the lines the console has to print.
-After `scripts/build.sh`, and `scripts/build-uefi.sh --test-apps` for the
-EFI applications the UEFI scenarios put on the card:
+After `scripts/build-uefi.sh --test-apps` for the EFI applications the UEFI
+scenarios put on the card, signed with a test key, and `scripts/build.sh` and
+`scripts/build.sh --test-keys` for the EEPROM image and its test build, which
+also trusts that key:
 
 ```bash
 pimu boot --scenario scenarios/sd-boot.yaml
 pimu boot --scenario scenarios/uefi-hello.yaml
-pimu boot --scenario scenarios/uefi-grub.yaml
+pimu boot --scenario scenarios/shim-grub.yaml
+pimu boot --scenario scenarios/secure-boot-refused.yaml
 pimu boot --scenario scenarios/rev14-hello.yaml
 pimu boot --scenario scenarios/usb-hello.yaml
 pimu boot --scenario scenarios/xhci-reset.yaml
@@ -138,7 +143,7 @@ pimu boot --eeprom out/pieeprom.bin --sd boot/
 | `src/mailbox.rs` | The property mailbox |
 | `src/arm.rs`, `src/fdt.rs` | Starting the ARM, and the device tree it gets |
 | `scripts/mkeeprom.py` | Puts `pieeprom.bin` together |
-| `uefi/` | The UEFI firmware: CrabEFI and the Raspberry Pi 4 platform layer it runs on, and the armstub and decompressor the ARM starts in |
+| `uefi/` | The UEFI firmware, its Secure Boot keys, and the armstub and decompressor the ARM starts in |
 
 ## Licence
 

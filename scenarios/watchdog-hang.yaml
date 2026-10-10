@@ -3,14 +3,11 @@ name: "watchdog-hang"
 description: "An EFI application asks for a one-second watchdog and hangs in boot services. start4.elf stops beating the boot watchdog when the second is up, and the board resets and boots again."
 
 boot:
-  eeprom: "../out/pieeprom.bin"
+  eeprom: "../out/pieeprom-test.bin"
   sd:
     files:
       EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-hang.efi"
   input:
-    # Skip the boot menu's countdown, which takes long in the model.
-    - after: "Booting in 5 seconds"
-      text: "\r"
     # Only so `until` waits for the boot after the reset.
     - after: "the boot did not finish in time"
       text: "\r"
@@ -24,7 +21,7 @@ milestones:
     line: "boot watchdog carried into UEFI  span_s=300"
   - why: "The application is running."
     line: "watchdog test: hanging in boot services"
-  - why: "CrabEFI handed SetWatchdogTimer to start4.elf."
+  - why: "The UEFI firmware handed SetWatchdogTimer to start4.elf."
     line: "UEFI set the boot watchdog  asked_s=1 span_s=1"
   - why: "The span ran out with the boot still in UEFI."
     line: "the boot did not finish in time, letting the board reset"

@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "shim-grub"
+description: "The EEPROM image as it goes on a board, trusting Microsoft's UEFI CAs alone. The UEFI firmware checks Ubuntu's shim, signed by Microsoft, and runs it; shim checks GRUB, signed by Canonical, and starts it, and GRUB reads its grub.cfg off the card."
+
+boot:
+  eeprom: "../out/pieeprom.bin"
+  sd:
+    files:
+      EFI/BOOT/BOOTAA64.EFI: "../out/shimaa64.efi"
+      EFI/BOOT/grubaa64.efi: "../out/grubaa64.efi"
+      EFI/ubuntu/grub.cfg: { inline: "set timeout=0\necho \"grub: read its config from the card\"\n" }
+  until: "grub: read its config from the card"
+  wall_secs: 900
+
+milestones:
+  - why: "start4.elf started the ARM."
+    line: "ARM started in UEFI"
+  - why: "The firmware enforces Secure Boot with Microsoft's two UEFI CAs in db."
+    line: "Secure Boot enforced  db=2"
+  - why: "shim's signature chains to the Microsoft UEFI CA 2011."
+    line: "image verified  signer=\"Microsoft Windows UEFI Driver Publisher\" db=\"Microsoft Corporation UEFI CA 2011\""
+  - why: "GRUB started under shim, found its prefix on the card and read grub.cfg."
+    line: "grub: read its config from the card"
