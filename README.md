@@ -85,7 +85,8 @@ from the SD card.
 | Secure Boot: Ubuntu's shim and GRUB run, an image not signed by a key in `db` is refused | ✅ | ➖ | ➖ | ➖ |
 | USB: VL805 firmware from the EEPROM, an EFI application off a USB drive | ✅ | ➖ | ➖ | ➖ |
 | Property mailbox: `NOTIFY_XHCI_RESET` reloads the VL805's firmware | ✅ | ➖ | ➖ | ➖ |
-| TPM 2.0 on the VPU (PCRs, properties, random numbers) behind `EFI_TCG2_PROTOCOL`, shim measuring into it | ✅ | ➖ | ➖ | ➖ |
+| TPM 2.0 on the VPU (PCRs, properties, random numbers) behind `EFI_TCG2_PROTOCOL`, shim measuring into it, firmware and board measured into PCRs 0 and 1 | ✅ | ➖ | ➖ | ➖ |
+| systemd-boot and systemd-stub (a unified kernel image) measuring into the TPM | ✅ | ➖ | ➖ | ➖ |
 | A boot key from the fused private key, handed over once, nothing of it left in the VPU's memory | ✅ | ➖ | ➖ | ➖ |
 
 ## Building
@@ -125,6 +126,7 @@ pimu boot --scenario scenarios/boot-key.yaml
 pimu boot --scenario scenarios/boot-key-unbound.yaml
 pimu boot --scenario scenarios/boot-key-unbound-b.yaml
 pimu boot --scenario scenarios/tpm2-commands.yaml
+pimu boot --scenario scenarios/systemd-boot.yaml
 pimu boot --scenario scenarios/watchdog-hang.yaml
 pimu boot --scenario scenarios/watchdog-exit.yaml
 ```

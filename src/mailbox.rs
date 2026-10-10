@@ -41,8 +41,10 @@ const TAG_NOTIFY_XHCI_RESET: u32 = 0x0003_0058;
 const TAG_GET_BOOT_KEY: u32 = 0x0003_00a0;
 /// Extend a PCR with 32 bytes: the PCR's number, then the digest.
 const TAG_EXTEND_BOOT_MEASUREMENT: u32 = 0x0003_00a1;
-/// A TPM 2.0 command in, its response out ([`tpm2`]). The tag's length word
-/// says how long the command is, and then how long the response.
+/// A TPM 2.0 command in, its response out ([`tpm2`]), in the tag's value: the
+/// command's own header says how long it is, and the response's how long that
+/// is. Linux's firmware interface cannot set the tag's length word, so it is
+/// not what says.
 const TAG_TPM2_COMMAND: u32 = 0x0003_00a3;
 /// Event `n` of what the VPU measured before the ARM started, for the log
 /// UEFI keeps: the index in, then the PCR, the event type, the digest, the
@@ -151,9 +153,10 @@ fn answer(bus: u32) {
                 }
             }
             TAG_TPM2_COMMAND if room >= 10 => {
-                let length = (word(i + 2) & !RESPONSE) as usize;
-                if length > room as usize {
-                    warn!("tpm2", "command longer than the tag's room"; length = length, room = room);
+                let header = [word(value), word(value + 1)];
+                let length = u32::from_be_bytes([(header[0] >> 16) as u8, (header[0] >> 24) as u8, header[1] as u8, (header[1] >> 8) as u8]) as usize;
+                if !(10..=room as usize).contains(&length) || length > tpm2::MAX_COMMAND {
+                    warn!("tpm2", "command of a length the tag cannot hold"; length = length, room = room);
                 } else {
                     let (command, response) = tpm2::buffers();
                     for (n, byte) in command[..length].iter_mut().enumerate() {

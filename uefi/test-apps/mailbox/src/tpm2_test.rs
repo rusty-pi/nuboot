@@ -129,7 +129,7 @@ pub extern "efiapi" fn efi_main(_image: Handle, system_table: *mut SystemTable) 
     run("get-random", Command::new(0x8001, 0x17b).u16(16).done());
     run("hash", Command::new(0x8001, 0x17d).u16(3).put(b"abc").u16(0xb).u32(0x4000_0007).done());
     run("unknown-command", Command::new(0x8001, 0x131).done());
-    run("short-command", &[0x80, 0x01, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x01]);
+    run("short-command", &[0x80, 0x01, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x01, 0x44]);
     say(system_table, "tpm2 test: done\r\n");
     Status::SUCCESS
 }

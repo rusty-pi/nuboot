@@ -37,6 +37,9 @@ const TREE_MAX: usize = 0x0010_0000;
 /// end of the ARM's share of the first gigabyte.
 pub const VPU_BASE: u32 = 0x3ec0_0000;
 
+/// What the OS's driver for the TPM on the VPU matches (`tools/tpm-vpu`).
+const TPM_COMPATIBLE: &[u8] = b"rusty-pi,pi4-vpu-tpm\0";
+
 /// The second bank the ARM gets, above the first gigabyte, and how far it can
 /// reach: the peripherals sit in the 64 MiB below 4 GiB.
 const HIGH_MEMORY: u32 = 0x4000_0000;
@@ -94,9 +97,21 @@ pub fn start(image: &[u8], tree: &[u8]) -> Result<Started, Error> {
     let total = if handover::present() { handover::sdram_mib() as u64 } else { 1024 } << 20;
     let mut reg = [0u8; MEMORY_REG_MAX];
     let reg_len = memory_reg(total, &mut reg);
-    let tree_bytes = fdt::copy_with_property(
+    // The TPM's node goes in first, into the second half of the window, and
+    // the memory's `reg` is set as the tree is copied from there to where it
+    // belongs.
+    let staged = fdt::copy_with_node(
         tree,
-        arm_memory(TREE_ADDR, TREE_MAX),
+        arm_memory(TREE_ADDR + TREE_MAX as u32 / 2, TREE_MAX / 2),
+        &[b""],
+        b"vpu-tpm",
+        &[(b"compatible", TPM_COMPATIBLE)],
+    )
+    .ok_or(Error::Tree)?;
+    let staged: &[u8] = arm_memory(TREE_ADDR + TREE_MAX as u32 / 2, staged);
+    let tree_bytes = fdt::copy_with_property(
+        staged,
+        arm_memory(TREE_ADDR, TREE_MAX / 2),
         &[b"", b"memory@0"],
         b"reg",
         &reg[..reg_len],

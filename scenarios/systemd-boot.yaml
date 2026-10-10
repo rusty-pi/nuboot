@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "systemd-boot"
+description: "Debian's systemd-boot, signed with the test key, reads its configuration from the card and starts the unified kernel image it finds there, whose systemd-stub starts the kernel inside it. Both measure into the TPM on the VPU through EFI_TCG2_PROTOCOL as it goes, on top of what the firmware measured."
+
+boot:
+  eeprom: "../out/pieeprom-test.bin"
+  sd:
+    files:
+      EFI/BOOT/BOOTAA64.EFI: "../out/systemd-bootaa64.efi"
+      EFI/Linux/test.efi: "../out/uki.efi"
+      loader/loader.conf: { inline: "timeout 0\nconsole-mode keep\n" }
+  until: "hello test: done"
+  wall_secs: 900
+
+milestones:
+  - why: "UEFI verified systemd-boot against the test key."
+    line: "image verified  signer=\"pi4-server-firmware test key\" db=\"pi4-server-firmware test key\" path=VenHw/SD(0)/HD(1)\\EFI\\BOOT\\BOOTAA64.EFI"
+  - why: "systemd-boot measured loader.conf into PCR 5 through EFI_TCG2_PROTOCOL."
+    line: "boot measurement extended  pcr=5"
+  - why: "UEFI verified the unified kernel image systemd-boot found, and measured it into PCR 4."
+    line: "image verified  signer=\"pi4-server-firmware test key\" db=\"pi4-server-firmware test key\" path=VenHw/SD(0)/HD(1)\\EFI\\Linux\\test.efi"
+  - why: "systemd-stub measured the unified kernel image's sections into PCR 11."
+    line: "boot measurement extended  pcr=11"
+  - why: "The stub started the kernel inside the image, which here is the hello application, and it ran."
+    line: "hello test: done"

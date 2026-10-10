@@ -24,6 +24,9 @@
 #                     the same crate: ask for the boot key bound to PCR 4 or
 #                     to nothing (two images) and try to measure after it;
 #                     send the TPM on the VPU a series of commands
+#   out/systemd-bootaa64.efi, out/uki.efi
+#                     Debian's systemd-boot, and a unified kernel image of its
+#                     systemd-stub around hello.efi, signed with the test key
 #   out/shimaa64.efi, out/grubaa64.efi
 #                     Ubuntu's shim, signed by Microsoft, and its GRUB,
 #                     signed by Canonical
@@ -35,6 +38,8 @@ set -euo pipefail
 
 GRUB_DEB="${GRUB_DEB:-pool/main/g/grub2-signed/grub-efi-arm64-signed_1.202.5+2.12-1ubuntu7.3_arm64.deb}"
 GRUB_SHA256="${GRUB_SHA256:-728d506c28c56d3e4372f5f5b143d837d96b202c82ed05cbbd3ec27a5d4de955}"
+SYSTEMD_BOOT_URL="${SYSTEMD_BOOT_URL:-https://deb.debian.org/debian/pool/main/s/systemd/systemd-boot-efi_257.13-1~deb13u1_arm64.deb}"
+SYSTEMD_BOOT_SHA256="${SYSTEMD_BOOT_SHA256:-0e4529d9a72b35c31f34151ef8a0df20f322cfef679f4f5439394e60505b91a2}"
 SHIM_DEB="${SHIM_DEB:-pool/main/s/shim-signed/shim-signed_1.58+15.8-0ubuntu1_arm64.deb}"
 SHIM_SHA256="${SHIM_SHA256:-58b0f8a0f43bdff2122af8f52b05a5eb73b1964079e36e3eed8d06b4d5164917}"
 
@@ -145,5 +150,31 @@ deb() {
 }
 deb grub "$GRUB_DEB" "$GRUB_SHA256"
 cp "$tmp/grub/usr/lib/grub/arm64-efi-signed/grubaa64.efi.signed" "$out/grubaa64.efi"
+# systemd-boot, from Debian, signed with the test key.
+mkdir -p "$tmp/systemd-boot"
+curl -sSfL -o "$tmp/systemd-boot/p.deb" "$SYSTEMD_BOOT_URL"
+echo "$SYSTEMD_BOOT_SHA256  $tmp/systemd-boot/p.deb" | sha256sum -c --quiet
+(cd "$tmp/systemd-boot" && ar x p.deb && tar xf data.tar.*)
+sign "$tmp/systemd-boot/usr/lib/systemd/boot/efi/systemd-bootaa64.efi" "$out/systemd-bootaa64.efi"
+# A unified kernel image around systemd-stub, whose kernel is the hello
+# application, signed with the test key as well. The stub checks for the
+# arm64 kernel image magic, which sits in the DOS header's unused bytes,
+cp "$hello/target/aarch64-unknown-uefi/release/hello.efi" "$tmp/kernel.efi"
+printf 'ARM\x64' | dd of="$tmp/kernel.efi" bs=1 seek=56 conv=notrunc 2>/dev/null
+# and the EFI stub version, 1.1 (initrd through LINUX_INITRD_MEDIA), in the
+# optional header's image version fields.
+python3 - "$tmp/kernel.efi" <<'PY'
+import struct, sys
+data = bytearray(open(sys.argv[1], "rb").read())
+(pe,) = struct.unpack_from("<I", data, 0x3C)
+struct.pack_into("<HH", data, pe + 24 + 44, 1, 1)
+open(sys.argv[1], "wb").write(data)
+PY
+sign "$tmp/kernel.efi" "$tmp/kernel-signed.efi"
+printf 'ID=test\nNAME="Test"\nPRETTY_NAME="Test OS"\nVERSION_ID=1\n' >"$tmp/osrel"
+printf 'console=ttyAMA0 root=/dev/test' >"$tmp/cmdline"
+"$here/scripts/mkuki.py" "$tmp/systemd-boot/usr/lib/systemd/boot/efi/linuxaa64.efi.stub" "$tmp/uki.efi" \
+  --section .osrel="$tmp/osrel" --section .cmdline="$tmp/cmdline" --section .linux="$tmp/kernel-signed.efi"
+sign "$tmp/uki.efi" "$out/uki.efi"
 deb shim "$SHIM_DEB" "$SHIM_SHA256"
 cp "$tmp/shim/usr/lib/shim/shimaa64.efi.signed.latest" "$out/shimaa64.efi"

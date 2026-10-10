@@ -35,7 +35,10 @@ impl fmt::Write for Console {
     }
 }
 
-/// A byte from the receive FIFO, if one is there.
+/// A byte from the receive FIFO, if one is there. The flag is read twice: a
+/// character just written makes one read of `FR` say only that the
+/// transmitter is busy, without the receiver's flags, which would be taken
+/// for a byte that is not there.
 pub fn getc() -> Option<u8> {
-    if read32(FR) & FR_RXFE != 0 { None } else { Some(read32(DR) as u8) }
+    if read32(FR) & FR_RXFE != 0 || read32(FR) & FR_RXFE != 0 { None } else { Some(read32(DR) as u8) }
 }

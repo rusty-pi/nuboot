@@ -122,6 +122,8 @@ jobs:
             out/boot-key-unbound-b.efi
             out/tpm2-test.efi
             out/shimaa64.efi
+            out/systemd-bootaa64.efi
+            out/uki.efi
             out/grubaa64.efi
           if-no-files-found: error
           retention-days: 7
