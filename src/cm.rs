@@ -47,3 +47,26 @@ pub fn set_generator(ctl_off: u32, div: u32, ctl: u32) {
         timer::wait(SETTLE_US, || mmio::read(reg) & BUSY != 0);
     }
 }
+
+/// An A2W register the first stage writes before it starts the PLLs.
+pub const A2W_1390: u32 = 0x1390;
+
+/// Bit 9 of `0x7E50_0220`, which the stock stages set once the PLLs are up
+/// and skip their own PLL start-up on. The block behind the address is not
+/// identified.
+const PLL_FLAGS: u32 = 0x7e50_0220;
+const PLLS_STARTED: u32 = 1 << 9;
+
+pub fn set_plls_started() {
+    mmio::write(PLL_FLAGS, mmio::read(PLL_FLAGS) | PLLS_STARTED);
+}
+
+/// A clock manager or A2W register, by its offset from `0x7E10_1000`; the
+/// password goes in with the value.
+pub fn write(off: u32, value: u32) {
+    mmio::write(BASE + off, PASSWD | value);
+}
+
+pub fn read(off: u32) -> u32 {
+    mmio::read(BASE + off)
+}

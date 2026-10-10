@@ -1,16 +1,12 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "uefi-hello"
-description: "The stock EEPROM bootloader starts start4.elf, which starts the ARM in the UEFI firmware it carries. CrabEFI finds the SD card and runs \\EFI\\BOOT\\BOOTAA64.EFI."
+description: "This tree's EEPROM image, with nothing stock in it but the SDRAM training firmware. The first stage brings up the SDRAM and starts start4.elf out of the EEPROM, which starts the ARM in CrabEFI. CrabEFI runs \\EFI\\BOOT\\BOOTAA64.EFI off the SD card."
 
 boot:
-  eeprom: "https://raw.githubusercontent.com/raspberrypi/rpi-eeprom/master/firmware-2711/latest/pieeprom-2026-08-04.bin"
+  eeprom: "../out/pieeprom.bin"
   sd:
     files:
-      start4.elf: "../out/start4.elf"
       EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
-  boot_order: "0x1"
-  bootconf:
-    - "BOOT_UART=1"
   input:
     # Skip the boot menu's countdown, which takes long in the model.
     - after: "Booting in 5 seconds"
@@ -19,6 +15,12 @@ boot:
   wall_secs: 900
 
 milestones:
+  - why: "The boot ROM entered the first stage."
+    line: "pi4-server-firmware bootcode"
+  - why: "The first stage loaded start4.elf out of the EEPROM after bringing up the SDRAM."
+    line: "start4.elf loaded"
+  - why: "start4.elf found the handover the first stage left."
+    line: "medium=eeprom"
   - why: "start4.elf started the ARM."
     line: "ARM started in UEFI"
   - why: "The armstub took the cores to EL2 and the primary core decompressed CrabEFI and entered it."

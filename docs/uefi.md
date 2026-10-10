@@ -51,12 +51,10 @@ scripts/build-uefi.sh --test-apps             # also out/hello.efi and out/gruba
 
 ## Size
 
-`pi4-uefi.bin` is what goes into the EEPROM, next to this tree's VPU firmware
-in place of the stock bootloader and `start4.elf`. The EEPROM is 512 KiB. Of
-that, about 235 KB goes to what the image carries besides the firmware: the
-first-stage bootcode (about 62 KB), the DRAM set-up blobs (102 KB as the stock
-image compresses them) and the VL805 firmware (68 KB). That leaves about
-290 KB for the VPU firmware and `pi4-uefi.bin` together.
+`pi4-uefi.bin` goes into the EEPROM inside `start4.elf`
+([eeprom.md](eeprom.md)). The EEPROM is 512 KiB, of which the first stage and
+the SDRAM training firmware take about 144 KB, `start4.elf` with the default
+build and the device tree 235 KB, and 145 KB is free.
 
 | build | payload | `pi4-uefi.bin` |
 |---|---|---|
@@ -66,7 +64,7 @@ image compresses them) and the VL805 firmware (68 KB). That leaves about
 
 ## Running it in pimu
 
-`start4.elf` carries the default build. After `scripts/build-uefi.sh
+`out/pieeprom.bin` carries the default build. After `scripts/build-uefi.sh
 --test-apps` and `scripts/build.sh`:
 
 ```bash
@@ -80,7 +78,7 @@ pimu boot --scenario scenarios/uefi-grub.yaml    # Ubuntu's signed GRUB reads it
   relocatable.
 - The device tree is Raspberry Pi's for the Pi 4B whatever the board, with
   nothing filled in but `/memory@0`.
-- The ARM runs at the clock the bootloader left it at.
+- Nothing sets the ARM's clock.
 - After `ExitBootServices` the runtime `ResetSystem` is declared as PSCI over
   SMC, which nothing on this board answers; Linux resets through
   `bcm2835-wdt`.

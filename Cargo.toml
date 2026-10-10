@@ -11,6 +11,11 @@ test = false
 bench = false
 
 [[bin]]
+name = "bootcode"
+test = false
+bench = false
+
+[[bin]]
 name = "start4"
 test = false
 bench = false

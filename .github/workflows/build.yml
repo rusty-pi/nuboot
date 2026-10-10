@@ -1,7 +1,7 @@
 name: build
 
-# Every push builds start4.elf and boots each scenario in `scenarios/` in
-# pimu.
+# Every push builds pieeprom.bin and start4.elf and boots each scenario in
+# `scenarios/` in pimu.
 on:
   push:
     branches: [main]
@@ -50,6 +50,13 @@ jobs:
             exit 1
           fi
           rm vc4-elf-*.deb
+
+      # scripts/mkeeprom.py puts the EEPROM image together.
+      - name: Install Python
+        run: |
+          command -v python3 >/dev/null && exit 0
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3
 
       # The action brings rustup itself, which a self-hosted runner has only
       # once something has installed it; the toolchain built with is the one
@@ -102,6 +109,7 @@ jobs:
         with:
           name: firmware
           path: |
+            out/pieeprom.bin
             out/start4.elf
             out/hello.efi
             out/grubaa64.efi

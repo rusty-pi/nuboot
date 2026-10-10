@@ -4,6 +4,36 @@ use core::fmt;
 
 use crate::otp;
 
+/// Board types in the revision code.
+pub const TYPE_4B: u32 = 0x11;
+
+/// The identity rows the SDRAM bring-up needs.
+#[derive(Clone, Copy)]
+pub struct Board {
+    /// The revision code (`0x00d03115`: a Pi 4B rev 1.5).
+    pub revision: u32,
+    pub ext_revision: u32,
+    pub serial: u32,
+}
+
+impl Board {
+    pub fn read() -> Board {
+        Board {
+            revision: otp::read(otp::REVISION),
+            ext_revision: otp::read(otp::EXT_REVISION),
+            serial: otp::read(otp::SERIAL),
+        }
+    }
+
+    pub fn kind(&self) -> u32 {
+        (self.revision >> 4) & 0xff
+    }
+
+    pub fn maker(&self) -> u32 {
+        (self.revision >> 16) & 0xf
+    }
+}
+
 /// The board's revision code, as `/proc/cpuinfo` prints it (`d03115`).
 #[derive(Clone, Copy)]
 pub struct Revision(pub u32);

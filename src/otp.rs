@@ -16,8 +16,12 @@ const STATUS_DONE: u32 = 1 << 1;
 /// How long each half of the poll waits; a row takes microseconds.
 const TIMEOUT_US: u32 = 1000;
 
+/// The board's serial number.
+pub const SERIAL: u32 = 28;
 /// The board's revision code (`0x00d03115`: a Pi 4B rev 1.5).
 pub const REVISION: u32 = 30;
+/// The extended revision: its bits 8-16 describe the SDRAM parts.
+pub const EXT_REVISION: u32 = 33;
 
 fn open() {
     mmio::write(CLKMUX, 3);

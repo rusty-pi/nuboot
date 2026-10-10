@@ -1,9 +1,10 @@
 # pi4-server-firmware
 
-Raspberry Pi 4 VPU firmware for headless servers, written in Rust. It is the
-`start4.elf` the EEPROM bootloader loads from the boot medium, built around a
-small preemptive thread scheduler and with its own idea of what the firmware
-is for:
+Raspberry Pi 4 firmware for headless servers, written in Rust: an EEPROM
+image with its own first stage and its own VPU firmware (`start4.elf`) in
+place of Raspberry Pi's bootloader and `start4.elf`, built around a small
+preemptive thread scheduler and with its own idea of what the firmware is
+for:
 
 - **Zero config.** No `config.txt`: the firmware takes what it needs from the
   board and the boot medium.
@@ -16,45 +17,50 @@ is for:
   ([CrabEFI](https://github.com/ArthurHeymans/CrabEFI) in `uefi/`, keys not
   there yet; see [docs/uefi.md](docs/uefi.md)).
 - **Everything in the EEPROM**, UEFI included, so the boot medium carries only
-  the operating system. Until then, `start4.elf` is loaded from the medium.
+  the operating system ([docs/eeprom.md](docs/eeprom.md)).
 
 Out of scope: HATs, IPv6 and ACPI (the operating system gets a device tree).
 
 > [!NOTE]
-> This is the start of the firmware, not a usable one: it boots, logs the
-> board, takes over the boot watchdog, starts the ARM in UEFI and runs its
-> threads, but has not booted an operating system yet.
+> This is the start of the firmware, not a usable one: it brings up the SDRAM,
+> starts the ARM in UEFI and runs its threads, but has not booted an operating
+> system yet, and the EEPROM image runs only in pimu until its first stage is
+> signed for the board.
 
 ## What it does
 
-From the bootloader's hand-off to the threads that run for as long as the
-board is up:
+From the boot ROM to the threads that run for as long as the board is up:
 
-1. Programs the PL011 on GPIO 14/15 for 115200 8N1 itself, so the log is on
+1. The first stage, which the boot ROM loads out of the EEPROM, starts the
+   clocks, brings up the SDRAM with Raspberry Pi's training firmware and
+   starts `start4.elf` out of the EEPROM ([docs/eeprom.md](docs/eeprom.md)).
+2. `start4.elf` programs the PL011 on GPIO 14/15 for 115200 8N1 itself, so the log is on
    the serial console with no setting anywhere.
-2. Logs the firmware's commit, the board's model and revision code, the boot
+3. Logs the firmware's commit, the board's model and revision code, the boot
    medium, the RAM size and the bootloader's version.
-3. Takes over the boot watchdog when the bootloader armed one
-   (`BOOT_WATCHDOG_TIMEOUT` in the EEPROM's `bootconf.txt`), beating it from a
-   timer interrupt, and hands it back when the boot is over.
-4. Starts the ARM in the UEFI firmware it carries, with the board's device
+4. Takes over the boot watchdog when a stock bootloader armed one
+   (`BOOT_WATCHDOG_TIMEOUT` in its `bootconf.txt`), beating it from a timer
+   interrupt, and hands it back when the boot is over.
+5. Starts the ARM in the UEFI firmware it carries, with the board's device
    tree ([docs/uefi.md](docs/uefi.md)). UEFI finds the SD card and boots
    `\EFI\BOOT\BOOTAA64.EFI` from it.
-5. Starts the scheduler: a service thread and a monitor thread that reports
+6. Starts the scheduler: a service thread and a monitor thread that reports
    each stack's high-water mark as it grows.
 
 ```text
-   2.764642 INFO  boot     pi4-server-firmware 1a2b3c4  board="Raspberry Pi 4 Model B" revision=d03115 pcb=1.5
-   2.764772 INFO  boot     started by the EEPROM bootloader  medium=sd ram_mib=8192 bootloader=0a7ef05fedd8ed9ab9c58591ddf79a60a78dd4b2
-   2.764902 INFO  watchdog boot watchdog running  budget_s=60 left_ms=57236
-   2.775829 INFO  arm      ARM started in UEFI  image_bytes=154726 tree=0xf00000 tree_bytes=56443 memory_mib=8108
-   2.775967 INFO  watchdog boot watchdog off  left_ms=57225
-   2.776154 INFO  sched    threads running  threads=2 tick_us=1000
+   0.001149 INFO  boot     pi4-server-firmware bootcode 1a2b3c4  board="Raspberry Pi 4 Model B" revision=d03115 pcb=1.5
+   0.015312 INFO  sdram    bringing up SDRAM  ranks=2 size_gbit=64 part=0 code=0x14 odt=0
+   0.264451 INFO  boot     start4.elf loaded  bytes=234664 entry=0x3ec00200
+   0.267088 INFO  boot     pi4-server-firmware 1a2b3c4  board="Raspberry Pi 4 Model B" revision=d03115 pcb=1.5
+   0.267218 INFO  boot     started by the EEPROM bootloader  medium=eeprom ram_mib=8192 bootloader=1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d
+   0.278197 INFO  arm      ARM started in UEFI  image_bytes=154726 tree=0xf00000 tree_bytes=56443 memory_mib=8108
+   0.278451 INFO  sched    threads running  threads=2 tick_us=1000
 ```
 
 [docs/logging.md](docs/logging.md) describes the log format.
 
-It runs under the stock EEPROM bootloader.
+`start4.elf` also runs on its own under the stock EEPROM bootloader, loaded
+from the SD card.
 
 ## Tested
 
@@ -62,7 +68,8 @@ It runs under the stock EEPROM bootloader.
 
 | | pimu | Pi 4B | Pi 400 | CM4 |
 |---|---|---|---|---|
-| Started by the stock EEPROM bootloader from SD | ✅ | ➖ | ➖ | ➖ |
+| Own EEPROM image: first stage, SDRAM, `start4.elf` from the EEPROM | ✅ | ➖ | ➖ | ➖ |
+| `start4.elf` started by the stock EEPROM bootloader from SD | ✅ | ➖ | ➖ | ➖ |
 | Console log, board identity, boot watchdog, threads | ✅ | ➖ | ➖ | ➖ |
 | ARM started in UEFI: SD card, an EFI application, Ubuntu's signed GRUB | ✅ | ➖ | ➖ | ➖ |
 
@@ -76,7 +83,9 @@ rustup, `xz` and `curl` for the UEFI firmware and device tree it carries
 scripts/build.sh
 ```
 
-gives `out/start4.elf`. `scripts/build.sh --features color` colours the log
+gives `out/pieeprom.bin`, and `out/start4.elf` on its own. It also needs
+`python3`, and downloads the stock EEPROM image the SDRAM training firmware is
+taken from. `scripts/build.sh --features color` colours the log
 with ANSI escapes.
 
 ## Running it in pimu
@@ -92,24 +101,26 @@ pimu boot --scenario scenarios/uefi-hello.yaml
 pimu boot --scenario scenarios/uefi-grub.yaml
 ```
 
-To run it by hand, put `out/start4.elf` in a directory and boot that
-directory as the SD card:
+To run it by hand, boot the image with a directory as the SD card:
 
 ```bash
-pimu boot --eeprom https://raw.githubusercontent.com/raspberrypi/rpi-eeprom/master/firmware-2711/latest/pieeprom-2026-08-04.bin --sd boot/
+pimu boot --eeprom out/pieeprom.bin --sd boot/
 ```
 
 ## Source
 
 | | |
 |---|---|
+| `src/bin/bootcode.rs` | The first stage: clocks, SDRAM, then `start4.elf` |
 | `src/bin/start4.rs` | The firmware: the boot, then the threads |
 | `src/log.rs` | The structured log and its console rendering |
 | `src/sched.rs`, `src/critical.rs`, `src/sync.rs`, `src/stack.rs` | Threads, critical sections, semaphores, queues and locks, stack guards |
 | `src/idle.rs`, `src/timer.rs`, `src/stc.rs` | Interrupts, sleeping, the system timer |
 | `src/watchdog.rs`, `src/handover.rs` | The boot watchdog, and the state the bootloader hands over |
 | `src/console.rs`, `src/cm.rs`, `src/otp.rs`, `src/board.rs` | The PL011, clock generators, OTP and the board's identity |
+| `src/sdram.rs`, `src/spi_flash.rs`, `src/eeprom.rs`, `src/elf.rs`, `src/cache.rs` | SDRAM bring-up, the EEPROM and its sections, loading and entering `start4.elf` |
 | `src/arm.rs`, `src/fdt.rs` | Starting the ARM, and the device tree it gets |
+| `scripts/mkeeprom.py` | Puts `pieeprom.bin` together |
 | `uefi/` | The UEFI firmware: CrabEFI and the Raspberry Pi 4 platform layer it runs on, and the armstub and decompressor the ARM starts in |
 
 ## Licence

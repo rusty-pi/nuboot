@@ -1,6 +1,7 @@
 //! The state the EEPROM bootloader leaves for `start4.elf`: the tagged block
 //! at ARM physical `0x40000`, whose address it writes into the image's `BSTA`
-//! word.
+//! word. This tree's own first stage leaves the same block, with only the
+//! fields below filled in.
 
 use crate::mmio;
 
@@ -21,6 +22,28 @@ const BOOT_DEVICE: u32 = 0x198;
 /// microseconds, and the budget itself in seconds.
 const BOOT_WATCHDOG_END_AT: u32 = 0x300;
 const BOOT_WATCHDOG_TIMEOUT: u32 = 0x308;
+/// The whole block as the stock bootcode lays it out.
+const LEN: u32 = 0x3b4;
+
+/// The medium code for firmware that came out of the EEPROM itself. Not a
+/// stock code: only this tree's first stage writes it.
+pub const DEVICE_EEPROM: u32 = 0x10;
+
+/// Leave the block for the next stage: the version (cut to fit), the SDRAM
+/// in gigabits and the boot medium, and everything else zero, so no boot
+/// watchdog.
+pub fn write(version: &[u8], sdram_gbit: u32, device: u32) {
+    for off in (0..LEN).step_by(4) {
+        mmio::write(ADDR + off, 0);
+    }
+    mmio::write(ADDR, MAGIC);
+    mmio::write(ADDR + 4, LEN);
+    for (i, &b) in version.iter().take(VERSION_LEN - 1).enumerate() {
+        mmio::write8(ADDR + VERSION + i as u32, b);
+    }
+    mmio::write(ADDR + SDRAM_GBIT, sdram_gbit);
+    mmio::write(ADDR + BOOT_DEVICE, device);
+}
 
 pub fn present() -> bool {
     mmio::read(ADDR) == MAGIC
@@ -61,6 +84,7 @@ pub fn boot_device() -> BootDevice {
         2 => BootDevice::Usb,
         4 => BootDevice::UsbC,
         5 => BootDevice::Ramdisk,
+        DEVICE_EEPROM => BootDevice::Eeprom,
         other => BootDevice::Other(other),
     }
 }
@@ -74,6 +98,8 @@ pub enum BootDevice {
     /// A drive on the BCM2711's own xHCI, behind the USB-C socket.
     UsbC,
     Ramdisk,
+    /// The EEPROM, with this tree's first stage.
+    Eeprom,
     Other(u32),
 }
 
@@ -85,6 +111,7 @@ impl core::fmt::Display for BootDevice {
             BootDevice::Usb => f.write_str("usb"),
             BootDevice::UsbC => f.write_str("usb-c"),
             BootDevice::Ramdisk => f.write_str("ramdisk"),
+            BootDevice::Eeprom => f.write_str("eeprom"),
             BootDevice::Other(code) => write!(f, "unknown-{code}"),
         }
     }

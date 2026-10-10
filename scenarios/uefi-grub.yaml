@@ -1,17 +1,13 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "uefi-grub"
-description: "The stock EEPROM bootloader starts start4.elf, which starts the ARM in the UEFI firmware it carries. CrabEFI finds the SD card and starts Ubuntu's signed GRUB from \\EFI\\BOOT\\BOOTAA64.EFI."
+description: "This tree's EEPROM image starts start4.elf out of the EEPROM, which starts the ARM in the UEFI firmware it carries. CrabEFI finds the SD card and starts Ubuntu's signed GRUB from \\EFI\\BOOT\\BOOTAA64.EFI."
 
 boot:
-  eeprom: "https://raw.githubusercontent.com/raspberrypi/rpi-eeprom/master/firmware-2711/latest/pieeprom-2026-08-04.bin"
+  eeprom: "../out/pieeprom.bin"
   sd:
     files:
-      start4.elf: "../out/start4.elf"
       EFI/BOOT/BOOTAA64.EFI: "../out/grubaa64.efi"
       EFI/ubuntu/grub.cfg: { inline: "set timeout=0\necho \"grub: read its config from the card\"\n" }
-  boot_order: "0x1"
-  bootconf:
-    - "BOOT_UART=1"
   input:
     # Skip the boot menu's countdown, which takes long in the model.
     - after: "Booting in 5 seconds"

@@ -2,10 +2,12 @@ use std::process::Command;
 
 fn main() {
     let dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();
+    println!("cargo:rustc-link-arg-bin=bootcode=-T{dir}/bootcode.ld");
     println!("cargo:rustc-link-arg-bin=start4=-T{dir}/start4.ld");
     // start4 keeps its relocations, so the bootloader can place it lower for a
     // USB boot.
     println!("cargo:rustc-link-arg-bin=start4=-Wl,-q");
+    println!("cargo:rerun-if-changed=bootcode.ld");
     println!("cargo:rerun-if-changed=start4.ld");
     commit();
     arm_files(&dir);
