@@ -1,10 +1,10 @@
-/* CrabEFI on the Raspberry Pi 4, entered at the address the VPU firmware's
- * armstub jumps to with x0 = the device tree. */
+/* CrabEFI on the Raspberry Pi 4. The stub in stub/ decompresses it here and
+ * enters it with x0 = the device tree. */
 OUTPUT_FORMAT("elf64-littleaarch64")
 OUTPUT_ARCH(aarch64)
 ENTRY(_start)
 
-LOAD_BASE = 0x200000;
+LOAD_BASE = 0x1000000;
 
 PHDRS {
     code PT_LOAD FLAGS(5);
@@ -70,7 +70,6 @@ SECTIONS {
         . += 128K;
         _deferred_buffer_end = .;
     } :defer
-    _image_size = _deferred_buffer_end - LOAD_BASE;
 
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) *(.debug*) }
 }

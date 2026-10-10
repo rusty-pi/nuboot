@@ -24,11 +24,9 @@ boot:
   wall_secs: 900
 
 milestones:
-  - why: "start4.elf handed the ARM to the payload."
-    line: "pi4-uefi: device tree at"
-  - why: "CrabEFI's SDHCI driver brought up the card on EMMC2."
-    line: "SDHCI: Card initialized"
-  - why: "The boot manager found the removable-media path on the card."
-    line: "Found 1 boot entries"
+  - why: "start4.elf started the stub, which decompressed the payload and entered it."
+    line: "[CrabEFI] PL011 serial initialized"
+  - why: "CrabEFI's SDHCI driver brought up the card on EMMC2 and the boot manager found the removable-media path on it."
+    line: "Booting Boot Entry (eMMC)"
   - why: "The EFI application ran and returned."
     line: "Hello from CrabEFI!"

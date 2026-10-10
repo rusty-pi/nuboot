@@ -2,11 +2,15 @@
 # Build the UEFI payload into out/pi4-uefi.bin, and with --test-apps also what
 # uefi/scenarios/ boot it with:
 #
+# out/pi4-uefi.bin is the stub in uefi/stub/ with the payload, coded with xz's
+# ARM64 filter and LZMA, inside it; out/pi4-uefi-payload.bin is the payload as
+# it runs.
+#
 #   out/hello.efi     CrabEFI's minimal test application
 #   out/grubaa64.efi  Ubuntu's signed GRUB for arm64
 #
-# Extra arguments go to cargo (`--features secure-boot`). Needs rustup and
-# llvm-objcopy (rustup's llvm-tools component provides one).
+# Extra arguments go to cargo (`--features secure-boot`). Needs rustup, xz and
+# llvm-objcopy and llvm-nm (rustup's llvm-tools component provides them).
 set -euo pipefail
 
 GRUB_DEB="${GRUB_DEB:-pool/main/g/grub2-signed/grub-efi-arm64-signed_1.202.5+2.12-1ubuntu7.3_arm64.deb}"
@@ -24,17 +28,39 @@ for arg in "$@"; do
 done
 mkdir -p "$out"
 
-objcopy() {
-  if command -v llvm-objcopy >/dev/null; then
-    llvm-objcopy "$@"
+# The LZMA literal/position bits that suit AArch64 code: lc=1, lp=2, pb=2.
+LZMA_OPTS="preset=9e,lc=1,lp=2,pb=2"
+LZMA_PROPS=$(((2 * 5 + 2) * 9 + 1))
+
+llvm() {
+  local tool="$1"
+  shift
+  if command -v "llvm-$tool" >/dev/null; then
+    "llvm-$tool" "$@"
   else
-    (cd "$here/uefi" && "$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-objcopy" "$@")
+    (cd "$here/uefi" && "$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-$tool" "$@")
   fi
+}
+
+symbol() {
+  llvm nm "$1" | awk -v name="$2" '$3 == name { print "0x" $1 }'
 }
 
 "$here/scripts/fetch-crabefi.sh"
 (cd "$here/uefi" && cargo build --release "${cargo_args[@]}")
-objcopy -O binary "$here/uefi/target/aarch64-unknown-none/release/pi4-uefi" "$out/pi4-uefi.bin"
+elf="$here/uefi/target/aarch64-unknown-none/release/pi4-uefi"
+llvm objcopy -O binary "$elf" "$out/pi4-uefi-payload.bin"
+xz -c --format=raw --arm64 --lzma1="$LZMA_OPTS" "$out/pi4-uefi-payload.bin" >"$out/pi4-uefi-payload.lzma"
+
+(cd "$here/uefi/stub" &&
+  PI4_UEFI_LZMA="$out/pi4-uefi-payload.lzma" \
+  PI4_UEFI_PROPS="$LZMA_PROPS" \
+  PI4_UEFI_LEN="$(stat -c %s "$out/pi4-uefi-payload.bin")" \
+  PI4_UEFI_BASE="$(symbol "$elf" _start)" \
+  PI4_UEFI_END="$(symbol "$elf" _deferred_buffer_end)" \
+    cargo build --release)
+llvm objcopy -O binary "$here/uefi/stub/target/aarch64-unknown-none/release/pi4-uefi-stub" "$out/pi4-uefi.bin"
+echo "out/pi4-uefi-payload.bin: $(stat -c %s "$out/pi4-uefi-payload.bin") bytes"
 echo "out/pi4-uefi.bin: $(stat -c %s "$out/pi4-uefi.bin") bytes"
 
 [[ $test_apps == 1 ]] || exit 0

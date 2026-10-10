@@ -7,13 +7,16 @@ description = "CrabEFI on the Raspberry Pi 4: the ARM payload the VPU firmware s
 
 [dependencies]
 # scripts/fetch-crabefi.sh checks it out at the pinned revision with patches/crabefi applied.
+# Without its default features it leaves out AHCI, NVMe, EHCI/OHCI, direct
+# Linux boot and El Torito, which this board does not use.
 crabefi = { package = "crabefi-core", path = "../third_party/crabefi/crabefi-core", default-features = false, features = [
   "bundled-runtime-image",
   "global-allocator",
   "platform-entry",
 ] }
 fdt = "0.1.5"
-log = "0.4"
+# Info and debug records take a seventh of the compressed image.
+log = { version = "0.4", features = ["release_max_level_warn"] }
 
 [features]
 default = []

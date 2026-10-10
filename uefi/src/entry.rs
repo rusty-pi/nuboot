@@ -1,11 +1,6 @@
-//! The first instructions: the armstub enters here at EL2 with the MMU and
-//! caches off and x0 holding the device tree. Build an identity map, turn the
-//! MMU on, set up a stack and go to `pi4_main`.
-//!
-//! The image starts with an arm64 `Image` header (Linux's
-//! `Documentation/arch/arm64/booting.rst`), so a loader that reads it places
-//! the image 2 MiB-aligned at `0x200000`, the address it is linked at,
-//! instead of at the legacy `0x80000`.
+//! The first instructions: the stub enters here at EL2 with the MMU and caches
+//! off and x0 holding the device tree, as the armstub left them. Build an
+//! identity map, turn the MMU on, set up a stack and go to `pi4_main`.
 //!
 //! The map, in blocks:
 //!
@@ -23,15 +18,6 @@ global_asm!(
 .section .text.entry, "ax"
 .global _start
 _start:
-    b 0f                        // code0
-    .word 0                     // code1
-    .quad 0                     // text_offset
-    .quad _image_size           // image_size: everything up to the end of the deferred buffer
-    .quad 2                     // flags: little-endian, 4 KiB pages, 2 MiB-aligned base
-    .quad 0, 0, 0               // res2..res4
-    .ascii "ARM\x64"            // magic
-    .word 0                     // res5
-0:
     mov x19, x0
 
     adrp x1, exception_vectors

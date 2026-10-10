@@ -7,3 +7,4 @@ rustc-wrapper = ""
 
 [unstable]
 build-std = ["alloc"]
+build-std-features = ["optimize_for_size"]

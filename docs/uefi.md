@@ -3,8 +3,10 @@
 The operating system is started through UEFI. The implementation is
 [CrabEFI](https://github.com/ArthurHeymans/CrabEFI), a UEFI in Rust, built as
 an AArch64 payload in `uefi/` with a Raspberry Pi 4 platform layer around it.
-The VPU firmware releases the ARM cores into it at EL2 with `x0` holding the
-device tree.
+The VPU firmware releases the ARM cores into `pi4-uefi.bin` at `0x200000`, at
+EL2 with `x0` holding the device tree. That image is a stub (`uefi/stub/`)
+with the payload inside it, coded with xz's ARM64 filter and LZMA; the stub
+decompresses the payload to `0x1000000` and enters it the same way.
 
 Until the VPU firmware in this tree starts a payload itself, the stock
 `start4.elf` starts it, named as the kernel in `config.txt`; the scenarios in
@@ -25,26 +27,35 @@ Until the VPU firmware in this tree starts a payload itself, the stock
 The boot manager looks for `\EFI\BOOT\BOOTAA64.EFI` on any FAT partition of
 the card, so a distribution image with an ESP boots through shim and GRUB.
 
+Left out of the build: CrabEFI's AHCI, NVMe and EHCI/OHCI drivers, booting a
+kernel straight from a BLS or `grub.cfg` entry, El Torito, and log records
+below warnings (`patches/crabefi/0002-*` adds the features that drop them).
+
 ## Building
 
 ```bash
-scripts/build-uefi.sh                         # out/pi4-uefi.bin
+scripts/build-uefi.sh                         # out/pi4-uefi.bin, and the bare payload as out/pi4-uefi-payload.bin
 scripts/build-uefi.sh --features secure-boot  # with image verification and authenticated variables
 scripts/build-uefi.sh --test-apps             # also out/hello.efi and out/grubaa64.efi
 ```
 
 `scripts/fetch-crabefi.sh` (run by `build-uefi.sh`) checks CrabEFI out into
 `third_party/crabefi` at the revision it pins and applies `patches/crabefi/`.
-`uefi/rust-toolchain.toml` pins the nightly CrabEFI needs.
+`uefi/rust-toolchain.toml` pins the nightly CrabEFI needs. The build also needs
+`xz`.
 
 ## Size
 
-`pi4-uefi.bin` as a flat image:
+`pi4-uefi.bin` is what goes into the EEPROM. The EEPROM is 512 KiB, and the
+bootloader code, DRAM set-up blobs and VL805 firmware it has to keep take about
+250 KB of it, which leaves about 270 KB for the VPU firmware and `pi4-uefi.bin`
+together.
 
-| build | raw | gzip -9 | xz -9e |
-|---|---|---|---|
-| default | 794 KB | 342 KB | 272 KB |
-| `--features secure-boot` | 921 KB | 419 KB | 332 KB |
+| build | payload | `pi4-uefi.bin` |
+|---|---|---|
+| default | 536 KB | 154 KB |
+| `--features secure-boot` | 639 KB | 202 KB |
+| `--features secure-boot,xhci` | 708 KB | 232 KB |
 
 ## Running it in pimu
 
@@ -56,14 +67,16 @@ pimu boot --scenario uefi/scenarios/grub.yaml    # Ubuntu's signed GRUB reads it
 
 ## Known limitations
 
-- The payload is linked at `0x200000` and carries an arm64 `Image` header
-  so the loader places it there; it is not relocatable.
+- The stub is linked at `0x200000`, with an arm64 `Image` header so the
+  loader places it there, and the payload at `0x1000000`; neither is
+  relocatable.
 - After `ExitBootServices` the runtime `ResetSystem` is declared as PSCI over
   SMC, which nothing on this board answers; Linux resets through
   `bcm2835-wdt`.
 - UEFI variables are volatile: no variable store is wired up.
 - Secure Boot builds, but no keys are enrolled, so nothing is enforced.
-- No USB (the VL805 behind PCIe) and no network boot.
+- No PCIe, so no USB (the VL805), no NVMe and no network boot.
+- Only warnings and errors are logged.
 - CrabEFI's boot menu counts down 5 seconds before it boots; the scenarios
   press Enter at the prompt.
 - `patches/crabefi/0001-*` lets the platform supply the RNG. Without it

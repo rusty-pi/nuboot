@@ -103,7 +103,7 @@ The UEFI payload has its own build and scenarios: [docs/uefi.md](docs/uefi.md).
 | `src/idle.rs`, `src/timer.rs`, `src/stc.rs` | Interrupts, sleeping, the system timer |
 | `src/watchdog.rs`, `src/handover.rs` | The boot watchdog, and the state the bootloader hands over |
 | `src/console.rs`, `src/cm.rs`, `src/otp.rs`, `src/board.rs` | The PL011, clock generators, OTP and the board's identity |
-| `uefi/` | The UEFI payload: CrabEFI and the Raspberry Pi 4 platform layer it runs on |
+| `uefi/` | The UEFI payload: CrabEFI and the Raspberry Pi 4 platform layer it runs on, and the stub that decompresses it |
 
 ## Licence
 
