@@ -11,13 +11,16 @@ on an 8-byte boundary, as the boot ROM and the stock tools expect.
 
 | section | from | size |
 |---|---|---|
-| bootcode (`0x55aaf00f`) | `src/bin/bootcode.rs` | 42 KB |
-| `memsys00.bin` .. `memsys08.bin`, `mcb.bin` (`0x55aaf44f`) | the stock image, unchanged | 102 KB |
-| `start4.elf` (`0x55aaf11f`) | `src/bin/start4.rs`, with `pi4-uefi.bin` and the device tree in it | 235 KB |
-| free | | 145 KB |
+| bootcode (`0x55aaf00f`) | `src/bin/bootcode.rs` | 45 KB |
+| `memsys00.bin` .. `memsys08.bin`, `mcb.bin` (`0x55aaf44f`) | the stock image, unchanged | 103 KB |
+| `vl805hub.bin`, `vl805mcu.bin` (`0x55aaf33f`) | the stock image, unchanged | 67 KB |
+| `start4.elf` (`0x55aaf11f`) | `src/bin/start4.rs`, with `pi4-uefi.bin` and the device tree in it | 284 KB |
+| free | | 25 KB |
 
 `memsys00.bin` to `memsys08.bin` are the nine passes of the LPDDR4 training
-firmware and `mcb.bin` the table of SDRAM parts and their timings. They are
+firmware and `mcb.bin` the table of SDRAM parts and their timings.
+`vl805hub.bin` and `vl805mcu.bin` are the VL805 USB controller's firmware, which
+every board but a 4B before rev 1.4 has to be given by the host. They are all
 Raspberry Pi's, and `scripts/build.sh` takes them out of the stock
 `pieeprom-2026-08-04.bin` it downloads (pinned by URL and SHA-256);
 `scripts/mkeeprom.py` puts the image together.
@@ -40,7 +43,10 @@ off.
    segment to where it is linked (`0x3EC0_0000`, through the uncached alias),
    leaves the handover block at `0xC004_0000` (the version, the SDRAM size and
    the boot medium `eeprom`), and enters it through the cache flush stub.
-4. `start4.elf` starts the ARM in UEFI ([uefi.md](uefi.md)).
+4. `start4.elf` brings up the PCIe link, gives the VL805 its firmware on a
+   board that needs it, and puts the controller's registers in the outbound
+   window at `0x6_0200_0000`.
+5. It starts the ARM in UEFI ([uefi.md](uefi.md)).
 
 ## Boot watchdog
 
@@ -67,6 +73,7 @@ armstub's page.
 pimu boot --scenario scenarios/uefi-hello.yaml   # an EFI application
 pimu boot --scenario scenarios/uefi-grub.yaml    # Ubuntu's signed GRUB
 pimu boot --scenario scenarios/rev14-hello.yaml  # an EFI application on a 4B rev 1.4
+pimu boot --scenario scenarios/usb-hello.yaml    # an EFI application off a USB drive
 pimu boot --scenario scenarios/watchdog-hang.yaml  # a hang in UEFI resets the board
 pimu boot --scenario scenarios/watchdog-exit.yaml  # ExitBootServices hands the dog to the OS
 pimu boot --eeprom out/pieeprom.bin --sd boot/   # a directory as the SD card
@@ -76,7 +83,8 @@ pimu boot --eeprom out/pieeprom.bin --sd boot/   # a directory as the SD card
 
 - The bootcode's HMAC is left zero, so a board's boot ROM refuses the image:
   it runs in pimu only.
-- No VL805 firmware and no PCIe, so no USB.
+- `start4.elf` does not answer the property mailbox, so Linux cannot have the
+  VL805's firmware reloaded after it resets the PCIe link.
 - `SDRAM_BANKLOW` is the stock default, 3.
 - Nothing sets the ARM's clock.
 - `start4.elf` is stored uncompressed and without a checksum.

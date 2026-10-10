@@ -3,18 +3,20 @@
 //! entry point.
 //!
 //! It says what it is running on, takes over the boot watchdog the bootloader
-//! armed, starts the ARM in the UEFI firmware it carries and carries the dog
-//! through the ARM's boot, and starts the threads the firmware runs on for as
-//! long as the board is up.
+//! armed, brings up USB, starts the ARM in the UEFI firmware it carries and
+//! carries the dog through the ARM's boot, and starts the threads the
+//! firmware runs on for as long as the board is up.
 
 #![no_std]
 #![no_main]
 
 use core::cell::Cell;
 
-use pi4_server_firmware::board::Revision;
+use pi4_server_firmware::board::{Board, Revision};
 use pi4_server_firmware::handover::{self, BootDevice};
-use pi4_server_firmware::{arm, console, error, idle, info, sched, stack, stc, timer, warn, watchdog};
+use pi4_server_firmware::{
+    arm, console, error, idle, info, sched, stack, stc, timer, usb, warn, watchdog,
+};
 
 /// What the ARM cores start in: an armstub and the compressed UEFI firmware
 /// (`uefi/`).
@@ -86,6 +88,7 @@ fn firmware_main() -> ! {
     announce();
     let watchdog = take_over_watchdog();
 
+    usb::bring_up(&Board::read());
     let started = match arm::start(ARM_IMAGE, ARM_TREE) {
         Ok(started) => {
             info!("arm", "ARM started in UEFI";

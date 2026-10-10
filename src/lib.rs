@@ -23,8 +23,10 @@ pub mod i2c;
 pub mod idle;
 pub mod log;
 pub mod lz4;
+pub mod lzss;
 pub mod mmio;
 pub mod otp;
+pub mod pcie;
 pub mod pmic;
 pub mod sched;
 pub mod sdram;
@@ -34,6 +36,8 @@ pub mod stack;
 pub mod stc;
 pub mod sync;
 pub mod timer;
+pub mod usb;
+pub mod vl805;
 pub mod watchdog;
 
 // Both VPU cores come out of reset at the same place; bit 16 of `version` is

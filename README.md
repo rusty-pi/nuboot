@@ -42,8 +42,9 @@ From the boot ROM to the threads that run for as long as the board is up:
    through UEFI until the operating system's driver takes it over, so a hang
    anywhere in the boot resets the board ([docs/eeprom.md](docs/eeprom.md#boot-watchdog)).
 5. Starts the ARM in the UEFI firmware it carries, with the board's device
-   tree ([docs/uefi.md](docs/uefi.md)). UEFI finds the SD card and boots
-   `\EFI\BOOT\BOOTAA64.EFI` from it.
+   tree ([docs/uefi.md](docs/uefi.md)), once it has brought up the PCIe link
+   and given the VL805 USB controller its firmware. UEFI finds the SD card and
+   any USB drive and boots `\EFI\BOOT\BOOTAA64.EFI` from them.
 6. Starts the scheduler: a service thread and a monitor thread that reports
    each stack's high-water mark as it grows.
 
@@ -53,8 +54,9 @@ From the boot ROM to the threads that run for as long as the board is up:
    0.264451 INFO  boot     start4.elf loaded  bytes=234664 entry=0x3ec00200
    0.267088 INFO  boot     pi4-server-firmware 1a2b3c4  board="Raspberry Pi 4 Model B" revision=d03115 pcb=1.5
    0.267218 INFO  boot     started by the EEPROM bootloader  medium=eeprom ram_mib=8192 bootloader=1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d
-   0.278197 INFO  arm      ARM started in UEFI  image_bytes=154726 tree=0xf00000 tree_bytes=56443 memory_mib=8108
-   0.278451 INFO  sched    threads running  threads=2 tick_us=1000
+   0.583645 INFO  usb      VL805 xHCI controller up  bus=1 firmware=loaded registers=0x602000000
+   0.595415 INFO  arm      ARM started in UEFI  image_bytes=198592 tree=0xf00000 tree_bytes=56443 memory_mib=8108
+   0.595737 INFO  sched    threads running  threads=2 tick_us=1000
 ```
 
 [docs/logging.md](docs/logging.md) describes the log format.
@@ -74,6 +76,7 @@ from the SD card.
 | Boot watchdog: a hang in UEFI resets the board, `ExitBootServices` hands it to the OS | ✅ | ➖ | ➖ | ➖ |
 | Pi 4B rev 1.4 (`d03114`) and rev 1.2 (`c03112`) | ✅ | ➖ | ➖ | ➖ |
 | ARM started in UEFI: SD card, an EFI application, Ubuntu's signed GRUB | ✅ | ➖ | ➖ | ➖ |
+| USB: VL805 firmware from the EEPROM, an EFI application off a USB drive | ✅ | ➖ | ➖ | ➖ |
 
 ## Building
 
@@ -86,8 +89,8 @@ scripts/build.sh
 ```
 
 gives `out/pieeprom.bin`, and `out/start4.elf` on its own. It also needs
-`python3`, and downloads the stock EEPROM image the SDRAM training firmware is
-taken from. `scripts/build.sh --features color` colours the log
+`python3`, and downloads the stock EEPROM image the SDRAM training firmware and
+the VL805's firmware are taken from. `scripts/build.sh --features color` colours the log
 with ANSI escapes.
 
 ## Running it in pimu
@@ -102,6 +105,7 @@ pimu boot --scenario scenarios/sd-boot.yaml
 pimu boot --scenario scenarios/uefi-hello.yaml
 pimu boot --scenario scenarios/uefi-grub.yaml
 pimu boot --scenario scenarios/rev14-hello.yaml
+pimu boot --scenario scenarios/usb-hello.yaml
 pimu boot --scenario scenarios/watchdog-hang.yaml
 pimu boot --scenario scenarios/watchdog-exit.yaml
 ```
@@ -124,6 +128,8 @@ pimu boot --eeprom out/pieeprom.bin --sd boot/
 | `src/watchdog.rs`, `src/handover.rs` | The boot watchdog, and the state the bootloader hands over |
 | `src/console.rs`, `src/cm.rs`, `src/otp.rs`, `src/board.rs` | The PL011, clock generators, OTP and the board's identity |
 | `src/sdram.rs`, `src/spi_flash.rs`, `src/eeprom.rs`, `src/elf.rs`, `src/cache.rs` | SDRAM bring-up, the EEPROM and its sections, loading and entering `start4.elf` |
+| `src/i2c.rs`, `src/pmic.rs` | The GPIO expander and the PMICs |
+| `src/pcie.rs`, `src/vl805.rs`, `src/usb.rs`, `src/lzss.rs` | The PCIe link, and the VL805 and its firmware |
 | `src/arm.rs`, `src/fdt.rs` | Starting the ARM, and the device tree it gets |
 | `scripts/mkeeprom.py` | Puts `pieeprom.bin` together |
 | `uefi/` | The UEFI firmware: CrabEFI and the Raspberry Pi 4 platform layer it runs on, and the armstub and decompressor the ARM starts in |

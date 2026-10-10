@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "usb-hello"
+description: "No SD card; a USB drive on the VL805's ports. start4.elf brings up the PCIe link and gives the VL805 its firmware out of the EEPROM, and CrabEFI's xHCI driver finds the drive and runs \\EFI\\BOOT\\BOOTAA64.EFI from it."
+
+boot:
+  eeprom: "../out/pieeprom.bin"
+  usb:
+    files:
+      EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+  input:
+    # Skip the boot menu's countdown, which takes long in the model.
+    - after: "Booting in 5 seconds"
+      text: "\r"
+  until: "EFI app executed successfully"
+  wall_secs: 900
+
+milestones:
+  - why: "start4.elf brought the link up and loaded the VL805's firmware."
+    line: "VL805 xHCI controller up  bus=1 firmware=loaded"
+  - why: "start4.elf started the ARM."
+    line: "ARM started in UEFI"
+  - why: "The EFI application ran off the USB drive and returned."
+    line: "Hello from CrabEFI!"

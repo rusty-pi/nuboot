@@ -2,13 +2,15 @@
 //!
 //! The VPU firmware has already brought the board up: DRAM, clocks, the PL011
 //! and the device tree. This payload turns what that tree says into CrabEFI's
-//! platform description, hands it the SD card on EMMC2, and lets the UEFI
-//! boot manager take it from there.
+//! platform description, hands it the SD card on EMMC2 and the PCIe root
+//! complex the VL805's xHCI controller is behind, and lets the UEFI boot
+//! manager take it from there.
 
 #![no_std]
 #![no_main]
 
 mod entry;
+mod pcie;
 
 use core::panic::PanicInfo;
 
@@ -350,6 +352,7 @@ extern "C" fn pi4_main(tree_addr: u64) -> ! {
         log::warn!("pi4-uefi: no SD card on EMMC2");
     }
 
+    crabefi::drivers::pci::set_platform_pci(&pcie::ROOT_COMPLEX);
     crabefi::init_platform(config)
 }
 

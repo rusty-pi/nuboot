@@ -1,7 +1,7 @@
 //! The `pieeprom.bin` section chain on the SPI flash: `>u32 magic, >u32
 //! length, body`, each header 8-byte aligned.
 
-use crate::{lz4, sha256, spi_flash};
+use crate::{lz4, lzss, sha256, spi_flash};
 
 pub const SIZE: u32 = 512 * 1024;
 
@@ -31,8 +31,7 @@ pub enum Error {
     NotFound,
     TooLarge,
     Lz4(lz4::Error),
-    /// LZSS (the VL805 images), which this firmware does not unpack.
-    Unsupported,
+    Lzss(lzss::Error),
     /// The digest after a packed section does not match its contents.
     Mismatch,
 }
@@ -91,11 +90,14 @@ pub fn load(name: &[u8], out: &mut [u8]) -> Result<usize, Error> {
 pub fn read_section(s: &Section, out: &mut [u8]) -> Result<usize, Error> {
     spi_flash::with_pins(|| match s.magic {
         MAGIC_PACKED_A | MAGIC_PACKED_B => {
+            // The transfer ends before the digest is read with another one.
             let n = {
+                let mut t = spi_flash::fast_read(s.data);
                 if s.magic == MAGIC_PACKED_A {
-                    return Err(Error::Unsupported);
+                    lzss::decode(&mut t, s.len as usize, out).map_err(Error::Lzss)?
+                } else {
+                    lz4::decode(&mut t, out).map_err(Error::Lz4)?
                 }
-                lz4::decode(&mut spi_flash::fast_read(s.data), out).map_err(Error::Lz4)?
             };
             let mut want = [0u8; 32];
             spi_flash::read(s.data + s.len, &mut want);

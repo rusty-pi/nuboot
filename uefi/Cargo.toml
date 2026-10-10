@@ -19,10 +19,10 @@ fdt = "0.1.5"
 log = { version = "0.4", features = ["release_max_level_warn"] }
 
 [features]
-default = []
+default = ["xhci"]
 # UEFI image verification and authenticated variables.
 secure-boot = ["crabefi/secure-boot", "crabefi/variable-store"]
-# The VL805's xHCI behind the PCIe root complex.
+# The VL805's xHCI behind the PCIe root complex: USB keyboards and drives.
 xhci = ["crabefi/xhci"]
 
 [[bin]]

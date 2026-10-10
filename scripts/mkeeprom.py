@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Build pieeprom.bin from this tree's first stage and start4.elf, and the
-SDRAM training firmware (memsys00..08.bin, mcb.bin) out of a stock image.
+SDRAM training firmware (memsys00..08.bin, mcb.bin) and the VL805's firmware
+(vl805hub.bin, vl805mcu.bin) out of a stock image.
 
     mkeeprom.py BOOTCODE START4_ELF STOCK_PIEEPROM OUT
 
@@ -17,7 +18,7 @@ MAGIC_BOOTCODE = 0x55AAF00F
 MAGIC_FILE = 0x55AAF11F
 MAGIC_MASK = 0xFFFFF00F
 HMAC_LEN = 20
-TRAINING = [f"memsys{i:02d}.bin".encode() for i in range(9)] + [b"mcb.bin"]
+FROM_STOCK = [f"memsys{i:02d}.bin".encode() for i in range(9)] + [b"mcb.bin", b"vl805hub.bin", b"vl805mcu.bin"]
 PT_LOAD = 1
 
 
@@ -63,7 +64,7 @@ def main():
     stock = dict(sections(open(stock_path, "rb").read()))
 
     parts = [struct.pack(">II", MAGIC_BOOTCODE, len(bootcode) + HMAC_LEN) + bootcode + bytes(HMAC_LEN)]
-    for name in TRAINING:
+    for name in FROM_STOCK:
         if name not in stock:
             sys.exit(f"{stock_path} has no {name.decode()}")
         parts.append(stock[name])
