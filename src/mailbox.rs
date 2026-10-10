@@ -12,7 +12,7 @@
 //! firmware does not know is left as it came, and the buffer is marked
 //! answered either way, which is what the stock firmware does.
 
-use crate::{debug, error, idle, info, mmio, vl805, warn};
+use crate::{debug, error, idle, info, keystore, mmio, vl805, warn};
 
 const VPU_VIEW: u32 = 0x7e00_b980;
 /// Mailbox 0, which the ARM reads.
@@ -33,6 +33,15 @@ const MAX_BUFFER: u32 = 0x1_0000;
 /// Linux's `RPI_FIRMWARE_NOTIFY_XHCI_RESET`: it has reset the PCIe link, and
 /// with it a VL805 that keeps no firmware of its own.
 const TAG_NOTIFY_XHCI_RESET: u32 = 0x0003_0058;
+
+/// The boot key, once: 32 bytes, then not answered again ([`keystore`]).
+/// Tags of this firmware's own, in the range the stock firmware keeps for its
+/// crypto service.
+const TAG_GET_BOOT_KEY: u32 = 0x0003_00a0;
+/// Fold 32 bytes into the boot measurement, until it is locked.
+const TAG_EXTEND_BOOT_MEASUREMENT: u32 = 0x0003_00a1;
+/// Close the boot measurement.
+const TAG_LOCK_BOOT_MEASUREMENT: u32 = 0x0003_00a2;
 
 /// Wait up to `timeout_us` for the ARM to post something, and answer all it
 /// has posted.
@@ -91,6 +100,36 @@ fn answer(bus: u32) {
                     error!("usb", "VL805 firmware reload failed"; device = format_args!("{device:#x}"));
                 }
                 set(i + 2, RESPONSE | 4);
+            }
+            TAG_GET_BOOT_KEY if room >= 32 => match keystore::take() {
+                Some(mut key) => {
+                    for (n, bytes) in key.chunks_exact(4).enumerate() {
+                        set(value + n as u32, u32::from_le_bytes(bytes.try_into().unwrap()));
+                    }
+                    keystore::zero(&mut key);
+                    info!("keystore", "boot key handed over"; images = keystore::count());
+                    set(i + 2, RESPONSE | 32);
+                }
+                None => warn!("keystore", "no boot key to hand over"),
+            },
+            TAG_EXTEND_BOOT_MEASUREMENT if room >= 32 => {
+                let mut digest = [0u8; 32];
+                for (n, bytes) in digest.chunks_exact_mut(4).enumerate() {
+                    bytes.copy_from_slice(&word(value + n as u32).to_le_bytes());
+                }
+                match keystore::extend(&digest) {
+                    Ok(images) => {
+                        info!("keystore", "boot measurement extended"; images = images,
+                            digest = format_args!("{:02x}{:02x}{:02x}{:02x}", digest[0], digest[1], digest[2], digest[3]));
+                        set(i + 2, RESPONSE | 32);
+                    }
+                    Err(keystore::Refused::Closed) => warn!("keystore", "boot measurement is closed"),
+                }
+            }
+            TAG_LOCK_BOOT_MEASUREMENT => {
+                keystore::lock();
+                info!("keystore", "boot measurement closed"; images = keystore::count());
+                set(i + 2, RESPONSE);
             }
             _ => debug!("mailbox", "property tag not answered"; tag = format_args!("{tag:#010x}")),
         }

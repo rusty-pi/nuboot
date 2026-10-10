@@ -303,9 +303,12 @@ pub fn load(parent: efi::Handle, path: *const u8, source: Option<&[u8]>) -> Resu
         (None, None) => unreachable!(),
     };
 
-    if let Err(why) = crate::secure::check(file, &Text(&path_bytes)) {
-        warn!("secboot", "image refused"; reason = why, path = Text(&path_bytes));
-        return Err(efi::Status::SECURITY_VIOLATION);
+    match crate::secure::check(file, &Text(&path_bytes)) {
+        Ok(hash) => crate::mailbox::extend(&hash),
+        Err(why) => {
+            warn!("secboot", "image refused"; reason = why, path = Text(&path_bytes));
+            return Err(efi::Status::SECURITY_VIOLATION);
+        }
     }
 
     let l = layout(file).map_err(|e| {

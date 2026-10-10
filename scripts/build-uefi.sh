@@ -19,6 +19,9 @@
 #   out/xhci-reset.efi
 #                     uefi/test-apps/mailbox: ask over the property mailbox
 #                     for the VL805's firmware to be reloaded, as Linux does
+#   out/boot-key.efi, out/late-extend.efi
+#                     the same crate: ask for the boot key and try to measure
+#                     after it; try to measure after exiting boot services
 #   out/shimaa64.efi, out/grubaa64.efi
 #                     Ubuntu's shim, signed by Microsoft, and its GRUB,
 #                     signed by Canonical
@@ -123,6 +126,8 @@ sign "$wd/target/aarch64-unknown-uefi/release/exit.efi" "$out/watchdog-exit.efi"
 mb="$here/uefi/test-apps/mailbox"
 (cd "$mb" && cargo build --release --target aarch64-unknown-uefi)
 sign "$mb/target/aarch64-unknown-uefi/release/xhci-reset.efi" "$out/xhci-reset.efi"
+sign "$mb/target/aarch64-unknown-uefi/release/boot-key.efi" "$out/boot-key.efi"
+sign "$mb/target/aarch64-unknown-uefi/release/late-extend.efi" "$out/late-extend.efi"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT

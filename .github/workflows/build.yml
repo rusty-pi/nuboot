@@ -117,6 +117,8 @@ jobs:
             out/watchdog-hang.efi
             out/watchdog-exit.efi
             out/xhci-reset.efi
+            out/boot-key.efi
+            out/late-extend.efi
             out/shimaa64.efi
             out/grubaa64.efi
           if-no-files-found: error

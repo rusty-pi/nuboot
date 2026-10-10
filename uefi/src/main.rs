@@ -26,6 +26,7 @@ mod event;
 mod fat;
 mod fdt;
 mod image;
+mod mailbox;
 mod mem;
 mod proto;
 mod pkcs7;

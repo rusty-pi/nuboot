@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "late-extend"
+description: "An EFI application exits boot services, then tries to extend the boot measurement. UEFI closed it as boot services went, and start4.elf refuses."
+
+boot:
+  eeprom: "../out/pieeprom-test.bin"
+  sd:
+    files:
+      EFI/BOOT/BOOTAA64.EFI: "../out/late-extend.efi"
+  until: "boot measurement is closed"
+  wall_secs: 900
+
+milestones:
+  - why: "UEFI closed the measurement as the application exited boot services."
+    line: "boot measurement closed  images=1"
+  - why: "start4.elf refused a measurement after that."
+    line: "boot measurement is closed"

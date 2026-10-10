@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "boot-key"
+description: "A board with its device private key fused: UEFI measures the application it loads, and the application gets the boot key from start4.elf once. The key here is a test key, not a board's."
+
+boot:
+  eeprom: "../out/pieeprom-test.bin"
+  otp_row:
+    - "56=0xc0de2001"
+    - "57=0xc0de3112"
+    - "58=0xc0de4223"
+    - "59=0xc0de5334"
+    - "60=0xc0de6445"
+    - "61=0xc0de7556"
+    - "62=0xc0de8667"
+    - "63=0xc0de9778"
+  sd:
+    files:
+      EFI/BOOT/BOOTAA64.EFI: "../out/boot-key.efi"
+  until: "boot key test: second request not answered"
+  wall_secs: 900
+
+milestones:
+  - why: "UEFI measured the application, and start4.elf took the measurement."
+    line: "boot measurement extended  images=1"
+  - why: "The application got the boot key."
+    line: "boot key handed over  images=1"
+  - why: "Nothing was measured after the key, and the key went once."
+    line: "boot key test: extend after the key not answered"
+  - why: "The second request was refused."
+    line: "boot key test: second request not answered"

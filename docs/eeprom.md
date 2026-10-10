@@ -76,6 +76,8 @@ pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed b
 pimu boot --scenario scenarios/rev14-hello.yaml  # an EFI application on a 4B rev 1.4
 pimu boot --scenario scenarios/usb-hello.yaml    # an EFI application off a USB drive
 pimu boot --scenario scenarios/xhci-reset.yaml   # NOTIFY_XHCI_RESET over the property mailbox
+pimu boot --scenario scenarios/boot-key.yaml     # the boot key, once
+pimu boot --scenario scenarios/late-extend.yaml  # no measurement after ExitBootServices
 pimu boot --scenario scenarios/watchdog-hang.yaml  # a hang in UEFI resets the board
 pimu boot --scenario scenarios/watchdog-exit.yaml  # ExitBootServices hands the dog to the OS
 pimu boot --eeprom out/pieeprom.bin --sd boot/   # a directory as the SD card
@@ -90,7 +92,9 @@ they are signed with ([uefi.md](uefi.md#secure-boot)).
 - The bootcode's HMAC is left zero, so a board's boot ROM refuses the image:
   it runs in pimu only.
 - The property mailbox answers `NOTIFY_XHCI_RESET` (reload the VL805's
-  firmware after the OS has reset the PCIe link) and no other tag.
+  firmware after the OS has reset the PCIe link), the boot measurement
+  (tags `0x000300a1` to extend, `0x000300a2` to close) and the one-time boot
+  key (tag `0x000300a0`), and no other tag. None returns a fuse.
 - `SDRAM_BANKLOW` is the stock default, 3.
 - Nothing sets the ARM's clock.
 - `start4.elf` is stored uncompressed and without a checksum.

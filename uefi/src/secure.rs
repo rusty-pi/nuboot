@@ -139,8 +139,8 @@ fn in_dbx(hash: &[u8]) -> bool {
     DBX.chunks_exact(32).any(|h| h == hash)
 }
 
-/// Whether `image` may run. Says why not when it may not.
-pub fn check(image: &[u8], path: &dyn Display) -> Result<(), &'static str> {
+/// Whether `image` may run: its Authenticode hash if so, the reason if not.
+pub fn check(image: &[u8], path: &dyn Display) -> Result<[u8; 32], &'static str> {
     let (hash, mut table) = authenticode(image).ok_or("not a PE32+ image")?;
     if in_dbx(&hash) {
         return Err("image hash is in dbx");
@@ -156,7 +156,7 @@ pub fn check(image: &[u8], path: &dyn Display) -> Result<(), &'static str> {
                 Ok(signed) => match pkcs7::anchor(&signed, TRUSTED.get()) {
                     Some(anchor) => {
                         info!("secboot", "image verified"; signer = signed.chain[0].name(), db = anchor.name(), path = path);
-                        return Ok(());
+                        return Ok(hash);
                     }
                     None => why = "not signed by a key in db",
                 },

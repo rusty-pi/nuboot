@@ -21,6 +21,7 @@ pub mod gpio;
 pub mod handover;
 pub mod i2c;
 pub mod idle;
+pub mod keystore;
 pub mod log;
 pub mod lz4;
 pub mod lzss;

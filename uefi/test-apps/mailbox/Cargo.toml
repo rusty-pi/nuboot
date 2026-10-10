@@ -10,6 +10,14 @@ license = "MIT"
 name = "xhci-reset"
 path = "src/main.rs"
 
+[[bin]]
+name = "boot-key"
+path = "src/boot_key.rs"
+
+[[bin]]
+name = "late-extend"
+path = "src/late_extend.rs"
+
 [dependencies]
 r-efi = "5.3"
 
