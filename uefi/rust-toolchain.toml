@@ -1,0 +1,5 @@
+[toolchain]
+# CrabEFI builds on nightly; pinned so a rebuild links the same code.
+channel = "nightly-2026-10-09"
+components = ["rust-src", "llvm-tools-preview"]
+targets = ["aarch64-unknown-none"]

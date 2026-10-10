@@ -1,0 +1,38 @@
+[package]
+name = "pi4-uefi"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+description = "CrabEFI on the Raspberry Pi 4: the ARM payload the VPU firmware starts"
+
+[dependencies]
+# scripts/fetch-crabefi.sh checks it out at the pinned revision with patches/crabefi applied.
+crabefi = { package = "crabefi-core", path = "../third_party/crabefi/crabefi-core", default-features = false, features = [
+  "bundled-runtime-image",
+  "global-allocator",
+  "platform-entry",
+] }
+fdt = "0.1.5"
+log = "0.4"
+
+[features]
+default = []
+# UEFI image verification and authenticated variables.
+secure-boot = ["crabefi/secure-boot", "crabefi/variable-store"]
+# The VL805's xHCI behind the PCIe root complex.
+xhci = ["crabefi/xhci"]
+
+[[bin]]
+name = "pi4-uefi"
+path = "src/main.rs"
+test = false
+bench = false
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
+opt-level = "z"
+codegen-units = 1

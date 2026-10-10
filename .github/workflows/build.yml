@@ -131,3 +131,33 @@ jobs:
       - uses: rusty-pi/pimu@main
         with:
           args: boot --scenario scenarios/${{ matrix.scenario }}.yaml
+
+  # The UEFI payload: both builds, then its scenarios in pimu, started by the
+  # stock firmware.
+  uefi:
+    runs-on: ${{ vars.RUNNER_BOOT || 'ubuntu-24.04' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        working-directory: uefi
+        run: rustup toolchain install
+
+      - name: Build
+        run: |
+          # The Secure Boot build has to keep building too.
+          scripts/build-uefi.sh --features secure-boot
+          scripts/build-uefi.sh --test-apps
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: uefi
+          path: out/pi4-uefi.bin
+          if-no-files-found: error
+          retention-days: 7
+
+      - uses: rusty-pi/pimu@main
+        with:
+          args: boot --scenario uefi/scenarios/

@@ -3,3 +3,5 @@
 /out
 /rustc-ice-*.txt
 /boot-*.log*
+/third_party
+/uefi/target

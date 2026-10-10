@@ -1,0 +1,76 @@
+diff --git a/crabefi-core/src/arch/aarch64/rng.rs b/crabefi-core/src/arch/aarch64/rng.rs
+index 7d0d437..18e374d 100644
+--- a/crabefi-core/src/arch/aarch64/rng.rs
++++ b/crabefi-core/src/arch/aarch64/rng.rs
+@@ -7,7 +7,7 @@
+ //! Falls back to SMCCC TRNG (ARM True Random Number Generator)
+ //! interface via HVC/SMC if RNDR is not available.
+ 
+-use core::sync::atomic::{AtomicU8, Ordering};
++use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+ 
+ /// SMCCC TRNG function IDs
+ const SMCCC_TRNG_VERSION: u32 = 0xC400_0050;
+@@ -23,6 +23,7 @@ enum RngMethod {
+     None = 0,
+     Rndr = 1,
+     SmcccTrng = 2,
++    Platform = 3,
+ }
+ 
+ impl RngMethod {
+@@ -30,6 +31,7 @@ impl RngMethod {
+         match v {
+             1 => Self::Rndr,
+             2 => Self::SmcccTrng,
++            3 => Self::Platform,
+             _ => Self::None,
+         }
+     }
+@@ -117,10 +119,37 @@ fn smccc_trng_rnd64() -> Option<u64> {
+     if ret as i64 == 0 { Some(val) } else { None }
+ }
+ 
++/// A platform-provided entropy source, as a `fn(&mut [u8]) -> bool`; 0 when
++/// none was registered.
++static PLATFORM_SOURCE: AtomicUsize = AtomicUsize::new(0);
++
++/// Register the platform's own hardware RNG.
++///
++/// When set, it is used instead of RNDR and SMCCC TRNG, and no SMC is issued
++/// to probe for a TRNG: on platforms without EL3 firmware (or with `SMC`
++/// disabled by `SCR_EL3.SMD`) that probe is an undefined instruction.
++pub fn set_platform_source(source: fn(&mut [u8]) -> bool) {
++    PLATFORM_SOURCE.store(source as usize, Ordering::Release);
++}
++
++fn platform_source() -> Option<fn(&mut [u8]) -> bool> {
++    let raw = PLATFORM_SOURCE.load(Ordering::Acquire);
++    // SAFETY: only `set_platform_source` stores a nonzero value, and it stores
++    // a `fn(&mut [u8]) -> bool`.
++    (raw != 0).then(|| unsafe { core::mem::transmute::<usize, fn(&mut [u8]) -> bool>(raw) })
++}
++
+ /// Initialize RNG support
+ ///
+-/// Checks for RNDR instruction support and SMCCC TRNG availability.
++/// Uses the platform source if one was registered, else checks for RNDR
++/// instruction support and SMCCC TRNG availability.
+ pub fn init() {
++    if platform_source().is_some() {
++        RNG_METHOD.store(RngMethod::Platform as u8, Ordering::Release);
++        log::info!("RNG: platform source");
++        return;
++    }
++
+     if has_rndr() {
+         // Verify RNDR actually works
+         if rndr64().is_some() {
+@@ -153,6 +182,7 @@ pub fn fill_random(buffer: &mut [u8]) -> bool {
+     let get_random = match method {
+         RngMethod::Rndr => rndr64,
+         RngMethod::SmcccTrng => smccc_trng_rnd64,
++        RngMethod::Platform => return platform_source().is_some_and(|source| source(buffer)),
+         RngMethod::None => return false,
+     };
+ 

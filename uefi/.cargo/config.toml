@@ -1,0 +1,9 @@
+# Cargo merges this over the repository's own .cargo/config.toml, which is
+# for the VPU build: undo its compiler wrapper, and since its `build-std` list
+# carries over (lists are appended), build `alloc` from source along with it.
+[build]
+target = "aarch64-unknown-none"
+rustc-wrapper = ""
+
+[unstable]
+build-std = ["alloc"]

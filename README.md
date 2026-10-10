@@ -13,7 +13,8 @@ is for:
   what, with the values as named fields.
 - **UEFI with Secure Boot** as the way an operating system is started, with
   Microsoft's keys by default and the owner's own keys enrolled in their place
-  (not there yet).
+  ([CrabEFI](https://github.com/ArthurHeymans/CrabEFI) in `uefi/`, keys not
+  there yet; see [docs/uefi.md](docs/uefi.md)).
 - **Everything in the EEPROM**, UEFI included, so the boot medium carries only
   the operating system. Until then, `start4.elf` is loaded from the medium.
 
@@ -60,6 +61,7 @@ It runs under the stock EEPROM bootloader.
 |---|---|---|---|---|
 | Started by the stock EEPROM bootloader from SD | ✅ | ➖ | ➖ | ➖ |
 | Console log, board identity, boot watchdog, threads | ✅ | ➖ | ➖ | ➖ |
+| UEFI payload: SD card, an EFI application, Ubuntu's signed GRUB (started by the stock `start4.elf`) | ✅ | ➖ | ➖ | ➖ |
 
 ## Building
 
@@ -89,6 +91,8 @@ directory as the SD card:
 pimu boot --eeprom https://raw.githubusercontent.com/raspberrypi/rpi-eeprom/master/firmware-2711/latest/pieeprom-2026-08-04.bin --sd boot/
 ```
 
+The UEFI payload has its own build and scenarios: [docs/uefi.md](docs/uefi.md).
+
 ## Source
 
 | | |
@@ -99,6 +103,7 @@ pimu boot --eeprom https://raw.githubusercontent.com/raspberrypi/rpi-eeprom/mast
 | `src/idle.rs`, `src/timer.rs`, `src/stc.rs` | Interrupts, sleeping, the system timer |
 | `src/watchdog.rs`, `src/handover.rs` | The boot watchdog, and the state the bootloader hands over |
 | `src/console.rs`, `src/cm.rs`, `src/otp.rs`, `src/board.rs` | The PL011, clock generators, OTP and the board's identity |
+| `uefi/` | The UEFI payload: CrabEFI and the Raspberry Pi 4 platform layer it runs on |
 
 ## Licence
 
