@@ -17,6 +17,9 @@ use core::panic::PanicInfo;
 /// The ARM's view of the peripheral window (`0x7E00_0000` on the VPU's bus).
 const PERIPHERALS: u64 = 0xFC00_0000;
 const PERIPHERALS_END: u64 = 0x1_0000_0000;
+/// The end of the RAM `entry.rs` maps as normal memory; above it the map is
+/// device memory, for the PCIe outbound windows.
+const NORMAL_END: u64 = 0x2_0000_0000;
 
 /// PL011 (`uart0`).
 const UART0: u64 = 0xFE20_1000;
@@ -212,10 +215,13 @@ fn memory_map(tree: &fdt::Fdt, tree_addr: u64) -> MemoryMap {
     for region in tree.memory().regions() {
         let base = region.starting_address as u64;
         let size = region.size.unwrap_or(0) as u64;
-        // Only RAM the identity map covers as normal memory.
-        let end = (base + size).min(PERIPHERALS);
-        if end > base {
-            map.push(base, end - base, crabefi::MemoryType::Ram);
+        // Only RAM the identity map covers as normal memory: below the
+        // peripherals' window, and from 4 GiB to the end of the normal map.
+        let end = base + size;
+        for (from, to) in [(base, end.min(PERIPHERALS)), (base.max(PERIPHERALS_END), end.min(NORMAL_END))] {
+            if to > from {
+                map.push(from, to - from, crabefi::MemoryType::Ram);
+            }
         }
     }
     for reservation in tree.memory_reservations() {
