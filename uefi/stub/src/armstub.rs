@@ -113,6 +113,9 @@ spin_table:
     .org 0xf8
 dtb_ptr32:
     .word 0
+    // Written by the UEFI firmware, read by the VPU firmware: the boot
+    // watchdog requests (`uefi/src/main.rs`).
+watchdog_word:
     .word 0
 
     .org 0x100

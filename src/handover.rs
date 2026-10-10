@@ -30,9 +30,9 @@ const LEN: u32 = 0x3b4;
 pub const DEVICE_EEPROM: u32 = 0x10;
 
 /// Leave the block for the next stage: the version (cut to fit), the SDRAM
-/// in gigabits and the boot medium, and everything else zero, so no boot
-/// watchdog.
-pub fn write(version: &[u8], sdram_gbit: u32, device: u32) {
+/// in gigabits, the boot medium and the boot watchdog's deadline and budget,
+/// and everything else zero.
+pub fn write(version: &[u8], sdram_gbit: u32, device: u32, watchdog_end_at: u64, watchdog_s: u32) {
     for off in (0..LEN).step_by(4) {
         mmio::write(ADDR + off, 0);
     }
@@ -43,6 +43,9 @@ pub fn write(version: &[u8], sdram_gbit: u32, device: u32) {
     }
     mmio::write(ADDR + SDRAM_GBIT, sdram_gbit);
     mmio::write(ADDR + BOOT_DEVICE, device);
+    mmio::write(ADDR + BOOT_WATCHDOG_END_AT, watchdog_end_at as u32);
+    mmio::write(ADDR + BOOT_WATCHDOG_END_AT + 4, (watchdog_end_at >> 32) as u32);
+    mmio::write(ADDR + BOOT_WATCHDOG_TIMEOUT, watchdog_s);
 }
 
 pub fn present() -> bool {

@@ -29,7 +29,8 @@ off.
 
 1. The boot ROM loads the bootcode section into the L2 at `0x8000_0000`,
    which serves as SRAM, and enters it at `+0x200`.
-2. The bootcode programs the PL011 and logs the board, turns the SD card's
+2. The bootcode programs the PL011, logs the board, arms the boot watchdog
+   ([Boot watchdog](#boot-watchdog)), turns the SD card's
    power off through the GPIO expander, sets up the 0x1D PMIC on a board whose
    core rail is on a second PMIC (a 4B rev 1.4, a Pi 400, a CM4), starts PLLs
    and the peripheral clocks, raises the SPI flash's clock, and brings up the
@@ -41,12 +42,33 @@ off.
    the boot medium `eeprom`), and enters it through the cache flush stub.
 4. `start4.elf` starts the ARM in UEFI ([uefi.md](uefi.md)).
 
+## Boot watchdog
+
+Every boot runs under the board's watchdog, with no setting to turn it off,
+until the operating system's own driver for it (Linux's `bcm2835_wdt`) takes
+it over. A hang anywhere before that resets the board.
+
+| from | until | span |
+|---|---|---|
+| the first stage's start | the ARM is started | 30 s |
+| the ARM is started | `ExitBootServices` | 300 s; a `SetWatchdogTimer` call starts a new span of the seconds it asks for, or of 300 s when it asks for none |
+| `ExitBootServices` | the operating system's driver beats the dog | 120 s |
+
+The dog itself counts at most 16 s, so `start4.elf` reloads it once a second
+from its monitor thread while a span lasts. When the span is over it stops,
+and the board resets up to 16 s later unless the operating system is beating
+the dog by then. UEFI tells `start4.elf` about `SetWatchdogTimer` and
+`ExitBootServices` through the word at ARM physical `0xfc`, in the
+armstub's page.
+
 ## Running it in pimu
 
 ```bash
 pimu boot --scenario scenarios/uefi-hello.yaml   # an EFI application
 pimu boot --scenario scenarios/uefi-grub.yaml    # Ubuntu's signed GRUB
 pimu boot --scenario scenarios/rev14-hello.yaml  # an EFI application on a 4B rev 1.4
+pimu boot --scenario scenarios/watchdog-hang.yaml  # a hang in UEFI resets the board
+pimu boot --scenario scenarios/watchdog-exit.yaml  # ExitBootServices hands the dog to the OS
 pimu boot --eeprom out/pieeprom.bin --sd boot/   # a directory as the SD card
 ```
 
@@ -55,7 +77,6 @@ pimu boot --eeprom out/pieeprom.bin --sd boot/   # a directory as the SD card
 - The bootcode's HMAC is left zero, so a board's boot ROM refuses the image:
   it runs in pimu only.
 - No VL805 firmware and no PCIe, so no USB.
-- No boot watchdog is armed.
 - `SDRAM_BANKLOW` is the stock default, 3.
 - Nothing sets the ARM's clock.
 - `start4.elf` is stored uncompressed and without a checksum.

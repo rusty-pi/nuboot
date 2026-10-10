@@ -27,6 +27,7 @@ the ARM in them:
 | Storage | The SD card on EMMC2 (`0xFE34_0000`), through CrabEFI's MMIO SDHCI driver |
 | `EFI_RNG_PROTOCOL` | RNG200's FIFO |
 | `ResetSystem` | The power manager's watchdog (`PM_RSTC`/`PM_WDOG`), halt through `PM_RSTS` |
+| `SetWatchdogTimer`, `ExitBootServices` | Handed to `start4.elf`, which has the boot watchdog ([eeprom.md](eeprom.md#boot-watchdog); `patches/crabefi/0003-*`) |
 | Device tree | Passed on to the OS as the `EFI_DTB_TABLE` configuration table |
 
 The boot manager looks for `\EFI\BOOT\BOOTAA64.EFI` on any FAT partition of

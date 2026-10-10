@@ -6,3 +6,4 @@
 /third_party
 /uefi/target
 /uefi/stub/target
+/uefi/test-apps/*/target

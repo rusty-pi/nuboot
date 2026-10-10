@@ -14,6 +14,21 @@ const ARMCTRL_RELEASE: u32 = 0x1000;
 
 /// Where the image reads the address of the device tree from.
 const IMAGE_TREE_WORD: usize = 0xf8;
+/// The word after it, where the UEFI firmware says what it wants of the boot
+/// watchdog ([`crate::watchdog::carry_poll`]): a sequence number in bits
+/// 31:24, so the same request twice is two requests, what happened in 23:20
+/// (1: `SetWatchdogTimer` with the seconds in 19:0, 2: `ExitBootServices`).
+const IMAGE_WATCHDOG_WORD: u32 = 0xfc;
+pub const WATCHDOG_SET: u32 = 1;
+pub const WATCHDOG_EXIT: u32 = 2;
+
+/// The UEFI firmware's last watchdog request: (sequence, what, seconds), all
+/// zero until it makes one.
+pub fn watchdog_request() -> (u32, u32, u32) {
+    let w = mmio::read(0xc000_0000 | IMAGE_WATCHDOG_WORD);
+    (w >> 24, (w >> 20) & 0xf, w & 0xf_ffff)
+}
+
 /// Where the device tree goes: under the payload at 16 MiB, above the image.
 pub const TREE_ADDR: u32 = 0x00f0_0000;
 const TREE_MAX: usize = 0x0010_0000;

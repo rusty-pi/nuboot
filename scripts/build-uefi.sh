@@ -8,6 +8,9 @@
 # out/pi4-uefi.bin inside start4.elf.
 #
 #   out/hello.efi     CrabEFI's minimal test application
+#   out/watchdog-hang.efi, out/watchdog-exit.efi
+#                     uefi/test-apps/watchdog: hang in boot services, and
+#                     exit them as an OS loader does
 #   out/grubaa64.efi  Ubuntu's signed GRUB for arm64
 #
 # Extra arguments go to cargo (`--features secure-boot`). Needs rustup, xz and
@@ -70,6 +73,11 @@ hello="$here/third_party/crabefi/test-apps/hello"
 (cd "$hello" && rustup target add aarch64-unknown-uefi >/dev/null &&
   cargo build --release --target aarch64-unknown-uefi)
 cp "$hello/target/aarch64-unknown-uefi/release/hello-efi.efi" "$out/hello.efi"
+
+wd="$here/uefi/test-apps/watchdog"
+(cd "$wd" && cargo build --release --target aarch64-unknown-uefi)
+cp "$wd/target/aarch64-unknown-uefi/release/hang.efi" "$out/watchdog-hang.efi"
+cp "$wd/target/aarch64-unknown-uefi/release/exit.efi" "$out/watchdog-exit.efi"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT

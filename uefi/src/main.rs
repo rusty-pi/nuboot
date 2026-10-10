@@ -30,6 +30,15 @@ const PM_RSTC_WRCFG_CLR: u32 = 0xFFFF_FFCF;
 const PM_RSTS: u64 = 0xFE10_0020;
 const PM_RSTS_HALT: u32 = 0x555;
 
+/// The word in the armstub's page (`uefi/stub/src/armstub.rs`) the VPU
+/// firmware reads this firmware's watchdog requests from: a sequence number
+/// in bits 31:24, what happened in 23:20 (1: `SetWatchdogTimer`, its seconds
+/// in 19:0; 2: `ExitBootServices`). The VPU firmware beats the board's
+/// watchdog until the span asked for runs out.
+const WATCHDOG_WORD: u64 = 0xfc;
+const WATCHDOG_SET: u32 = 1;
+const WATCHDOG_EXIT: u32 = 2;
+
 /// RNG200, which the bootcode left running.
 const RNG_FIFO_DATA: u64 = 0xFE10_4020;
 const RNG_FIFO_COUNT: u64 = 0xFE10_4024;
@@ -71,6 +80,37 @@ impl crabefi::ResetHandler for WatchdogReset {
         }
     }
 }
+
+/// Hands `SetWatchdogTimer` and `ExitBootServices` to the VPU firmware, which
+/// has the watchdog.
+struct Hooks {
+    seq: core::sync::atomic::AtomicU32,
+}
+
+impl Hooks {
+    fn tell_vpu(&self, what: u32, seconds: u32) {
+        use core::sync::atomic::Ordering;
+        let seq = self.seq.load(Ordering::Relaxed).wrapping_add(1) & 0xff;
+        self.seq.store(seq, Ordering::Relaxed);
+        unsafe {
+            mmio_write(WATCHDOG_WORD, seq << 24 | what << 20 | seconds.min(0xf_ffff));
+            // The VPU reads memory past the ARM's caches.
+            core::arch::asm!("dc civac, {0}", "dsb sy", in(reg) WATCHDOG_WORD);
+        }
+    }
+}
+
+impl crabefi::PlatformHooks for Hooks {
+    fn set_watchdog_timer(&self, timeout_s: usize) {
+        self.tell_vpu(WATCHDOG_SET, timeout_s.min(u32::MAX as usize) as u32);
+    }
+
+    fn on_exit_boot_services(&self) {
+        self.tell_vpu(WATCHDOG_EXIT, 0);
+    }
+}
+
+static HOOKS: Hooks = Hooks { seq: core::sync::atomic::AtomicU32::new(0) };
 
 /// `EFI_RNG_PROTOCOL`'s source: words out of RNG200's FIFO.
 fn rng200(buffer: &mut [u8]) -> bool {
@@ -288,7 +328,7 @@ extern "C" fn pi4_main(tree_addr: u64) -> ! {
         firmware_info: None,
         capsule_regions: &[],
         capsule_backend: None,
-        hooks: None,
+        hooks: Some(&HOOKS),
         rng: None,
         ecam_regions: &[],
         runtime_image: crabefi::BUNDLED_RUNTIME_IMAGE,

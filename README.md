@@ -38,9 +38,9 @@ From the boot ROM to the threads that run for as long as the board is up:
    the serial console with no setting anywhere.
 3. Logs the firmware's commit, the board's model and revision code, the boot
    medium, the RAM size and the bootloader's version.
-4. Takes over the boot watchdog when a stock bootloader armed one
-   (`BOOT_WATCHDOG_TIMEOUT` in its `bootconf.txt`), beating it from a timer
-   interrupt, and hands it back when the boot is over.
+4. Takes over the boot watchdog the first stage armed and carries it
+   through UEFI until the operating system's driver takes it over, so a hang
+   anywhere in the boot resets the board ([docs/eeprom.md](docs/eeprom.md#boot-watchdog)).
 5. Starts the ARM in the UEFI firmware it carries, with the board's device
    tree ([docs/uefi.md](docs/uefi.md)). UEFI finds the SD card and boots
    `\EFI\BOOT\BOOTAA64.EFI` from it.
@@ -70,7 +70,9 @@ from the SD card.
 |---|---|---|---|---|
 | Own EEPROM image: first stage, SDRAM, `start4.elf` from the EEPROM | ✅ | ➖ | ➖ | ➖ |
 | `start4.elf` started by the stock EEPROM bootloader from SD | ✅ | ➖ | ➖ | ➖ |
-| Console log, board identity, boot watchdog, threads | ✅ | ➖ | ➖ | ➖ |
+| Console log, board identity, threads | ✅ | ➖ | ➖ | ➖ |
+| Boot watchdog: a hang in UEFI resets the board, `ExitBootServices` hands it to the OS | ✅ | ➖ | ➖ | ➖ |
+| Pi 4B rev 1.4 (`d03114`) and rev 1.2 (`c03112`) | ✅ | ➖ | ➖ | ➖ |
 | ARM started in UEFI: SD card, an EFI application, Ubuntu's signed GRUB | ✅ | ➖ | ➖ | ➖ |
 
 ## Building
@@ -100,6 +102,8 @@ pimu boot --scenario scenarios/sd-boot.yaml
 pimu boot --scenario scenarios/uefi-hello.yaml
 pimu boot --scenario scenarios/uefi-grub.yaml
 pimu boot --scenario scenarios/rev14-hello.yaml
+pimu boot --scenario scenarios/watchdog-hang.yaml
+pimu boot --scenario scenarios/watchdog-exit.yaml
 ```
 
 To run it by hand, boot the image with a directory as the SD card:

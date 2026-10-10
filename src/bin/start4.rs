@@ -1,9 +1,11 @@
-//! `start4.elf`: the VPU firmware the EEPROM bootloader loads from the boot
-//! medium into SDRAM and enters at its ELF entry point.
+//! `start4.elf`: the VPU firmware the first stage loads out of the EEPROM (or
+//! a stock bootloader from the boot medium) into SDRAM and enters at its ELF
+//! entry point.
 //!
 //! It says what it is running on, takes over the boot watchdog the bootloader
-//! armed, starts the ARM in the UEFI firmware it carries, and starts the
-//! threads the firmware runs on for as long as the board is up.
+//! armed, starts the ARM in the UEFI firmware it carries and carries the dog
+//! through the ARM's boot, and starts the threads the firmware runs on for as
+//! long as the board is up.
 
 #![no_std]
 #![no_main]
@@ -84,19 +86,28 @@ fn firmware_main() -> ! {
     announce();
     let watchdog = take_over_watchdog();
 
-    match arm::start(ARM_IMAGE, ARM_TREE) {
-        Ok(started) => info!("arm", "ARM started in UEFI";
-            image_bytes = started.image_bytes, tree = format_args!("{:#x}", arm::TREE_ADDR), tree_bytes = started.tree_bytes,
-            memory_mib = started.memory_mib),
-        Err(arm::Error::Tree) => error!("arm", "the built-in device tree has no /memory@0 reg, not starting the ARM"),
-    }
-    // The heartbeat's stop masks interrupts, so the dog is handed back before
-    // the threads take them on.
+    let started = match arm::start(ARM_IMAGE, ARM_TREE) {
+        Ok(started) => {
+            info!("arm", "ARM started in UEFI";
+                image_bytes = started.image_bytes, tree = format_args!("{:#x}", arm::TREE_ADDR),
+                tree_bytes = started.tree_bytes, memory_mib = started.memory_mib);
+            true
+        }
+        Err(arm::Error::Tree) => {
+            error!("arm", "the built-in device tree has no /memory@0 reg, not starting the ARM");
+            false
+        }
+    };
+    // The heartbeat's stop masks interrupts, so it goes before the threads
+    // take them on; the monitor thread beats the dog from here, through the
+    // ARM's boot. With no ARM to wait for, nothing beats it, and the board
+    // resets.
     if watchdog {
-        let left_ms = watchdog::deadline().saturating_sub(stc::now()) / 1000;
-        info!("watchdog", "boot watchdog off"; left_ms = left_ms);
         watchdog::set_deadline(0);
-        watchdog::quiesce();
+        if started {
+            watchdog::carry_start();
+            info!("watchdog", "boot watchdog carried into UEFI"; span_s = watchdog::UEFI_WINDOW_S);
+        }
     }
 
     idle::init();
@@ -126,8 +137,8 @@ fn announce() {
     }
 }
 
-/// Beat the boot watchdog the bootloader armed until the boot is over, so a
-/// boot that hangs resets the board. Whether there was one.
+/// Beat the boot watchdog the bootloader armed, so a boot that hangs resets
+/// the board. Whether there was one.
 fn take_over_watchdog() -> bool {
     let timeout_s = handover::boot_watchdog_timeout();
     let end_at = handover::boot_watchdog_end_at();
@@ -144,13 +155,14 @@ fn take_over_watchdog() -> bool {
 /// How often the monitor looks at the stacks.
 const MONITOR_US: u32 = 1_000_000;
 
-/// The low thread: watches what the firmware itself uses, and says when it
-/// changes.
+/// The low thread: beats the boot watchdog through the ARM's boot, watches
+/// what the firmware itself uses, and says when it changes.
 extern "C" fn monitor_thread() -> ! {
     let used: [Cell<u32>; sched::THREADS] = [const { Cell::new(0) }; sched::THREADS];
     let mut looked = timer::now();
     report_stacks(&used);
     loop {
+        watchdog::carry_poll();
         if timer::now().wrapping_sub(looked) >= MONITOR_US {
             report_stacks(&used);
             looked = timer::now();

@@ -112,6 +112,8 @@ jobs:
             out/pieeprom.bin
             out/start4.elf
             out/hello.efi
+            out/watchdog-hang.efi
+            out/watchdog-exit.efi
             out/grubaa64.efi
           if-no-files-found: error
           retention-days: 7

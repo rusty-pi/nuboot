@@ -15,13 +15,17 @@ use pi4_server_firmware::board::{Board, Pmics, Revision};
 use pi4_server_firmware::i2c::expander;
 use pi4_server_firmware::mmio::{self, PASSWD};
 use pi4_server_firmware::{
-    cache, cm, console, eeprom, elf, error, halt, handover, info, pmic, sdram, spi_flash, timer,
+    cache, cm, console, eeprom, elf, error, halt, handover, info, pmic, sdram, spi_flash, stc, timer, watchdog,
 };
 
 /// Where `start4.elf` is read to before it is loaded: SDRAM above the image
 /// it loads, uncached.
 const IMAGE_BUF: u32 = 0xc100_0000;
 const IMAGE_MAX: usize = 4 << 20;
+
+/// The boot watchdog's budget for the VPU's part of the boot, from the first
+/// stage's start to the ARM's; start4 carries the dog on from there.
+const WATCHDOG_S: u32 = 30;
 
 /// What the bank-low setting of the stock bootloader defaults to.
 const BANKLOW: u32 = 3;
@@ -107,6 +111,7 @@ fn load_firmware() -> u32 {
 
 #[unsafe(no_mangle)]
 fn firmware_main() -> ! {
+    let started_at = stc::now();
     // The stock first stage writes this before it touches the UART's clock.
     let _ = cm::read(cm::A2W_1390);
     cm::write(cm::A2W_1390, 1);
@@ -114,6 +119,11 @@ fn firmware_main() -> ! {
     let revision = Revision::read();
     info!("boot", "pi4-server-firmware bootcode {}", &env!("FIRMWARE_COMMIT")[..7];
         board = revision.model(), revision = revision, pcb = revision.pcb());
+
+    // The one arm of the boot; every stage after this only reloads it.
+    let watchdog_end_at = started_at + WATCHDOG_S as u64 * 1_000_000;
+    watchdog::arm_us(watchdog_end_at - stc::now());
+    info!("watchdog", "boot watchdog armed"; budget_s = WATCHDOG_S);
 
     // The SD card's power off for as long as the SDRAM takes, so the card
     // comes up from a power cycle; the power LED lit.
@@ -146,6 +156,12 @@ fn firmware_main() -> ! {
     expander::update(0, 0, 0, expander::SD_PWR_ON);
 
     let entry = load_firmware();
-    handover::write(env!("FIRMWARE_COMMIT").as_bytes(), sd.geometry.size_gbit, handover::DEVICE_EEPROM);
+    handover::write(
+        env!("FIRMWARE_COMMIT").as_bytes(),
+        sd.geometry.size_gbit,
+        handover::DEVICE_EEPROM,
+        watchdog_end_at,
+        WATCHDOG_S,
+    );
     cache::enter(entry)
 }
