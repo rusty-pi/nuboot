@@ -46,10 +46,12 @@ scripts/build-uefi.sh --test-apps             # also out/hello.efi and out/gruba
 
 ## Size
 
-`pi4-uefi.bin` is what goes into the EEPROM. The EEPROM is 512 KiB, and the
-bootloader code, DRAM set-up blobs and VL805 firmware it has to keep take about
-250 KB of it, which leaves about 270 KB for the VPU firmware and `pi4-uefi.bin`
-together.
+`pi4-uefi.bin` is what goes into the EEPROM, next to this tree's VPU firmware
+in place of the stock bootloader and `start4.elf`. The EEPROM is 512 KiB. Of
+that, about 235 KB goes to what the image carries besides the firmware: the
+first-stage bootcode (about 62 KB), the DRAM set-up blobs (102 KB as the stock
+image compresses them) and the VL805 firmware (68 KB). That leaves about
+290 KB for the VPU firmware and `pi4-uefi.bin` together.
 
 | build | payload | `pi4-uefi.bin` |
 |---|---|---|
