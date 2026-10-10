@@ -14,8 +14,8 @@ on an 8-byte boundary, as the boot ROM and the stock tools expect.
 | bootcode (`0x55aaf00f`) | `src/bin/bootcode.rs` | 45 KB |
 | `memsys00.bin` .. `memsys08.bin`, `mcb.bin` (`0x55aaf44f`) | the stock image, unchanged | 103 KB |
 | `vl805hub.bin`, `vl805mcu.bin` (`0x55aaf33f`) | the stock image, unchanged | 67 KB |
-| `start4.elf` (`0x55aaf11f`) | `src/bin/start4.rs`, with `pi4-uefi.bin` and the device tree in it | 284 KB |
-| free | | 25 KB |
+| `start4.elf` (`0x55aaf11f`) | `src/bin/start4.rs`, with `pi4-uefi.bin` and the device tree in it | 287 KB |
+| free | | 22 KB |
 
 `memsys00.bin` to `memsys08.bin` are the nine passes of the LPDDR4 training
 firmware and `mcb.bin` the table of SDRAM parts and their timings.
@@ -74,6 +74,7 @@ pimu boot --scenario scenarios/uefi-hello.yaml   # an EFI application
 pimu boot --scenario scenarios/uefi-grub.yaml    # Ubuntu's signed GRUB
 pimu boot --scenario scenarios/rev14-hello.yaml  # an EFI application on a 4B rev 1.4
 pimu boot --scenario scenarios/usb-hello.yaml    # an EFI application off a USB drive
+pimu boot --scenario scenarios/xhci-reset.yaml   # NOTIFY_XHCI_RESET over the property mailbox
 pimu boot --scenario scenarios/watchdog-hang.yaml  # a hang in UEFI resets the board
 pimu boot --scenario scenarios/watchdog-exit.yaml  # ExitBootServices hands the dog to the OS
 pimu boot --eeprom out/pieeprom.bin --sd boot/   # a directory as the SD card
@@ -83,8 +84,8 @@ pimu boot --eeprom out/pieeprom.bin --sd boot/   # a directory as the SD card
 
 - The bootcode's HMAC is left zero, so a board's boot ROM refuses the image:
   it runs in pimu only.
-- `start4.elf` does not answer the property mailbox, so Linux cannot have the
-  VL805's firmware reloaded after it resets the PCIe link.
+- The property mailbox answers `NOTIFY_XHCI_RESET` (reload the VL805's
+  firmware after the OS has reset the PCIe link) and no other tag.
 - `SDRAM_BANKLOW` is the stock default, 3.
 - Nothing sets the ARM's clock.
 - `start4.elf` is stored uncompressed and without a checksum.

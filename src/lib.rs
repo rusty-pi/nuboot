@@ -24,6 +24,7 @@ pub mod idle;
 pub mod log;
 pub mod lz4;
 pub mod lzss;
+pub mod mailbox;
 pub mod mmio;
 pub mod otp;
 pub mod pcie;

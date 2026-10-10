@@ -57,7 +57,7 @@ scripts/build-uefi.sh --test-apps             # also out/hello.efi and out/gruba
 `pi4-uefi.bin` goes into the EEPROM inside `start4.elf`
 ([eeprom.md](eeprom.md)). The EEPROM is 512 KiB, of which the first stage and
 the SDRAM training firmware take about 148 KB, the VL805's firmware 67 KB,
-`start4.elf` with the default build and the device tree 284 KB, and 25 KB is
+`start4.elf` with the default build and the device tree 287 KB, and 22 KB is
 free.
 
 | build | payload | `pi4-uefi.bin` |

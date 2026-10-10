@@ -5,7 +5,8 @@
 //! It says what it is running on, takes over the boot watchdog the bootloader
 //! armed, brings up USB, starts the ARM in the UEFI firmware it carries and
 //! carries the dog through the ARM's boot, and starts the threads the
-//! firmware runs on for as long as the board is up.
+//! firmware runs on for as long as the board is up: the service thread
+//! answers the property mailbox.
 
 #![no_std]
 #![no_main]
@@ -15,7 +16,7 @@ use core::cell::Cell;
 use pi4_server_firmware::board::{Board, Revision};
 use pi4_server_firmware::handover::{self, BootDevice};
 use pi4_server_firmware::{
-    arm, console, error, idle, info, sched, stack, stc, timer, usb, warn, watchdog,
+    arm, console, error, idle, info, mailbox, sched, stack, stc, timer, usb, warn, watchdog,
 };
 
 /// What the ARM cores start in: an armstub and the compressed UEFI firmware
@@ -118,8 +119,9 @@ fn firmware_main() -> ! {
     sched::start(main_stack, SERVICE_PRIORITY);
     info!("sched", "threads running"; threads = sched::stacks().count(), tick_us = sched::TICK_US);
 
+    // The service thread answers the property mailbox from here on.
     loop {
-        sched::park(IDLE_US);
+        mailbox::serve(IDLE_US);
     }
 }
 

@@ -11,6 +11,9 @@
 #   out/watchdog-hang.efi, out/watchdog-exit.efi
 #                     uefi/test-apps/watchdog: hang in boot services, and
 #                     exit them as an OS loader does
+#   out/xhci-reset.efi
+#                     uefi/test-apps/mailbox: ask over the property mailbox
+#                     for the VL805's firmware to be reloaded, as Linux does
 #   out/grubaa64.efi  Ubuntu's signed GRUB for arm64
 #
 # Extra arguments go to cargo (`--features secure-boot`). Needs rustup, xz and
@@ -78,6 +81,10 @@ wd="$here/uefi/test-apps/watchdog"
 (cd "$wd" && cargo build --release --target aarch64-unknown-uefi)
 cp "$wd/target/aarch64-unknown-uefi/release/hang.efi" "$out/watchdog-hang.efi"
 cp "$wd/target/aarch64-unknown-uefi/release/exit.efi" "$out/watchdog-exit.efi"
+
+mb="$here/uefi/test-apps/mailbox"
+(cd "$mb" && cargo build --release --target aarch64-unknown-uefi)
+cp "$mb/target/aarch64-unknown-uefi/release/xhci-reset.efi" "$out/xhci-reset.efi"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT

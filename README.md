@@ -45,8 +45,10 @@ From the boot ROM to the threads that run for as long as the board is up:
    tree ([docs/uefi.md](docs/uefi.md)), once it has brought up the PCIe link
    and given the VL805 USB controller its firmware. UEFI finds the SD card and
    any USB drive and boots `\EFI\BOOT\BOOTAA64.EFI` from them.
-6. Starts the scheduler: a service thread and a monitor thread that reports
-   each stack's high-water mark as it grows.
+6. Starts the scheduler: a service thread that answers the property mailbox
+   (so far only Linux's `NOTIFY_XHCI_RESET`, which has the VL805's firmware
+   reloaded), and a monitor thread that reports each stack's high-water mark
+   as it grows.
 
 ```text
    0.001149 INFO  boot     pi4-server-firmware bootcode 1a2b3c4  board="Raspberry Pi 4 Model B" revision=d03115 pcb=1.5
@@ -77,6 +79,7 @@ from the SD card.
 | Pi 4B rev 1.4 (`d03114`) and rev 1.2 (`c03112`) | ✅ | ➖ | ➖ | ➖ |
 | ARM started in UEFI: SD card, an EFI application, Ubuntu's signed GRUB | ✅ | ➖ | ➖ | ➖ |
 | USB: VL805 firmware from the EEPROM, an EFI application off a USB drive | ✅ | ➖ | ➖ | ➖ |
+| Property mailbox: `NOTIFY_XHCI_RESET` reloads the VL805's firmware | ✅ | ➖ | ➖ | ➖ |
 
 ## Building
 
@@ -106,6 +109,7 @@ pimu boot --scenario scenarios/uefi-hello.yaml
 pimu boot --scenario scenarios/uefi-grub.yaml
 pimu boot --scenario scenarios/rev14-hello.yaml
 pimu boot --scenario scenarios/usb-hello.yaml
+pimu boot --scenario scenarios/xhci-reset.yaml
 pimu boot --scenario scenarios/watchdog-hang.yaml
 pimu boot --scenario scenarios/watchdog-exit.yaml
 ```
@@ -130,6 +134,7 @@ pimu boot --eeprom out/pieeprom.bin --sd boot/
 | `src/sdram.rs`, `src/spi_flash.rs`, `src/eeprom.rs`, `src/elf.rs`, `src/cache.rs` | SDRAM bring-up, the EEPROM and its sections, loading and entering `start4.elf` |
 | `src/i2c.rs`, `src/pmic.rs` | The GPIO expander and the PMICs |
 | `src/pcie.rs`, `src/vl805.rs`, `src/usb.rs`, `src/lzss.rs` | The PCIe link, and the VL805 and its firmware |
+| `src/mailbox.rs` | The property mailbox |
 | `src/arm.rs`, `src/fdt.rs` | Starting the ARM, and the device tree it gets |
 | `scripts/mkeeprom.py` | Puts `pieeprom.bin` together |
 | `uefi/` | The UEFI firmware: CrabEFI and the Raspberry Pi 4 platform layer it runs on, and the armstub and decompressor the ARM starts in |

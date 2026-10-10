@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "xhci-reset"
+description: "An EFI application sends NOTIFY_XHCI_RESET over the property mailbox, as Linux does once it has reset the PCIe link. start4.elf reloads the VL805's firmware and answers."
+
+boot:
+  eeprom: "../out/pieeprom.bin"
+  sd:
+    files:
+      EFI/BOOT/BOOTAA64.EFI: "../out/xhci-reset.efi"
+  input:
+    # Skip the boot menu's countdown, which takes long in the model.
+    - after: "Booting in 5 seconds"
+      text: "\r"
+  until: "mailbox test: NOTIFY_XHCI_RESET answered"
+  wall_secs: 900
+
+milestones:
+  - why: "The application is running."
+    line: "mailbox test: NOTIFY_XHCI_RESET"
+  - why: "start4.elf reloaded the VL805's firmware."
+    line: "VL805 firmware reloaded for the OS  device=0x100000"
+  - why: "The reply came back on the mailbox, the tag answered."
+    line: "mailbox test: NOTIFY_XHCI_RESET answered"

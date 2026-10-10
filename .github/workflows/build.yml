@@ -114,6 +114,7 @@ jobs:
             out/hello.efi
             out/watchdog-hang.efi
             out/watchdog-exit.efi
+            out/xhci-reset.efi
             out/grubaa64.efi
           if-no-files-found: error
           retention-days: 7
