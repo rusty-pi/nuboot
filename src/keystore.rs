@@ -17,8 +17,9 @@
 //! overwritten ([`scrub`]) before it returns, since anything left in SDRAM or
 //! the L2 is readable from an ARM that has raw memory access.
 //!
-//! The registers close at [`lock`] (UEFI calls it as it exits boot services)
-//! and once the key has been taken, and the key goes out once.
+//! The key goes out once. The registers themselves are the TPM's
+//! ([`crate::tpm2`]): they can be extended at any time, never set, so a late
+//! extend can only move a register away from the value a key was bound to.
 //!
 //! None of this holds against a payload that can write the VPU's memory: it
 //! can change the registers, or the code that checks them.
@@ -33,20 +34,15 @@ const LABEL: &[u8] = b"pi4-server-firmware boot key v1";
 pub const PCRS: usize = 24;
 
 static mut PCR: [[u8; 32]; PCRS] = [[0; 32]; PCRS];
-static mut OPEN: bool = true;
 static mut COUNT: u32 = 0;
 static mut TAKEN: bool = false;
 
 pub enum Refused {
-    Closed,
     NoSuchRegister,
 }
 
 /// Fold `digest` into register `pcr`. How many extends that makes.
 pub fn extend(pcr: usize, digest: &[u8; 32]) -> Result<u32, Refused> {
-    if !unsafe { read_volatile(&raw const OPEN) } {
-        return Err(Refused::Closed);
-    }
     if pcr >= PCRS {
         return Err(Refused::NoSuchRegister);
     }
@@ -60,11 +56,23 @@ pub fn extend(pcr: usize, digest: &[u8; 32]) -> Result<u32, Refused> {
     Ok(count)
 }
 
-/// Close the registers.
-pub fn lock() {
-    unsafe { write_volatile(&raw mut OPEN, false) };
+/// Register `pcr`.
+pub fn pcr(pcr: usize) -> Option<[u8; 32]> {
+    (pcr < PCRS).then(|| unsafe { (*(&raw const PCR))[pcr] })
 }
 
+/// Set register `pcr` back to zero. How many changes that makes.
+pub fn reset(pcr: usize) -> Result<u32, Refused> {
+    if pcr >= PCRS {
+        return Err(Refused::NoSuchRegister);
+    }
+    unsafe { (*(&raw mut PCR))[pcr] = [0; 32] };
+    let count = unsafe { read_volatile(&raw const COUNT) } + 1;
+    unsafe { write_volatile(&raw mut COUNT, count) };
+    Ok(count)
+}
+
+/// How many times the registers have changed: the TPM's `pcrUpdateCounter`.
 pub fn count() -> u32 {
     unsafe { read_volatile(&raw const COUNT) }
 }
@@ -75,7 +83,6 @@ pub fn take(mask: u32) -> Option<[u8; 32]> {
     if unsafe { read_volatile(&raw const TAKEN) } || mask >> PCRS != 0 {
         return None;
     }
-    lock();
     unsafe { write_volatile(&raw mut TAKEN, true) };
     let _section = critical::enter();
     let key = derive(mask);

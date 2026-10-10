@@ -20,10 +20,10 @@
 #                     uefi/test-apps/mailbox: ask over the property mailbox
 #                     for the VL805's firmware to be reloaded, as Linux does
 #   out/boot-key.efi, out/boot-key-unbound.efi, out/boot-key-unbound-b.efi,
-#   out/late-extend.efi
+#   out/tpm2-test.efi
 #                     the same crate: ask for the boot key bound to PCR 4 or
-#                     to nothing (two images) and try to measure after it; try
-#                     to measure after exiting boot services
+#                     to nothing (two images) and try to measure after it;
+#                     send the TPM on the VPU a series of commands
 #   out/shimaa64.efi, out/grubaa64.efi
 #                     Ubuntu's shim, signed by Microsoft, and its GRUB,
 #                     signed by Canonical
@@ -131,7 +131,7 @@ sign "$mb/target/aarch64-unknown-uefi/release/xhci-reset.efi" "$out/xhci-reset.e
 sign "$mb/target/aarch64-unknown-uefi/release/boot-key.efi" "$out/boot-key.efi"
 sign "$mb/target/aarch64-unknown-uefi/release/boot-key-unbound.efi" "$out/boot-key-unbound.efi"
 sign "$mb/target/aarch64-unknown-uefi/release/boot-key-unbound-b.efi" "$out/boot-key-unbound-b.efi"
-sign "$mb/target/aarch64-unknown-uefi/release/late-extend.efi" "$out/late-extend.efi"
+sign "$mb/target/aarch64-unknown-uefi/release/tpm2-test.efi" "$out/tpm2-test.efi"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT

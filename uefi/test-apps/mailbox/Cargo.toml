@@ -23,8 +23,8 @@ name = "boot-key-unbound-b"
 path = "src/boot_key_unbound_b.rs"
 
 [[bin]]
-name = "late-extend"
-path = "src/late_extend.rs"
+name = "tpm2-test"
+path = "src/tpm2_test.rs"
 
 [dependencies]
 r-efi = "5.3"

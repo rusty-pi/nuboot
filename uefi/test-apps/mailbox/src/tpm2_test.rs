@@ -1,0 +1,115 @@
+//! Sends the TPM on the VPU a series of commands through
+//! `EFI_TCG2_PROTOCOL.SubmitCommand` and prints each response in hex, for
+//! `scripts/check-tpm2.py` to check.
+
+#![no_std]
+#![no_main]
+
+use core::ffi::c_void;
+
+use r_efi::efi::{Guid, Handle, Status, SystemTable};
+
+#[path = "boot_key_common.rs"]
+mod common;
+use common::say;
+
+const TCG2: Guid = Guid::from_fields(0x607f766c, 0x7455, 0x42be, 0x93, 0x0b, &[0xe4, 0xd7, 0x6d, 0xb2, 0x72, 0x0f]);
+
+/// `EFI_TCG2_PROTOCOL.SubmitCommand`, the fourth function of the table.
+type Submit = extern "efiapi" fn(*mut c_void, u32, *const u8, u32, *mut u8) -> Status;
+
+/// A command being put together.
+struct Command {
+    bytes: [u8; 256],
+    len: usize,
+}
+
+impl Command {
+    fn new(tag: u16, code: u32) -> Command {
+        let mut c = Command { bytes: [0; 256], len: 0 };
+        c.u16(tag);
+        c.u32(0);
+        c.u32(code);
+        c
+    }
+    fn u16(&mut self, v: u16) -> &mut Self {
+        self.put(&v.to_be_bytes())
+    }
+    fn u32(&mut self, v: u32) -> &mut Self {
+        self.put(&v.to_be_bytes())
+    }
+    fn put(&mut self, b: &[u8]) -> &mut Self {
+        self.bytes[self.len..self.len + b.len()].copy_from_slice(b);
+        self.len += b.len();
+        self
+    }
+    /// A password session with an empty password, as the authorization area.
+    fn password(&mut self) -> &mut Self {
+        self.u32(9).u32(0x4000_0009).u16(0).put(&[0]).u16(0)
+    }
+    fn done(&mut self) -> &[u8] {
+        let len = self.len as u32;
+        self.bytes[2..6].copy_from_slice(&len.to_be_bytes());
+        &self.bytes[..self.len]
+    }
+}
+
+fn hex(system_table: *mut SystemTable, bytes: &[u8]) {
+    for chunk in bytes.chunks(40) {
+        let mut out = [0u8; 80];
+        for (i, b) in chunk.iter().enumerate() {
+            out[2 * i] = b"0123456789abcdef"[(b >> 4) as usize];
+            out[2 * i + 1] = b"0123456789abcdef"[(b & 15) as usize];
+        }
+        say(system_table, unsafe { core::str::from_utf8_unchecked(&out[..2 * chunk.len()]) });
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "efiapi" fn efi_main(_image: Handle, system_table: *mut SystemTable) -> Status {
+    let bs = unsafe { (*system_table).boot_services };
+    let mut protocol: *mut c_void = core::ptr::null_mut();
+    let mut guid = TCG2;
+    if unsafe { ((*bs).locate_protocol)(&mut guid, core::ptr::null_mut(), &mut protocol) }.is_error() {
+        say(system_table, "tpm2 test: no EFI_TCG2_PROTOCOL\r\n");
+        return Status::NOT_FOUND;
+    }
+    let submit: Submit = unsafe { core::mem::transmute(*(protocol as *const usize).add(3)) };
+    let mut run = |name: &str, command: &[u8]| {
+        let mut response = [0u8; 512];
+        let status = submit(protocol, command.len() as u32, command.as_ptr(), 512, response.as_mut_ptr());
+        say(system_table, "tpm2 test: ");
+        say(system_table, name);
+        say(system_table, " ");
+        if status.is_error() {
+            say(system_table, "failed");
+        } else {
+            let len = u32::from_be_bytes(response[2..6].try_into().unwrap()) as usize;
+            hex(system_table, &response[..len.min(512)]);
+        }
+        say(system_table, "\r\n");
+    };
+    let digest = [0x11u8; 32];
+
+    run("startup", Command::new(0x8001, 0x144).u16(0).done());
+    run("getcap-properties", Command::new(0x8001, 0x17a).u32(6).u32(0x100).u32(8).done());
+    run("getcap-algs", Command::new(0x8001, 0x17a).u32(0).u32(0).u32(16).done());
+    run("getcap-pcrs", Command::new(0x8001, 0x17a).u32(5).u32(0).u32(1).done());
+    run("getcap-commands", Command::new(0x8001, 0x17a).u32(2).u32(0).u32(64).done());
+    run("pcr-read-before", Command::new(0x8001, 0x17e).u32(1).u16(0xb).put(&[3, 0x81, 0, 0x80]).done());
+    run("pcr-extend", Command::new(0x8002, 0x182).u32(23).password().u32(1).u16(0xb).put(&digest).done());
+    run("pcr-read-extended", Command::new(0x8001, 0x17e).u32(1).u16(0xb).put(&[3, 0, 0, 0x80]).done());
+    run("pcr-event", Command::new(0x8002, 0x14b).u32(23).password().u16(5).put(b"hello").done());
+    run("pcr-read-evented", Command::new(0x8001, 0x17e).u32(1).u16(0xb).put(&[3, 0, 0, 0x80]).done());
+    run("pcr-reset", Command::new(0x8002, 0x13d).u32(23).password().done());
+    run("pcr-read-reset", Command::new(0x8001, 0x17e).u32(1).u16(0xb).put(&[3, 0, 0, 0x80]).done());
+    run("pcr-extend-drtm", Command::new(0x8002, 0x182).u32(17).password().u32(1).u16(0xb).put(&digest).done());
+    run("pcr-extend-sha1", Command::new(0x8002, 0x182).u32(16).password().u32(1).u16(4).put(&[0x22; 20]).done());
+    run("pcr-extend-no-session", Command::new(0x8001, 0x182).u32(16).u32(1).u16(0xb).put(&digest).done());
+    run("get-random", Command::new(0x8001, 0x17b).u16(16).done());
+    run("hash", Command::new(0x8001, 0x17d).u16(3).put(b"abc").u16(0xb).u32(0x4000_0007).done());
+    run("unknown-command", Command::new(0x8001, 0x131).done());
+    run("short-command", &[0x80, 0x01, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x01]);
+    say(system_table, "tpm2 test: done\r\n");
+    Status::SUCCESS
+}

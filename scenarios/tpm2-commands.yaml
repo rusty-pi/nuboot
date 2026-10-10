@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "tpm2-commands"
+description: "An EFI application sends the TPM on the VPU TPM 2.0 commands through EFI_TCG2_PROTOCOL.SubmitCommand; scripts/check-tpm2.py checks the responses."
+
+boot:
+  eeprom: "../out/pieeprom-test.bin"
+  sd:
+    files:
+      EFI/BOOT/BOOTAA64.EFI: "../out/tpm2-test.efi"
+  until: "tpm2 test: done"
+  wall_secs: 900
+
+milestones:
+  - why: "The application found the protocol."
+    line: "tpm2 test: startup 80010000000a00000100"
+  - why: "The application got through the commands."
+    line: "tpm2 test: done"

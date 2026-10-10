@@ -14,8 +14,8 @@ const RESPONSE: u32 = 0x8000_0000;
 pub const TAG_GET_BOOT_KEY: u32 = 0x0003_00a0;
 pub const TAG_EXTEND_BOOT_MEASUREMENT: u32 = 0x0003_00a1;
 
-/// Ask for the boot key bound to `mask`, then try to extend a PCR and to ask
-/// again: the key comes once and nothing is measured after it.
+/// Ask for the boot key bound to `mask`, then extend a PCR and ask again: the
+/// key comes once, and a PCR can still be extended.
 pub fn boot_key_test(system_table: *mut SystemTable, mask: u32) -> r_efi::efi::Status {
     use r_efi::efi::Status;
     say(system_table, "boot key test: asking\r\n");

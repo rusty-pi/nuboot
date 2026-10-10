@@ -1,6 +1,5 @@
-//! The VPU firmware's property mailbox, for the boot measurement: every image
-//! this firmware loads is folded into it, and it is closed as boot services
-//! exit.
+//! The VPU firmware's property mailbox, for the TPM on the VPU: PCR extends
+//! and the commands `EFI_TCG2_PROTOCOL.SubmitCommand` carries.
 
 use core::cell::UnsafeCell;
 use core::ptr::{read_volatile, write_volatile};
@@ -20,7 +19,9 @@ const RESPONSE: u32 = 0x8000_0000;
 const ANSWER_US: u64 = 200_000;
 
 const TAG_EXTEND_BOOT_MEASUREMENT: u32 = 0x0003_00a1;
-const TAG_LOCK_BOOT_MEASUREMENT: u32 = 0x0003_00a2;
+const TAG_TPM2_COMMAND: u32 = 0x0003_00a3;
+/// The largest TPM command or response (`src/tpm2.rs`).
+const TPM_MAX: usize = 2048;
 
 #[repr(C, align(16))]
 struct Buffer(UnsafeCell<[u32; 16]>);
@@ -30,6 +31,31 @@ unsafe impl Sync for Buffer {}
 /// The bus address is 32 bits, so this has to sit in the first gigabyte,
 /// which this image does.
 static BUFFER: Buffer = Buffer(UnsafeCell::new([0; 16]));
+
+#[repr(C, align(16))]
+struct Big(UnsafeCell<[u32; 6 + TPM_MAX / 4 + 1]>);
+
+unsafe impl Sync for Big {}
+
+static BIG: Big = Big(UnsafeCell::new([0; 6 + TPM_MAX / 4 + 1]));
+
+/// Post `message` (a whole property buffer at `at`, `len` bytes) and wait for
+/// the VPU to answer it. Whether it did.
+fn post(at: u64, len: usize) -> bool {
+    cache_flush(at, len);
+    let message = (0xc000_0000 | at as u32) | CHANNEL_PROPERTY;
+    if !util::wait_for(ANSWER_US, || util::read32(MAIL1_STATUS) & FULL == 0) {
+        return false;
+    }
+    util::write32(MAIL1_WRITE, message);
+    let replied = util::wait_for(ANSWER_US, || {
+        util::read32(MAIL0_STATUS) & EMPTY == 0 && util::read32(MAIL0_READ) == message
+    });
+    if replied {
+        cache_flush(at, len);
+    }
+    replied
+}
 
 /// Post one tag with `value` words and wait for the VPU to answer it. Whether
 /// it did.
@@ -47,22 +73,47 @@ fn call(tag: u32, value: &[u32]) -> bool {
         }
         write_volatile(buf.add(words), 0);
     }
-    let at = buf as u64;
-    cache_flush(at, 64);
-    let message = (0xc000_0000 | at as u32) | CHANNEL_PROPERTY;
-    if !util::wait_for(ANSWER_US, || util::read32(MAIL1_STATUS) & FULL == 0) {
+    if !post(buf as u64, 4 * (words + 1)) {
         return false;
     }
-    util::write32(MAIL1_WRITE, message);
-    let replied = util::wait_for(ANSWER_US, || {
-        util::read32(MAIL0_STATUS) & EMPTY == 0 && util::read32(MAIL0_READ) == message
-    });
-    if !replied {
-        return false;
-    }
-    cache_flush(at, 64);
     let status = unsafe { read_volatile(buf.add(4)) };
     status & RESPONSE != 0
+}
+
+/// Run a TPM 2.0 command on the VPU: the length of its response, put in
+/// `response`, or `None` if the VPU did not answer or it does not fit.
+pub fn tpm2_command(command: &[u8], response: &mut [u8]) -> Option<usize> {
+    if command.len() > TPM_MAX {
+        return None;
+    }
+    let buf = BIG.0.get() as *mut u32;
+    let bytes = buf as *mut u8;
+    unsafe {
+        write_volatile(buf, (4 * (6 + TPM_MAX / 4 + 1)) as u32);
+        write_volatile(buf.add(1), 0);
+        write_volatile(buf.add(2), TAG_TPM2_COMMAND);
+        write_volatile(buf.add(3), TPM_MAX as u32);
+        write_volatile(buf.add(4), command.len() as u32);
+        for (i, b) in command.iter().enumerate() {
+            write_volatile(bytes.add(20 + i), *b);
+        }
+        write_volatile(buf.add(5 + TPM_MAX / 4), 0);
+    }
+    if !post(buf as u64, 4 * (6 + TPM_MAX / 4 + 1)) {
+        return None;
+    }
+    let status = unsafe { read_volatile(buf.add(4)) };
+    if status & RESPONSE == 0 {
+        return None;
+    }
+    let length = (status & !RESPONSE) as usize;
+    if length > response.len() || length > TPM_MAX {
+        return None;
+    }
+    for (i, b) in response[..length].iter_mut().enumerate() {
+        *b = unsafe { read_volatile(bytes.add(20 + i)) };
+    }
+    Some(length)
 }
 
 /// Extend a PCR on the VPU.
@@ -74,12 +125,5 @@ pub fn extend(pcr: u32, digest: &[u8; 32]) {
     }
     if !call(TAG_EXTEND_BOOT_MEASUREMENT, &words) {
         warn!("measure", "the VPU did not take a measurement"; pcr = pcr);
-    }
-}
-
-/// Close the measurement before the OS has the board.
-pub fn lock() {
-    if !call(TAG_LOCK_BOOT_MEASUREMENT, &[]) {
-        warn!("measure", "the VPU did not close the boot measurement");
     }
 }

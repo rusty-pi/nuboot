@@ -4,26 +4,11 @@ The firmware keeps the device private key (OTP rows 56-63) in the VPU and
 gives the payload a key derived from it and from what was booted. A payload
 that was not the one the key was meant for gets a different key.
 
-## PCRs on the VPU
+## The PCRs
 
-`start4.elf` keeps 24 SHA-256 PCRs. UEFI implements `EFI_TCG2_PROTOCOL` over
-them, with a crypto-agile event log (`GetEventLog`). There is no TPM command
-interface behind it: `SubmitCommand` is unsupported, and Linux sees no TPM
-device. Shim, GRUB and the Linux EFI stub measure into the protocol as they
-do on a PC.
-
-The firmware measures the way a PC does:
-
-| PCR | holds |
-|---|---|
-| 7 | `SecureBoot`, `PK`, `KEK`, `db` and `dbx` as UEFI holds them, a separator, then the `db` certificate that verified each image it loads. Shim adds the certificates it verified GRUB and the kernel with. |
-| 4 | a separator, then each image UEFI loads (shim), and GRUB's, as shim reports it |
-| 8, 9, 14 | what GRUB and shim measure: commands, files, the MOK list |
-
-The VPU takes an extend over the property mailbox: tag `0x000300a1`, the PCR
-number and 32 bytes. Extends are refused once the registers are closed, which
-UEFI does as it exits boot services (tag `0x000300a2`, sent before the OS has
-the board), and when the key is taken.
+The PCRs are the TPM's ([tpm2.md](tpm2.md)): 24 SHA-256 registers on the VPU,
+extended by UEFI as it boots and by shim, GRUB, systemd-boot and the Linux EFI
+stub through `EFI_TCG2_PROTOCOL`, and by the OS through the TPM commands.
 
 ## The boot key
 
@@ -85,11 +70,9 @@ Model B d03115.
 ## Checks
 
 `scenarios/boot-key.yaml` boots a board with a test key fused. The EFI
-application in `uefi/test-apps/mailbox` asks for the key bound to PCR 4, tries
-to extend a PCR and asks again: the key comes once and nothing is measured
-after it. `boot-key-unbound` and `boot-key-unbound-b` ask for the unbound key
-from two different images signed by the same key. `scenarios/late-extend.yaml`
-exits boot services and then tries to extend: the VPU refuses.
+application in `uefi/test-apps/mailbox` asks for the key bound to PCR 4, extends
+a PCR and asks again: the key comes once, and a PCR can still be extended. `boot-key-unbound` and `boot-key-unbound-b` ask for the unbound key
+from two different images signed by the same key. 
 
 `scripts/check-key-scrub.py` boots them. It computes the PCR 4 key from the
 rows and the application's Authenticode hash and checks it is the one the

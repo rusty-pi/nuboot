@@ -78,7 +78,7 @@ pimu boot --scenario scenarios/usb-hello.yaml    # an EFI application off a USB 
 pimu boot --scenario scenarios/xhci-reset.yaml   # NOTIFY_XHCI_RESET over the property mailbox
 pimu boot --scenario scenarios/boot-key.yaml     # the boot key bound to PCR 4, once
 pimu boot --scenario scenarios/boot-key-unbound.yaml    # bound to PCR 7
-pimu boot --scenario scenarios/late-extend.yaml  # no measurement after ExitBootServices
+pimu boot --scenario scenarios/tpm2-commands.yaml  # TPM 2.0 commands on the VPU
 pimu boot --scenario scenarios/watchdog-hang.yaml  # a hang in UEFI resets the board
 pimu boot --scenario scenarios/watchdog-exit.yaml  # ExitBootServices hands the dog to the OS
 pimu boot --eeprom out/pieeprom.bin --sd boot/   # a directory as the SD card
@@ -93,9 +93,9 @@ they are signed with ([uefi.md](uefi.md#secure-boot)).
 - The bootcode's HMAC is left zero, so a board's boot ROM refuses the image:
   it runs in pimu only.
 - The property mailbox answers `NOTIFY_XHCI_RESET` (reload the VL805's
-  firmware after the OS has reset the PCIe link), the PCRs (tags
-  `0x000300a1` to extend, `0x000300a2` to close) and the one-time boot key
-  (tag `0x000300a0`), and no other tag. None returns a fuse.
+  firmware after the OS has reset the PCIe link), the TPM 2.0 on the VPU (tag
+  `0x000300a3` carries a command, `0x000300a1` extends a PCR) and the
+  one-time boot key (tag `0x000300a0`), and no other tag. None returns a fuse.
 - `SDRAM_BANKLOW` is the stock default, 3.
 - Nothing sets the ARM's clock.
 - `start4.elf` is stored uncompressed and without a checksum.

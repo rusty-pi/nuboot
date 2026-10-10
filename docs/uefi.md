@@ -78,8 +78,8 @@ SBAT revocations apply as they do on any other machine.
 
 The firmware measures what it verifies and offers `EFI_TCG2_PROTOCOL` to the
 loaders that follow: the Secure Boot configuration, each image's hash and the
-certificate that verified it go to PCRs on the VPU, which closes them as
-`ExitBootServices` returns ([keystore.md](keystore.md)).
+certificate that verified it go to the PCRs of the TPM on the VPU
+([tpm2.md](tpm2.md)).
 
 Signatures are checked with SHA-256 and RSA keys up to 4096 bits, as the UEFI
 CAs and the distributions' signers use.

@@ -120,7 +120,7 @@ jobs:
             out/boot-key.efi
             out/boot-key-unbound.efi
             out/boot-key-unbound-b.efi
-            out/late-extend.efi
+            out/tpm2-test.efi
             out/shimaa64.efi
             out/grubaa64.efi
           if-no-files-found: error

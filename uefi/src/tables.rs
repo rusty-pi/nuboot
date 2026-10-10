@@ -435,7 +435,6 @@ extern "efiapi" fn exit_boot_services(_handle: efi::Handle, key: usize) -> efi::
         f();
     }
     info!("uefi", "boot services exited, the OS has the board");
-    crate::mailbox::lock();
     crate::watchdog::exit_boot_services();
 
     let d = rt_data();

@@ -1,7 +1,8 @@
 //! `EFI_TCG2_PROTOCOL` over the VPU's PCRs (`src/keystore.rs`): the interface
-//! shim, GRUB and the Linux EFI stub measure into. There is no TPM command
-//! interface behind it; `HashLogExtendEvent` hashes, extends the VPU's
-//! register and appends the event to a crypto-agile log.
+//! shim, GRUB, systemd-boot and the Linux EFI stub measure into. The TPM is on
+//! the VPU (`src/tpm2.rs`): `SubmitCommand` sends it a command, and
+//! `HashLogExtendEvent` hashes, extends the VPU's register and appends the
+//! event to a crypto-agile log.
 //!
 //! This firmware measures the way a PC's does: the Secure Boot configuration
 //! (`SecureBoot`, `PK`, `KEK`, `db`, `dbx`) and the certificate that verified
@@ -245,8 +246,20 @@ extern "efiapi" fn hash_log_extend_event(
     efi::Status::SUCCESS
 }
 
-extern "efiapi" fn submit_command(_this: *mut Protocol, _in_size: u32, _in: *mut u8, _out_size: u32, _out: *mut u8) -> efi::Status {
-    efi::Status::UNSUPPORTED
+extern "efiapi" fn submit_command(_this: *mut Protocol, in_size: u32, command: *mut u8, out_size: u32, out: *mut u8) -> efi::Status {
+    if command.is_null() || out.is_null() {
+        return efi::Status::INVALID_PARAMETER;
+    }
+    let command = unsafe { core::slice::from_raw_parts(command, in_size as usize) };
+    let mut response = [0u8; 2048];
+    match crate::mailbox::tpm2_command(command, &mut response) {
+        Some(n) if n <= out_size as usize => {
+            unsafe { core::ptr::copy_nonoverlapping(response.as_ptr(), out, n) };
+            efi::Status::SUCCESS
+        }
+        Some(_) => efi::Status::BUFFER_TOO_SMALL,
+        None => efi::Status::DEVICE_ERROR,
+    }
 }
 
 extern "efiapi" fn get_active_pcr_banks(_this: *mut Protocol, banks: *mut u32) -> efi::Status {

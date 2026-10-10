@@ -1,6 +1,5 @@
-//! Asks for the boot key bound to PCR 4, the images, then tries to extend the
-//! measurement and to ask again: the key goes once, and nothing is measured
-//! after it.
+//! Asks for the boot key bound to PCR 4, the images, then extends a PCR and
+//! asks again: the key goes once.
 
 #![no_std]
 #![no_main]

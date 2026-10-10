@@ -12,7 +12,7 @@
 //! firmware does not know is left as it came, and the buffer is marked
 //! answered either way, which is what the stock firmware does.
 
-use crate::{debug, error, idle, info, keystore, mmio, vl805, warn};
+use crate::{debug, error, idle, info, keystore, mmio, tpm2, vl805, warn};
 
 const VPU_VIEW: u32 = 0x7e00_b980;
 /// Mailbox 0, which the ARM reads.
@@ -39,11 +39,11 @@ const TAG_NOTIFY_XHCI_RESET: u32 = 0x0003_0058;
 /// Tags of this firmware's own, in the range the stock firmware keeps for its
 /// crypto service.
 const TAG_GET_BOOT_KEY: u32 = 0x0003_00a0;
-/// Extend a PCR with 32 bytes (the PCR's number, then the digest), until the
-/// measurement is locked.
+/// Extend a PCR with 32 bytes: the PCR's number, then the digest.
 const TAG_EXTEND_BOOT_MEASUREMENT: u32 = 0x0003_00a1;
-/// Close the boot measurement.
-const TAG_LOCK_BOOT_MEASUREMENT: u32 = 0x0003_00a2;
+/// A TPM 2.0 command in, its response out ([`tpm2`]). The tag's length word
+/// says how long the command is, and then how long the response.
+const TAG_TPM2_COMMAND: u32 = 0x0003_00a3;
 
 /// Wait up to `timeout_us` for the ARM to post something, and answer all it
 /// has posted.
@@ -129,14 +129,31 @@ fn answer(bus: u32) {
                             digest = format_args!("{:02x}{:02x}{:02x}{:02x}", digest[0], digest[1], digest[2], digest[3]));
                         set(i + 2, RESPONSE | 36);
                     }
-                    Err(keystore::Refused::Closed) => warn!("keystore", "boot measurement is closed"; pcr = pcr),
                     Err(keystore::Refused::NoSuchRegister) => warn!("keystore", "no such PCR"; pcr = pcr),
                 }
             }
-            TAG_LOCK_BOOT_MEASUREMENT => {
-                keystore::lock();
-                info!("keystore", "boot measurement closed"; extends = keystore::count());
-                set(i + 2, RESPONSE);
+            TAG_TPM2_COMMAND if room >= 10 => {
+                let length = (word(i + 2) & !RESPONSE) as usize;
+                if length > room as usize {
+                    warn!("tpm2", "command longer than the tag's room"; length = length, room = room);
+                } else {
+                    let (command, response) = tpm2::buffers();
+                    for (n, byte) in command[..length].iter_mut().enumerate() {
+                        *byte = (word(value + n as u32 / 4) >> (8 * (n % 4))) as u8;
+                    }
+                    let out = tpm2::execute(&command[..length], response);
+                    if out > room as usize {
+                        warn!("tpm2", "response longer than the tag's room"; length = out, room = room);
+                    } else {
+                        for n in (0..out).step_by(4) {
+                            let mut w = [0u8; 4];
+                            let end = (n + 4).min(out);
+                            w[..end - n].copy_from_slice(&response[n..end]);
+                            set(value + n as u32 / 4, u32::from_le_bytes(w));
+                        }
+                        set(i + 2, RESPONSE | out as u32);
+                    }
+                }
             }
             _ => debug!("mailbox", "property tag not answered"; tag = format_args!("{tag:#010x}")),
         }
