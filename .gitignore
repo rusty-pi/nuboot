@@ -7,3 +7,10 @@
 /uefi/target
 /uefi/stub/target
 /uefi/test-apps/*/target
+/tools/tpm-vpu/*.ko
+/tools/tpm-vpu/*.o
+/tools/tpm-vpu/*.mod
+/tools/tpm-vpu/*.mod.c
+/tools/tpm-vpu/.*.cmd
+/tools/tpm-vpu/Module.symvers
+/tools/tpm-vpu/modules.order
