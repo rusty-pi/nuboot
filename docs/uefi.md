@@ -3,14 +3,19 @@
 The operating system is started through UEFI. The implementation is
 [CrabEFI](https://github.com/ArthurHeymans/CrabEFI), a UEFI in Rust, built as
 an AArch64 payload in `uefi/` with a Raspberry Pi 4 platform layer around it.
-The VPU firmware releases the ARM cores into `pi4-uefi.bin` at `0x200000`, at
-EL2 with `x0` holding the device tree. That image is a stub (`uefi/stub/`)
-with the payload inside it, coded with xz's ARM64 filter and LZMA; the stub
-decompresses the payload to `0x1000000` and enters it the same way.
+`start4.elf` carries `pi4-uefi.bin` and the board's device tree, and starts
+the ARM in them:
 
-Until the VPU firmware in this tree starts a payload itself, the stock
-`start4.elf` starts it, named as the kernel in `config.txt`; the scenarios in
-`uefi/scenarios/` boot it that way.
+1. It puts `pi4-uefi.bin` at ARM physical 0, where the cores come out of
+   reset, and the device tree at `0xF0_0000` with `/memory@0` filled in from
+   the board's SDRAM. The ARM gets everything below `0x3EC0_0000`, where the
+   VPU firmware's own memory starts, and all the memory above 1 GiB.
+2. `pi4-uefi.bin` (`uefi/stub/`) starts with an armstub: each core sets up
+   the local timer, the generic timer, the GIC and EL3's controls, and drops
+   to non-secure EL2. The secondary cores wait on the spin table at `0xd8`
+   that the device tree names.
+3. The primary core decompresses the payload, coded with xz's ARM64 filter
+   and LZMA, to `0x100_0000` and enters it with `x0` holding the device tree.
 
 ## What the platform layer provides
 
@@ -61,17 +66,21 @@ image compresses them) and the VL805 firmware (68 KB). That leaves about
 
 ## Running it in pimu
 
+`start4.elf` carries the default build. After `scripts/build-uefi.sh
+--test-apps` and `scripts/build.sh`:
+
 ```bash
-scripts/build-uefi.sh --test-apps
-pimu boot --scenario uefi/scenarios/hello.yaml   # an EFI application
-pimu boot --scenario uefi/scenarios/grub.yaml    # Ubuntu's signed GRUB reads its grub.cfg
+pimu boot --scenario scenarios/uefi-hello.yaml   # an EFI application
+pimu boot --scenario scenarios/uefi-grub.yaml    # Ubuntu's signed GRUB reads its grub.cfg
 ```
 
 ## Known limitations
 
-- The stub is linked at `0x200000`, with an arm64 `Image` header so the
-  loader places it there, and the payload at `0x1000000`; neither is
+- `pi4-uefi.bin` is linked at 0 and the payload at `0x100_0000`; neither is
   relocatable.
+- The device tree is Raspberry Pi's for the Pi 4B whatever the board, with
+  nothing filled in but `/memory@0`.
+- The ARM runs at the clock the bootloader left it at.
 - After `ExitBootServices` the runtime `ResetSystem` is declared as PSCI over
   SMC, which nothing on this board answers; Linux resets through
   `bcm2835-wdt`.
@@ -83,4 +92,5 @@ pimu boot --scenario uefi/scenarios/grub.yaml    # Ubuntu's signed GRUB reads it
   press Enter at the prompt.
 - `patches/crabefi/0001-*` lets the platform supply the RNG. Without it
   CrabEFI probes for an SMCCC TRNG with `smc`, an undefined instruction on
-  this board, where nothing runs at EL3 and `SCR_EL3.SMD` is set.
+  this board, where nothing stays at EL3 and the armstub sets
+  `SCR_EL3.SMD`.

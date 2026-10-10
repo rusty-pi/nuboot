@@ -8,10 +8,12 @@
 use core::panic::PanicInfo;
 use core::ptr::{addr_of, addr_of_mut, read_volatile, write_volatile};
 
+pub mod arm;
 pub mod board;
 pub mod cm;
 pub mod console;
 pub mod critical;
+pub mod fdt;
 pub mod handover;
 pub mod idle;
 pub mod log;

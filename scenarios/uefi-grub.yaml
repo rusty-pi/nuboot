@@ -1,18 +1,13 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "uefi-grub"
-description: "The stock EEPROM bootloader and start4.elf hand the ARM to CrabEFI, which finds the SD card and starts Ubuntu's signed GRUB from \\EFI\\BOOT\\BOOTAA64.EFI."
+description: "The stock EEPROM bootloader starts start4.elf, which starts the ARM in the UEFI firmware it carries. CrabEFI finds the SD card and starts Ubuntu's signed GRUB from \\EFI\\BOOT\\BOOTAA64.EFI."
 
 boot:
   eeprom: "https://raw.githubusercontent.com/raspberrypi/rpi-eeprom/master/firmware-2711/latest/pieeprom-2026-08-04.bin"
   sd:
     files:
-      start4.elf: "https://raw.githubusercontent.com/raspberrypi/firmware/1.20260915/boot/start4.elf"
-      fixup4.dat: "https://raw.githubusercontent.com/raspberrypi/firmware/1.20260915/boot/fixup4.dat"
-      config.txt: { inline: "arm_64bit=1\nenable_uart=1\nuart_2ndstage=1\nkernel=pi4-uefi.bin\ndtoverlay=disable-bt\n" }
-      pi4-uefi.bin: "../../out/pi4-uefi.bin"
-      bcm2711-rpi-4-b.dtb: "https://raw.githubusercontent.com/raspberrypi/firmware/1.20260915/boot/bcm2711-rpi-4-b.dtb"
-      overlays/disable-bt.dtbo: "https://raw.githubusercontent.com/raspberrypi/firmware/1.20260915/boot/overlays/disable-bt.dtbo"
-      EFI/BOOT/BOOTAA64.EFI: "../../out/grubaa64.efi"
+      start4.elf: "../out/start4.elf"
+      EFI/BOOT/BOOTAA64.EFI: "../out/grubaa64.efi"
       EFI/ubuntu/grub.cfg: { inline: "set timeout=0\necho \"grub: read its config from the card\"\n" }
   boot_order: "0x1"
   bootconf:
@@ -25,7 +20,9 @@ boot:
   wall_secs: 900
 
 milestones:
-  - why: "start4.elf started the stub, which decompressed the payload and entered it."
+  - why: "start4.elf started the ARM."
+    line: "ARM started in UEFI"
+  - why: "The armstub took the cores to EL2 and the primary core decompressed CrabEFI and entered it."
     line: "[CrabEFI] PL011 serial initialized"
   - why: "CrabEFI's SDHCI driver brought up the card on EMMC2 and the boot manager found the removable-media path on it."
     line: "Booting Boot Entry (eMMC)"

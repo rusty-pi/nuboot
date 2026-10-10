@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "uefi-hello"
+description: "The stock EEPROM bootloader starts start4.elf, which starts the ARM in the UEFI firmware it carries. CrabEFI finds the SD card and runs \\EFI\\BOOT\\BOOTAA64.EFI."
+
+boot:
+  eeprom: "https://raw.githubusercontent.com/raspberrypi/rpi-eeprom/master/firmware-2711/latest/pieeprom-2026-08-04.bin"
+  sd:
+    files:
+      start4.elf: "../out/start4.elf"
+      EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+  boot_order: "0x1"
+  bootconf:
+    - "BOOT_UART=1"
+  input:
+    # Skip the boot menu's countdown, which takes long in the model.
+    - after: "Booting in 5 seconds"
+      text: "\r"
+  until: "EFI app executed successfully"
+  wall_secs: 900
+
+milestones:
+  - why: "start4.elf started the ARM."
+    line: "ARM started in UEFI"
+  - why: "The armstub took the cores to EL2 and the primary core decompressed CrabEFI and entered it."
+    line: "[CrabEFI] PL011 serial initialized"
+  - why: "CrabEFI's SDHCI driver brought up the card on EMMC2 and the boot manager found the removable-media path on it."
+    line: "Booting Boot Entry (eMMC)"
+  - why: "The EFI application ran and returned."
+    line: "Hello from CrabEFI!"

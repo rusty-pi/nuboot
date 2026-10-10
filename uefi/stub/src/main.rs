@@ -1,16 +1,19 @@
-//! The image the VPU firmware starts: it decompresses the UEFI payload to the
-//! address the payload is linked at and jumps to it with the device tree.
+//! The image the VPU firmware starts the ARM cores in, at ARM physical 0: an
+//! armstub (`armstub.rs`), then a decompressor that unpacks the UEFI payload
+//! to the address the payload is linked at and jumps to it with the device
+//! tree.
 //!
 //! The payload is coded with xz's ARM64 filter and LZMA, which takes it to
 //! about a third of its size; the EEPROM has no room for it otherwise.
 //!
-//! The entry builds a 1 GiB-block identity map so the decoder runs with the
-//! caches on, and turns the MMU back off before the jump: the payload expects
-//! to be entered as the armstub enters an image.
+//! The decompressor builds a 1 GiB-block identity map so the decoder runs
+//! with the caches on, and turns the MMU back off before the jump: the
+//! payload expects to be entered as an armstub enters an image.
 
 #![no_std]
 #![no_main]
 
+mod armstub;
 mod lzma;
 
 use core::arch::global_asm;
@@ -23,18 +26,9 @@ const UART0_FR: usize = 0xFE20_1018;
 
 global_asm!(
     r#"
-.section .text.entry, "ax"
-.global _start
-_start:
-    b 0f                        // code0
-    .word 0                     // code1
-    .quad 0                     // text_offset
-    .quad _image_size           // image_size
-    .quad 2                     // flags: little-endian, 4 KiB pages, 2 MiB-aligned base
-    .quad 0, 0, 0               // res2..res4
-    .ascii "ARM\x64"            // magic
-    .word 0                     // res5
-0:
+.section .text.decompress, "ax"
+.global decompress
+decompress:
     mov x19, x0
 
     // Attr0 device-nGnRnE, Attr1 normal write-back.

@@ -2,9 +2,8 @@
 //! medium into SDRAM and enters at its ELF entry point.
 //!
 //! It says what it is running on, takes over the boot watchdog the bootloader
-//! armed, and starts the threads the firmware runs on for as long as the
-//! board is up. There is no payload to hand the ARM yet, so the boot ends
-//! there and the threads keep the board's lights on.
+//! armed, starts the ARM in the UEFI firmware it carries, and starts the
+//! threads the firmware runs on for as long as the board is up.
 
 #![no_std]
 #![no_main]
@@ -13,7 +12,13 @@ use core::cell::Cell;
 
 use pi4_server_firmware::board::Revision;
 use pi4_server_firmware::handover::{self, BootDevice};
-use pi4_server_firmware::{console, error, idle, info, sched, stack, stc, timer, warn, watchdog};
+use pi4_server_firmware::{arm, console, error, idle, info, sched, stack, stc, timer, warn, watchdog};
+
+/// What the ARM cores start in: an armstub and the compressed UEFI firmware
+/// (`uefi/`).
+static ARM_IMAGE: &[u8] = include_bytes!(env!("ARM_IMAGE"));
+/// The device tree the ARM gets, and passes on to the operating system.
+static ARM_TREE: &[u8] = include_bytes!(env!("ARM_TREE"));
 
 /// "BSTA": the bootloader fills in the rest (word 1 points at its tagged
 /// state, [`handover`]).
@@ -79,7 +84,12 @@ fn firmware_main() -> ! {
     announce();
     let watchdog = take_over_watchdog();
 
-    warn!("boot", "no payload to start, staying in the firmware");
+    match arm::start(ARM_IMAGE, ARM_TREE) {
+        Ok(started) => info!("arm", "ARM started in UEFI";
+            image_bytes = started.image_bytes, tree = format_args!("{:#x}", arm::TREE_ADDR), tree_bytes = started.tree_bytes,
+            memory_mib = started.memory_mib),
+        Err(arm::Error::Tree) => error!("arm", "the built-in device tree has no /memory@0 reg, not starting the ARM"),
+    }
     // The heartbeat's stop masks interrupts, so the dog is handed back before
     // the threads take them on.
     if watchdog {

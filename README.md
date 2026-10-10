@@ -22,8 +22,8 @@ Out of scope: HATs, IPv6 and ACPI (the operating system gets a device tree).
 
 > [!NOTE]
 > This is the start of the firmware, not a usable one: it boots, logs the
-> board, takes over the boot watchdog and runs its threads, but starts no
-> operating system yet.
+> board, takes over the boot watchdog, starts the ARM in UEFI and runs its
+> threads, but has not booted an operating system yet.
 
 ## What it does
 
@@ -37,16 +37,19 @@ board is up:
 3. Takes over the boot watchdog when the bootloader armed one
    (`BOOT_WATCHDOG_TIMEOUT` in the EEPROM's `bootconf.txt`), beating it from a
    timer interrupt, and hands it back when the boot is over.
-4. Starts the scheduler: a service thread and a monitor thread that reports
+4. Starts the ARM in the UEFI firmware it carries, with the board's device
+   tree ([docs/uefi.md](docs/uefi.md)). UEFI finds the SD card and boots
+   `\EFI\BOOT\BOOTAA64.EFI` from it.
+5. Starts the scheduler: a service thread and a monitor thread that reports
    each stack's high-water mark as it grows.
 
 ```text
    2.764642 INFO  boot     pi4-server-firmware 1a2b3c4  board="Raspberry Pi 4 Model B" revision=d03115 pcb=1.5
    2.764772 INFO  boot     started by the EEPROM bootloader  medium=sd ram_mib=8192 bootloader=0a7ef05fedd8ed9ab9c58591ddf79a60a78dd4b2
    2.764902 INFO  watchdog boot watchdog running  budget_s=60 left_ms=57236
-   2.764990 WARN  boot     no payload to start, staying in the firmware
-   2.765048 INFO  watchdog boot watchdog off  left_ms=57236
-   2.765232 INFO  sched    threads running  threads=2 tick_us=1000
+   2.775829 INFO  arm      ARM started in UEFI  image_bytes=154726 tree=0xf00000 tree_bytes=56443 memory_mib=8108
+   2.775967 INFO  watchdog boot watchdog off  left_ms=57225
+   2.776154 INFO  sched    threads running  threads=2 tick_us=1000
 ```
 
 [docs/logging.md](docs/logging.md) describes the log format.
@@ -61,11 +64,13 @@ It runs under the stock EEPROM bootloader.
 |---|---|---|---|---|
 | Started by the stock EEPROM bootloader from SD | ✅ | ➖ | ➖ | ➖ |
 | Console log, board identity, boot watchdog, threads | ✅ | ➖ | ➖ | ➖ |
-| UEFI payload: SD card, an EFI application, Ubuntu's signed GRUB (started by the stock `start4.elf`) | ✅ | ➖ | ➖ | ➖ |
+| ARM started in UEFI: SD card, an EFI application, Ubuntu's signed GRUB | ✅ | ➖ | ➖ | ➖ |
 
 ## Building
 
-With the VC4 toolchain in place ([docs/toolchain.md](docs/toolchain.md)):
+With the VC4 toolchain in place ([docs/toolchain.md](docs/toolchain.md)), and
+rustup, `xz` and `curl` for the UEFI firmware and device tree it carries
+([docs/uefi.md](docs/uefi.md)):
 
 ```bash
 scripts/build.sh
@@ -78,10 +83,13 @@ with ANSI escapes.
 
 [`scenarios/`](scenarios/) holds the boots CI checks: each names an EEPROM
 image, the files of the boot medium and the lines the console has to print.
-After `scripts/build.sh`:
+After `scripts/build.sh`, and `scripts/build-uefi.sh --test-apps` for the
+EFI applications the UEFI scenarios put on the card:
 
 ```bash
 pimu boot --scenario scenarios/sd-boot.yaml
+pimu boot --scenario scenarios/uefi-hello.yaml
+pimu boot --scenario scenarios/uefi-grub.yaml
 ```
 
 To run it by hand, put `out/start4.elf` in a directory and boot that
@@ -90,8 +98,6 @@ directory as the SD card:
 ```bash
 pimu boot --eeprom https://raw.githubusercontent.com/raspberrypi/rpi-eeprom/master/firmware-2711/latest/pieeprom-2026-08-04.bin --sd boot/
 ```
-
-The UEFI payload has its own build and scenarios: [docs/uefi.md](docs/uefi.md).
 
 ## Source
 
@@ -103,7 +109,8 @@ The UEFI payload has its own build and scenarios: [docs/uefi.md](docs/uefi.md).
 | `src/idle.rs`, `src/timer.rs`, `src/stc.rs` | Interrupts, sleeping, the system timer |
 | `src/watchdog.rs`, `src/handover.rs` | The boot watchdog, and the state the bootloader hands over |
 | `src/console.rs`, `src/cm.rs`, `src/otp.rs`, `src/board.rs` | The PL011, clock generators, OTP and the board's identity |
-| `uefi/` | The UEFI payload: CrabEFI and the Raspberry Pi 4 platform layer it runs on, and the stub that decompresses it |
+| `src/arm.rs`, `src/fdt.rs` | Starting the ARM, and the device tree it gets |
+| `uefi/` | The UEFI firmware: CrabEFI and the Raspberry Pi 4 platform layer it runs on, and the armstub and decompressor the ARM starts in |
 
 ## Licence
 

@@ -56,7 +56,10 @@ jobs:
       # rust-toolchain.toml pins.
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Rust
-        run: rustup toolchain install
+        run: |
+          rustup toolchain install
+          # The nightly the UEFI firmware start4.elf carries is built with.
+          (cd uefi && rustup toolchain install)
 
       # rustc_codegen_gcc loads libgccjit at run time, so it only depends on
       # the commit build-codegen.sh pins and the nightly it is built with.
@@ -87,6 +90,10 @@ jobs:
       - name: Build
         run: |
           scripts/setup-toolchain.sh
+          # The Secure Boot build of the UEFI firmware has to keep building
+          # too; the scenarios' EFI applications come with --test-apps.
+          scripts/build-uefi.sh --features secure-boot
+          scripts/build-uefi.sh --test-apps
           scripts/build.sh
           # The optional features have to keep building too.
           cargo build --release --features color
@@ -94,7 +101,10 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: firmware
-          path: out/start4.elf
+          path: |
+            out/start4.elf
+            out/hello.efi
+            out/grubaa64.efi
           if-no-files-found: error
           retention-days: 7
 
@@ -131,33 +141,3 @@ jobs:
       - uses: rusty-pi/pimu@main
         with:
           args: boot --scenario scenarios/${{ matrix.scenario }}.yaml
-
-  # The UEFI payload: both builds, then its scenarios in pimu, started by the
-  # stock firmware.
-  uefi:
-    runs-on: ${{ vars.RUNNER_BOOT || 'ubuntu-24.04' }}
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Install Rust
-        working-directory: uefi
-        run: rustup toolchain install
-
-      - name: Build
-        run: |
-          # The Secure Boot build has to keep building too.
-          scripts/build-uefi.sh --features secure-boot
-          scripts/build-uefi.sh --test-apps
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: uefi
-          path: out/pi4-uefi.bin
-          if-no-files-found: error
-          retention-days: 7
-
-      - uses: rusty-pi/pimu@main
-        with:
-          args: boot --scenario uefi/scenarios/

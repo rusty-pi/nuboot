@@ -1,12 +1,13 @@
-/* The decompressor, at the address the VPU firmware loads an arm64 Image. */
+/* The armstub and decompressor, at ARM physical 0, where the cores start. */
 OUTPUT_FORMAT("elf64-littleaarch64")
 OUTPUT_ARCH(aarch64)
 ENTRY(_start)
 
 SECTIONS {
-    . = 0x200000;
+    . = 0;
     .text : {
         KEEP(*(.text.entry))
+        KEEP(*(.text.decompress))
         *(.text .text.*)
     }
     .rodata : ALIGN(16) {
@@ -34,7 +35,6 @@ SECTIONS {
         _stack_top = .;
     }
     _end = .;
-    _image_size = _end - 0x200000;
 
     /DISCARD/ : { *(.comment) *(.note*) *(.eh_frame*) *(.debug*) }
 }

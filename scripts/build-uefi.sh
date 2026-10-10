@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Build the UEFI payload into out/pi4-uefi.bin, and with --test-apps also what
-# uefi/scenarios/ boot it with:
+# Build the UEFI firmware into out/pi4-uefi.bin, and with --test-apps also the
+# EFI applications the scenarios boot with it:
 #
-# out/pi4-uefi.bin is the stub in uefi/stub/ with the payload, coded with xz's
-# ARM64 filter and LZMA, inside it; out/pi4-uefi-payload.bin is the payload as
-# it runs.
+# out/pi4-uefi.bin is the image the ARM cores start in (uefi/stub/: an
+# armstub, then the payload coded with xz's ARM64 filter and LZMA);
+# out/pi4-uefi-payload.bin is the payload as it runs. scripts/build.sh puts
+# out/pi4-uefi.bin inside start4.elf.
 #
 #   out/hello.efi     CrabEFI's minimal test application
 #   out/grubaa64.efi  Ubuntu's signed GRUB for arm64

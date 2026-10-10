@@ -8,6 +8,21 @@ fn main() {
     println!("cargo:rustc-link-arg-bin=start4=-Wl,-q");
     println!("cargo:rerun-if-changed=start4.ld");
     commit();
+    arm_files(&dir);
+}
+
+/// What the firmware hands the ARM, which scripts/build.sh puts in `out/`
+/// first: the image the cores start in (scripts/build-uefi.sh) and the
+/// board's device tree.
+fn arm_files(dir: &str) {
+    for (var, file) in [("ARM_IMAGE", "pi4-uefi.bin"), ("ARM_TREE", "bcm2711-rpi-4-b.dtb")] {
+        let path = format!("{dir}/out/{file}");
+        println!("cargo:rerun-if-changed={path}");
+        if !std::path::Path::new(&path).exists() {
+            panic!("{path} is missing: build with scripts/build.sh");
+        }
+        println!("cargo:rustc-env={var}={path}");
+    }
 }
 
 /// The commit being built, which the firmware reports as its version. A build
