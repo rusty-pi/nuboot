@@ -246,5 +246,17 @@ pub fn carry_poll() {
         carry_until(0);
         return;
     }
+    // Every reload here is a full 16 s, and the next comes within a second or
+    // two. Much less than that left means the OS armed the dog itself, with the
+    // short count of a reboot or its own timeout, and is not for a reload to
+    // push out.
+    if remaining_us() < OS_TOOK_BELOW_US {
+        crate::info!("watchdog", "the OS has the boot watchdog, left to it"; left_ms = remaining_us() / 1000);
+        carry_until(0);
+        return;
+    }
     reload_full();
 }
+
+/// What is left of the dog, below which the OS is taken to have armed it.
+const OS_TOOK_BELOW_US: u32 = 8_000_000;

@@ -71,7 +71,15 @@ the span ends. At `ExitBootServices` UEFI stops the interrupt and tells
 `start4.elf`, through the word at ARM physical `0xfc` in the armstub's page,
 which takes the dog back and beats it for 120 s, the time a kernel has to load
 `bcm2835_wdt`, a module in most distributions' kernels, and have it find the
-dog running.
+dog running. The VPU stops reloading as soon as the dog has less than 8 s left
+at a reload, which is the operating system having armed it with a timeout of its
+own.
+
+The timer is the EL2 hypervisor timer (`CNTHP`, GIC interrupt 26), routed to EL2
+until `ExitBootServices`: a payload that uses either takes the beat from UEFI.
+A reset with a short count (Linux's `reboot`) within the 120 s after
+`ExitBootServices` is delayed if one of the VPU's reloads lands in the 160 µs
+before it fires, which is rare.
 
 ## Running it in pimu
 

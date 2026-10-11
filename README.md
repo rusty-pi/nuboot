@@ -130,6 +130,7 @@ pimu boot --scenario scenarios/tpm2-commands.yaml
 pimu boot --scenario scenarios/systemd-boot.yaml
 pimu boot --scenario scenarios/watchdog-hang.yaml
 pimu boot --scenario scenarios/watchdog-exit.yaml
+pimu boot --scenario scenarios/watchdog-takeover.yaml
 pimu boot --scenario scenarios/watchdog-stuck.yaml
 pimu boot --scenario scenarios/watchdog-fault.yaml
 ```

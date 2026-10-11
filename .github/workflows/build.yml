@@ -135,6 +135,7 @@ jobs:
             out/hello.efi
             out/watchdog-hang.efi
             out/watchdog-exit.efi
+            out/watchdog-takeover.efi
             out/watchdog-stuck.efi
             out/watchdog-fault.efi
             out/xhci-reset.efi

@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "watchdog-takeover"
+description: "An EFI application exits boot services and then arms the watchdog with a timeout of its own, as an operating system's driver does, and stops beating it. start4.elf, which carries the dog for the operating system, sees the shorter count and leaves it to run out instead of reloading it for the rest of its span."
+
+boot:
+  eeprom: "../out/pieeprom-test.bin"
+  sd:
+    files:
+      EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-takeover.efi"
+  input:
+    # Only so `until` waits for the boot after the reset.
+    - after: "the OS has the boot watchdog"
+      text: "\r"
+  until: "boot watchdog armed"
+  wall_secs: 900
+
+milestones:
+  - why: "UEFI handed the dog back to start4.elf at ExitBootServices."
+    line: "is its to take over  span_s=120"
+  - why: "start4.elf saw the short count and stopped reloading."
+    line: "the OS has the boot watchdog, left to it"
+  - why: "The board reset and the first stage armed the watchdog again."
+    line: "boot watchdog armed  budget_s=30"

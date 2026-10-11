@@ -8,6 +8,11 @@
 //! The timer beats only while the span `SetWatchdogTimer` asks for lasts (five
 //! minutes to begin with, and again when it is asked to turn the dog off), so
 //! a payload that never comes back ends in a reset too.
+//!
+//! The interrupt is the EL2 hypervisor timer's (`CNTHP`, GIC interrupt 26),
+//! routed to EL2 with `HCR_EL2.IMO` until `ExitBootServices`. A payload that
+//! uses that timer or that routing, which no loader or kernel stub does, takes
+//! the beat from it.
 
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
@@ -130,7 +135,7 @@ extern "C" fn pi4_irq() {
         if counter_us() < END_US.load(Ordering::Relaxed) {
             reload();
         } else if !EXPIRED.swap(true, Ordering::Relaxed) {
-            crate::warn!("watchdog", "the boot did not finish in time, letting the board reset");
+            crate::log::emergency("watchdog", format_args!("the boot did not finish in time, letting the board reset"));
         }
         arm_timer();
     }
