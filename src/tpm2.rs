@@ -99,7 +99,7 @@ const CC_STIR_RANDOM: u32 = 0x146;
 /// Commands in numeric order, for `TPM_CAP_COMMANDS`: the number of handles in
 /// the command (bits 25-27 of `TPMA_CC`), and 8 more when the response has a
 /// handle (bit 28).
-const COMMANDS: [(u32, u32); 35] = [
+const COMMANDS: [(u32, u32); 37] = [
     (object::CC_CREATE_PRIMARY, 1 | 8),
     (CC_PCR_RESET, 1),
     (CC_INCREMENTAL_SELF_TEST, 0),
@@ -117,6 +117,8 @@ const COMMANDS: [(u32, u32); 35] = [
     (object::CC_CONTEXT_LOAD, 8),
     (object::CC_CONTEXT_SAVE, 1),
     (object::CC_FLUSH_CONTEXT, 0),
+    (object::CC_LOAD_EXTERNAL, 8),
+    (session::CC_POLICY_AUTHORIZE, 1),
     (session::CC_POLICY_AUTH_VALUE, 1),
     (session::CC_POLICY_COMMAND_CODE, 1),
     (session::CC_POLICY_OR, 1),
@@ -145,11 +147,13 @@ struct Spec {
     authorized: usize,
 }
 
-const OBJECT_COMMANDS: [Spec; 21] = [
+const OBJECT_COMMANDS: [Spec; 23] = [
     Spec { code: object::CC_CREATE_PRIMARY, handles: 1, authorized: 1 },
     Spec { code: object::CC_CREATE, handles: 1, authorized: 1 },
     Spec { code: object::CC_LOAD, handles: 1, authorized: 1 },
     Spec { code: object::CC_UNSEAL, handles: 1, authorized: 1 },
+    Spec { code: object::CC_LOAD_EXTERNAL, handles: 0, authorized: 0 },
+    Spec { code: session::CC_POLICY_AUTHORIZE, handles: 1, authorized: 0 },
     Spec { code: sign::CC_SIGN, handles: 1, authorized: 1 },
     Spec { code: sign::CC_QUOTE, handles: 1, authorized: 1 },
     Spec { code: sign::CC_VERIFY_SIGNATURE, handles: 1, authorized: 0 },
@@ -175,12 +179,14 @@ const ALG_SHA256: u16 = 0x000b;
 const ALG_NULL: u16 = 0x0010;
 /// `TPMA_ALGORITHM`: asymmetric, symmetric, hash, object, signing, encrypting,
 /// method are bits 0, 1, 2, 3, 8, 9, 10.
-const ALGS: [(u16, u32); 10] = [
+const ALGS: [(u16, u32); 12] = [
+    (object::ALG_RSA, 1 << 0 | 1 << 3),
     (ALG_HMAC, 1 << 2 | 1 << 8),
     (object::ALG_AES, 1 << 1),
     (ALG_KEYEDHASH, 1 << 3),
     (ALG_SHA256, 1 << 2),
     (ALG_NULL, 0),
+    (object::ALG_RSASSA, 1 << 0 | 1 << 8),
     (object::ALG_ECDSA, 1 << 0 | 1 << 8 | 1 << 10),
     (object::ALG_ECDH, 1 << 0 | 1 << 10),
     (object::ALG_ECC, 1 << 0 | 1 << 3),
@@ -414,6 +420,8 @@ fn dispatch(code: u32, handles: &[u32; 3], params: &mut In, a: &mut session::Aut
         object::CC_CREATE => object::create(&mut command),
         object::CC_LOAD => object::load(&mut command),
         object::CC_UNSEAL => object::unseal(&mut command),
+        object::CC_LOAD_EXTERNAL => object::load_external(&mut command),
+        session::CC_POLICY_AUTHORIZE => session::policy_authorize(handles[0], params, a),
         sign::CC_SIGN => sign::sign(&mut command),
         sign::CC_QUOTE => sign::quote(&mut command),
         sign::CC_VERIFY_SIGNATURE => sign::verify(&mut command),

@@ -305,6 +305,16 @@ def check_signing(r):
         fail(f"Hash with the owner hierarchy: {body.hex()}")
     expect_rc(r, "flush-signing", 0)
 
+    tag, rc, body = header(r["load-external"])
+    if rc != 0 or body[:4] != struct.pack(">I", 0x80000002) or len(body) != 4 + 2 + 34:
+        fail(f"LoadExternal: {rc:#x} {body.hex()}")
+    tag, rc, body = header(r["verify-rsa"])
+    if rc != 0 or struct.unpack(">H", body[:2])[0] != 0x8022 or struct.unpack(">I", body[2:6])[0] != 0x40000001:
+        fail(f"VerifySignature with an RSA key: {rc:#x} {body.hex()}")
+    expect_rc(r, "verify-rsa-forged", 0x9B | 0x40 | 0x200)
+    expect_rc(r, "sign-external", 0x9C | 0x100)
+    expect_rc(r, "flush-external", 0)
+
 
 if __name__ == "__main__":
     main()

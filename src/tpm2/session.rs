@@ -27,6 +27,7 @@ pub const CC_POLICY_OR: u32 = 0x171;
 pub const CC_POLICY_AUTH_VALUE: u32 = 0x16b;
 pub const CC_POLICY_PASSWORD: u32 = 0x18c;
 pub const CC_POLICY_SECRET: u32 = 0x151;
+pub const CC_POLICY_AUTHORIZE: u32 = 0x16a;
 pub const CC_POLICY_COMMAND_CODE: u32 = 0x16c;
 
 const ATTR_CONTINUE: u8 = 0x01;
@@ -174,6 +175,8 @@ impl Entity {
         if slot.is_primary {
             entity.auth = slot.auth;
             entity.auth_len = slot.auth_len;
+        } else if slot.private_len == 0 {
+            return Err(super::RC_KEY);
         } else {
             let (_, auth, auth_len, mut value, _) = object::open(slot)?;
             keystore::zero(&mut value);
@@ -714,6 +717,59 @@ pub fn policy_secret(entity: u32, handle: u32, params: &mut In, a: &mut Authoriz
     response[2..4].copy_from_slice(&0x8023u16.to_be_bytes());
     response[4..8].copy_from_slice(&RH_NULL.to_be_bytes());
     a.response_params(&response);
+    Ok(())
+}
+
+/// `TPM2_PolicyAuthorize`: the session's policy digest, which a key vouched
+/// for, gives way to a digest of that key and a reference. Whoever holds the
+/// key can then change what the policy requires, without changing the policy.
+pub fn policy_authorize(handle: u32, params: &mut In, a: &mut Authorization) -> Result<(), u32> {
+    let session = session_of(handle).ok_or(RC_HANDLE | RC_1)?;
+    if session.kind == KIND_HMAC {
+        return Err(RC_ATTRIBUTES | RC_1);
+    }
+    let approved = params.sized().ok_or(RC_COMMAND_SIZE)?;
+    let reference = params.sized().ok_or(RC_COMMAND_SIZE)?;
+    let key_name = params.sized().ok_or(RC_COMMAND_SIZE)?;
+    let tag = params.u16().ok_or(RC_COMMAND_SIZE)?;
+    let hierarchy = params.u32().ok_or(RC_COMMAND_SIZE)?;
+    let ticket = params.sized().ok_or(RC_COMMAND_SIZE)?;
+    if params.rest() != 0 {
+        return Err(RC_COMMAND_SIZE);
+    }
+    if approved.len() != 32 {
+        return Err(RC_SIZE | RC_P | RC_1);
+    }
+    if reference.len() > 32 {
+        return Err(RC_SIZE | RC_P | 2 * RC_1);
+    }
+    if key_name.len() > 34 {
+        return Err(RC_SIZE | RC_P | 3 * RC_1);
+    }
+    if session.kind != KIND_TRIAL {
+        if !constant_eq(approved, &session.digest) {
+            return Err(super::RC_VALUE | RC_P | RC_1);
+        }
+        let mut authorized = sha256::Sha256::new();
+        authorized.update(approved);
+        authorized.update(reference);
+        let authorized = authorized.finish();
+        let valid = tag == 0x8022
+            && hierarchy != RH_NULL
+            && constant_eq(ticket, &super::sign::ticket_digest(hierarchy, tag, &authorized, key_name));
+        if !valid {
+            return Err(super::RC_TICKET | RC_P | 4 * RC_1);
+        }
+    }
+    let mut update = sha256::Sha256::new();
+    update.update(&[0u8; 32]);
+    update.update(&CC_POLICY_AUTHORIZE.to_be_bytes());
+    update.update(key_name);
+    let mut update_reference = sha256::Sha256::new();
+    update_reference.update(&update.finish());
+    update_reference.update(reference);
+    session.digest = update_reference.finish();
+    let _ = a;
     Ok(())
 }
 

@@ -66,6 +66,7 @@ updates; on one without, it is gone at the next boot.
 
 Keys that sign work too: `tpm2_create` makes an ECDSA key, `tpm2_sign` and
 `tpm2_verifysignature` use it, and `tpm2_createek`, `tpm2_createak`, `tpm2_quote`
-and `tpm2_checkquote` attest the PCRs. A policy signed by a key
-(`PolicyAuthorize`, which `systemd-measure` and signed PCR 11 policies use) and
-RSA keys get `TPM_RC_COMMAND_CODE`.
+and `tpm2_checkquote` attest the PCRs. A policy signed by an RSA-2048 key
+(`PolicyAuthorize`, which `systemd-measure` and signed PCR 11 policies use) is
+checked with that key's public part, loaded with `TPM2_LoadExternal`. The TPM
+has no RSA keys of its own.

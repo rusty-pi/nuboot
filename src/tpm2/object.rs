@@ -19,6 +19,8 @@ use super::{
 };
 use crate::{aes, kdf, keystore, p256, rng, sha256};
 
+pub const ALG_RSA: u16 = 0x0001;
+pub const ALG_RSASSA: u16 = 0x0014;
 pub const ALG_ECC: u16 = 0x0023;
 pub const ALG_ECDSA: u16 = 0x0018;
 pub const ALG_ECDH: u16 = 0x0019;
@@ -65,8 +67,9 @@ pub const CC_FLUSH_CONTEXT: u32 = 0x165;
 pub const CC_CONTEXT_SAVE: u32 = 0x162;
 pub const CC_CONTEXT_LOAD: u32 = 0x161;
 pub const CC_TEST_PARMS: u32 = 0x18a;
+pub const CC_LOAD_EXTERNAL: u32 = 0x167;
 
-const MAX_PUBLIC: usize = 200;
+const MAX_PUBLIC: usize = 288;
 const MAX_PRIVATE: usize = 260;
 
 /// The parts of a `TPMT_PUBLIC` the TPM acts on.
@@ -83,8 +86,10 @@ pub struct Public {
     pub scheme: u16,
     pub scheme_hash: u16,
     pub curve: u16,
-    pub unique: [u8; 64],
+    pub unique: [u8; 256],
     pub unique_len: usize,
+    pub key_bits: u16,
+    pub exponent: u32,
 }
 
 impl Public {
@@ -103,8 +108,10 @@ impl Public {
             scheme: ALG_NULL,
             scheme_hash: 0,
             curve: 0,
-            unique: [0; 64],
+            unique: [0; 256],
             unique_len: 0,
+            key_bits: 0,
+            exponent: 0,
         };
         p.attributes = u32::from_be_bytes(input.take(4).ok_or(RC_COMMAND_SIZE)?.try_into().unwrap());
         let policy = input.sized().ok_or(RC_COMMAND_SIZE)?;
@@ -151,6 +158,25 @@ impl Public {
                 p.unique[..x.len()].copy_from_slice(x);
                 p.unique[32..32 + y.len()].copy_from_slice(y);
                 p.unique_len = x.len() * 2;
+            }
+            ALG_RSA => {
+                p.sym_alg = input.u16().ok_or(RC_COMMAND_SIZE)?;
+                if p.sym_alg != ALG_NULL {
+                    p.sym_bits = input.u16().ok_or(RC_COMMAND_SIZE)?;
+                    p.sym_mode = input.u16().ok_or(RC_COMMAND_SIZE)?;
+                }
+                p.scheme = input.u16().ok_or(RC_COMMAND_SIZE)?;
+                if p.scheme != ALG_NULL {
+                    p.scheme_hash = input.u16().ok_or(RC_COMMAND_SIZE)?;
+                }
+                p.key_bits = input.u16().ok_or(RC_COMMAND_SIZE)?;
+                p.exponent = input.u32().ok_or(RC_COMMAND_SIZE)?;
+                let modulus = input.sized().ok_or(RC_COMMAND_SIZE)?;
+                if modulus.len() > 256 {
+                    return Err(RC_SIZE);
+                }
+                p.unique[..modulus.len()].copy_from_slice(modulus);
+                p.unique_len = modulus.len();
             }
             _ => return Err(RC_TYPE),
         }
@@ -209,13 +235,44 @@ impl Public {
         Ok(())
     }
 
+    /// What the TPM supports of a public key it is handed: an ECC key as for
+    /// the keys it makes, or an RSA-2048 key that verifies PKCS#1 v1.5
+    /// signatures made with SHA-256.
+    pub fn check_external(&self) -> Result<(), u32> {
+        if self.kind != ALG_RSA {
+            return self.check();
+        }
+        if self.name_alg != ALG_SHA256 {
+            return Err(super::RC_HASH);
+        }
+        if self.attributes & !ATTRIBUTES_ALLOWED != 0 || self.attributes & (RESTRICTED | DECRYPT) == RESTRICTED | DECRYPT {
+            return Err(RC_ATTRIBUTES);
+        }
+        if self.sym_alg != ALG_NULL {
+            return Err(RC_SYMMETRIC);
+        }
+        match self.scheme {
+            ALG_NULL => {}
+            ALG_RSASSA if self.scheme_hash == ALG_SHA256 => {}
+            ALG_RSASSA => return Err(super::RC_HASH),
+            _ => return Err(RC_SCHEME),
+        }
+        if self.key_bits != 2048 || self.unique_len != 256 || (self.exponent != 0 && self.exponent != 65537) {
+            return Err(RC_KEY);
+        }
+        Ok(())
+    }
+
     pub fn is_storage(&self) -> bool {
         self.kind == ALG_ECC && self.attributes & (RESTRICTED | DECRYPT) == RESTRICTED | DECRYPT
     }
 
     /// A key that signs: ECDSA, restricted to what the TPM itself attests or not.
     pub fn is_signing(&self) -> bool {
-        self.kind == ALG_ECC && self.attributes & SIGN_ENCRYPT != 0 && !self.is_storage() && self.scheme != ALG_ECDH
+        (self.kind == ALG_ECC || self.kind == ALG_RSA)
+            && self.attributes & SIGN_ENCRYPT != 0
+            && !self.is_storage()
+            && self.scheme != ALG_ECDH
     }
 
     pub fn is_restricted(&self) -> bool {
@@ -239,6 +296,17 @@ impl Public {
                 if self.scheme == ALG_HMAC {
                     out.u16(self.scheme_hash);
                 }
+                out.u16(self.unique_len as u16);
+                out.put(&self.unique[..self.unique_len]);
+            }
+            ALG_RSA => {
+                out.u16(self.sym_alg);
+                out.u16(self.scheme);
+                if self.scheme != ALG_NULL {
+                    out.u16(self.scheme_hash);
+                }
+                out.u16(self.key_bits);
+                out.u32(self.exponent);
                 out.u16(self.unique_len as u16);
                 out.put(&self.unique[..self.unique_len]);
             }
@@ -428,8 +496,10 @@ fn unreachable_public() -> Public {
         scheme: ALG_NULL,
         scheme_hash: 0,
         curve: 0,
-        unique: [0; 64],
+        unique: [0; 256],
         unique_len: 0,
+        key_bits: 0,
+        exponent: 0,
     }
 }
 
@@ -675,7 +745,7 @@ pub fn create_primary(c: &mut Command) -> Result<(), u32> {
 
     let mut public = template;
     public.unique[..32].copy_from_slice(&point.x);
-    public.unique[32..].copy_from_slice(&point.y);
+    public.unique[32..64].copy_from_slice(&point.y);
     public.unique_len = 64;
     let (bytes, len) = public.bytes();
     let name = name_of(&bytes[..len]);
@@ -765,7 +835,7 @@ pub fn create(c: &mut Command) -> Result<(), u32> {
             };
             sensitive.value_len = 32;
             template.unique[..32].copy_from_slice(&point.x);
-            template.unique[32..].copy_from_slice(&point.y);
+            template.unique[32..64].copy_from_slice(&point.y);
             template.unique_len = 64;
         }
     }
@@ -830,7 +900,7 @@ pub fn load(c: &mut Command) -> Result<(), u32> {
             d.copy_from_slice(&sensitive.value[..32]);
             let ok = sensitive.kind == ALG_ECC
                 && sensitive.value_len == 32
-                && p256::public_key(&d).is_some_and(|q| public.unique_len == 64 && public.unique[..32] == q.x && public.unique[32..] == q.y);
+                && p256::public_key(&d).is_some_and(|q| public.unique_len == 64 && public.unique[..32] == q.x && public.unique[32..64] == q.y);
             keystore::zero(&mut d);
             ok
         }
@@ -853,6 +923,46 @@ pub fn load(c: &mut Command) -> Result<(), u32> {
     slot.private[..blob.len()].copy_from_slice(blob);
     slot.private_len = blob.len();
 
+    c.auth.new_handle = Some(TRANSIENT_FIRST + slot_index as u32);
+    let mut parameters = Out { buf: &mut [0u8; 40], at: 0 };
+    parameters.u16(34);
+    parameters.put(&name);
+    let n = parameters.at;
+    let raw = parameters.buf;
+    c.auth.response_params(&raw[..n]);
+    Ok(())
+}
+
+/// `TPM2_LoadExternal`: a public key the caller names, loaded under a
+/// hierarchy so what it verifies carries that hierarchy's tickets. No private
+/// part is accepted.
+pub fn load_external(c: &mut Command) -> Result<(), u32> {
+    let sensitive = c.params.sized().ok_or(RC_COMMAND_SIZE)?;
+    if !sensitive.is_empty() {
+        return Err(RC_VALUE | RC_P | RC_1);
+    }
+    let public_at = c.params.at;
+    let body = c.params.sized().ok_or(RC_COMMAND_SIZE)?;
+    let public = Public::parse(body).map_err(|rc| rc | RC_P | 2 * RC_1)?;
+    public.check_external().map_err(|rc| rc | RC_P | 2 * RC_1)?;
+    let hierarchy = c.params.u32().ok_or(RC_COMMAND_SIZE)?;
+    if c.params.rest() != 0 {
+        return Err(RC_COMMAND_SIZE);
+    }
+    if hierarchy_label(hierarchy).is_none() {
+        return Err(RC_HIERARCHY | RC_P | 3 * RC_1);
+    }
+    let bytes = &c.params.buf[public_at + 2..public_at + 2 + body.len()];
+    let name = name_of(bytes);
+    let slot_index = free_slot()?;
+    let slot = &mut table()[slot_index];
+    *slot = EMPTY;
+    slot.used = true;
+    slot.public[..bytes.len()].copy_from_slice(bytes);
+    slot.public_len = bytes.len();
+    slot.name = name;
+    slot.origin = Origin { hierarchy, template: [0; 32] };
+    slot.qualified = qualify(&hierarchy.to_be_bytes(), &name);
     c.auth.new_handle = Some(TRANSIENT_FIRST + slot_index as u32);
     let mut parameters = Out { buf: &mut [0u8; 40], at: 0 };
     parameters.u16(34);
@@ -977,6 +1087,24 @@ pub fn test_parms(c: &mut Command) -> Result<(), u32> {
             let kdf = c.params.u16().ok_or(RC_COMMAND_SIZE)?;
             if kdf != ALG_NULL {
                 return Err(RC_KDF | RC_P | RC_1);
+            }
+        }
+        ALG_RSA => {
+            let sym = c.params.u16().ok_or(RC_COMMAND_SIZE)?;
+            if sym != ALG_NULL {
+                return Err(RC_SYMMETRIC | RC_P | RC_1);
+            }
+            let scheme = c.params.u16().ok_or(RC_COMMAND_SIZE)?;
+            if scheme != ALG_NULL {
+                let hash = c.params.u16().ok_or(RC_COMMAND_SIZE)?;
+                if scheme != ALG_RSASSA || hash != ALG_SHA256 {
+                    return Err(RC_SCHEME | RC_P | RC_1);
+                }
+            }
+            let bits = c.params.u16().ok_or(RC_COMMAND_SIZE)?;
+            let exponent = c.params.u32().ok_or(RC_COMMAND_SIZE)?;
+            if bits != 2048 || (exponent != 0 && exponent != 65537) {
+                return Err(RC_KEY | RC_P | RC_1);
             }
         }
         ALG_KEYEDHASH => {

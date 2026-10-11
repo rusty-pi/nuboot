@@ -110,7 +110,7 @@ fn sub_mod(a: &Limbs, b: &Limbs, mo: &Modulus) -> Limbs {
 /// 16-bit halves: the VPU has no widening multiply, so a `u64` product is a
 /// library call there.
 #[inline(always)]
-fn mul_wide(a: u32, b: u32) -> (u32, u32) {
+pub(crate) fn mul_wide(a: u32, b: u32) -> (u32, u32) {
     let (a0, a1) = (a & 0xffff, a >> 16);
     let (b0, b1) = (b & 0xffff, b >> 16);
     let p00 = a0 * b0;
@@ -125,7 +125,7 @@ fn mul_wide(a: u32, b: u32) -> (u32, u32) {
 
 /// `x + a * b + carry` as a low word and the carry out, which fits a word.
 #[inline(always)]
-fn mul_add(x: u32, a: u32, b: u32, carry: u32) -> (u32, u32) {
+pub(crate) fn mul_add(x: u32, a: u32, b: u32, carry: u32) -> (u32, u32) {
     let (lo, hi) = mul_wide(a, b);
     let (s, c1) = x.overflowing_add(lo);
     let (s, c2) = s.overflowing_add(carry);

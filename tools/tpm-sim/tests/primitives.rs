@@ -1,7 +1,7 @@
 //! The firmware's P-256, AES-CFB and KDFs against vectors the reference
 //! implementations in `gen-vectors.py` produced.
 
-use tpm_sim::{aes, kdf, p256};
+use tpm_sim::{aes, kdf, p256, rsa};
 
 mod vectors;
 use vectors::*;
@@ -83,5 +83,12 @@ fn kdfe_matches() {
         let mut out = vec![0u8; (*bits as usize).div_ceil(8)];
         kdf::kdfe(z, label, u, v, *bits, &mut out);
         assert_eq!(&out, want);
+    }
+}
+
+#[test]
+fn rsa_pkcs1_signatures() {
+    for (modulus, exponent, digest, signature, valid) in RSA {
+        assert_eq!(rsa::verify_sha256(modulus, *exponent, digest, signature), *valid);
     }
 }

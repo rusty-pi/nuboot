@@ -9,6 +9,8 @@ pub mod kdf;
 pub mod keystore;
 #[path = "../../../src/p256.rs"]
 pub mod p256;
+#[path = "../../../src/rsa.rs"]
+pub mod rsa;
 #[path = "../../../src/sha256.rs"]
 pub mod sha256;
 #[path = "../../../src/tpm2.rs"]

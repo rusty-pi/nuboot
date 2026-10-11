@@ -35,6 +35,7 @@ pub mod p256;
 pub mod pcie;
 pub mod pmic;
 pub mod rng;
+pub mod rsa;
 pub mod sched;
 pub mod sdram;
 pub mod sha256;

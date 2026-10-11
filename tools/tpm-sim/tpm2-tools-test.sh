@@ -133,6 +133,34 @@ check "hash with a ticket" tool tpm2_hash -C e -g sha256 -o digest.bin -t ticket
 check "sign the ticketed digest" tool tpm2_sign -c ak.ctx -g sha256 -s ecdsa -d -t ticket.bin -o aksig.bin digest.bin
 refused "sign a digest without the ticket" tool tpm2_sign -c ak.ctx -g sha256 -s ecdsa -d -o aksig2.bin digest.bin
 
+# A policy a key authorizes, as systemd-measure signs them: the PCR policy is
+# signed with an RSA key, whose public part the sealed object's policy names.
+openssl genrsa -out auth.pem 2048 >/dev/null 2>&1
+openssl rsa -in auth.pem -pubout -out auth.pub.pem >/dev/null 2>&1
+check "load the signing key's public part" tool tpm2_loadexternal -G rsa -C o -u auth.pub.pem -c auth.ctx -n auth.name
+tool tpm2_startauthsession -S pcrtrial.ctx >/dev/null 2>&1
+tool tpm2_policypcr -S pcrtrial.ctx -l sha256:0,7 -L approved.policy >/dev/null 2>&1
+tool tpm2_flushcontext pcrtrial.ctx >/dev/null 2>&1
+tool tpm2_startauthsession -S authtrial.ctx >/dev/null 2>&1
+check "the trial authorize policy" tool tpm2_policyauthorize -S authtrial.ctx -L authorize.policy -i approved.policy -n auth.name
+tool tpm2_flushcontext authtrial.ctx >/dev/null 2>&1
+check "seal under the authorize policy" tool tpm2_create -C prim.ctx -i secret.txt -L authorize.policy -a "fixedtpm|fixedparent|noda" -u aseal.pub -r aseal.priv
+check "load it" tool tpm2_load -C prim.ctx -u aseal.pub -r aseal.priv -c aseal.ctx
+openssl dgst -sha256 -sign auth.pem -out approved.sig approved.policy
+openssl dgst -sha256 -sign auth.pem -out other.sig other.txt
+unseal_authorized() {
+  tool tpm2_startauthsession --policy-session -S apol.ctx || return 1
+  tool tpm2_policypcr -S apol.ctx -l sha256:0,7 || return 1
+  tool tpm2_verifysignature -c auth.ctx -g sha256 -m approved.policy -s "$1" -f rsassa -t aticket.tk || return 1
+  tool tpm2_policyauthorize -S apol.ctx -i approved.policy -n auth.name -t aticket.tk || return 1
+  tool tpm2_unseal -c aseal.ctx -p session:apol.ctx -o "$2"
+}
+check "unseal with the signed policy" unseal_authorized approved.sig aout.txt
+check "the secret is what went in" cmp secret.txt aout.txt
+refused "unseal with another signature" unseal_authorized other.sig aout2.txt
+tool tpm2_pcrextend 7:sha256=0000000000000000000000000000000000000000000000000000000000000003 >/dev/null 2>&1
+refused "unseal once the PCRs no longer match the signed policy" unseal_authorized approved.sig aout3.txt
+
 if [ "$failures" -ne 0 ]; then
   echo "$failures check(s) failed"
   exit 1

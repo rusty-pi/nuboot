@@ -13,6 +13,9 @@ use r_efi::efi::{Guid, Handle, Status, SystemTable};
 mod common;
 use common::say;
 
+#[path = "rsa_vector.rs"]
+mod rsa_vector;
+
 const TCG2: Guid = Guid::from_fields(0x607f766c, 0x7455, 0x42be, 0x93, 0x0b, &[0xe4, 0xd7, 0x6d, 0xb2, 0x72, 0x0f]);
 
 /// `EFI_TCG2_PROTOCOL.SubmitCommand`, the fourth function of the table.
@@ -20,13 +23,13 @@ type Submit = extern "efiapi" fn(*mut c_void, u32, *const u8, u32, *mut u8) -> S
 
 /// A command being put together.
 struct Command {
-    bytes: [u8; 256],
+    bytes: [u8; 512],
     len: usize,
 }
 
 impl Command {
     fn new(tag: u16, code: u32) -> Command {
-        let mut c = Command { bytes: [0; 256], len: 0 };
+        let mut c = Command { bytes: [0; 512], len: 0 };
         c.u16(tag);
         c.u32(0);
         c.u32(code);
@@ -217,6 +220,26 @@ pub extern "efiapi" fn efi_main(_image: Handle, system_table: *mut SystemTable) 
     );
     run("hash-ticket", Command::new(0x8001, 0x17d).u16(3).put(b"abc").u16(0xb).u32(0x4000_0001).done());
     run("flush-signing", Command::new(0x8001, 0x165).u32(key).done());
+
+    // An RSA public key the TPM is handed, a signature it verifies, and the
+    // policy that key authorizes.
+    let mut template = [0u8; 300];
+    let header: &[u8] = &[0x00, 0x01, 0x00, 0x0b, 0x00, 0x04, 0x00, 0x40, 0x00, 0x00, 0x00, 0x10, 0x00, 0x10, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00];
+    template[..header.len()].copy_from_slice(header);
+    template[header.len()..header.len() + 256].copy_from_slice(&rsa_vector::MODULUS);
+    let len = header.len() + 256;
+    let (r, _) = run("load-external", Command::new(0x8001, 0x167).u16(0).u16(len as u16).put(&template[..len]).u32(0x4000_0001).done());
+    let rsa_key = u32::from_be_bytes(r[10..14].try_into().unwrap());
+    let mut verify = Command::new(0x8001, 0x177);
+    verify.u32(rsa_key).u16(32).put(&digest).u16(0x14).u16(0x0b).u16(256).put(&rsa_vector::SIGNATURE);
+    run("verify-rsa", verify.done());
+    let mut forged = rsa_vector::SIGNATURE;
+    forged[255] ^= 1;
+    let mut verify = Command::new(0x8001, 0x177);
+    verify.u32(rsa_key).u16(32).put(&digest).u16(0x14).u16(0x0b).u16(256).put(&forged);
+    run("verify-rsa-forged", verify.done());
+    run("sign-external", Command::new(0x8002, 0x15d).u32(rsa_key).password().u16(32).put(&digest).u16(0x10).u16(0x8024).u32(0x4000_0007).u16(0).done());
+    run("flush-external", Command::new(0x8001, 0x165).u32(rsa_key).done());
     run("flush-item", Command::new(0x8001, 0x165).u32(item).done());
     run("flush-primary", Command::new(0x8001, 0x165).u32(primary).done());
     run("flush-again", Command::new(0x8001, 0x165).u32(primary).done());
