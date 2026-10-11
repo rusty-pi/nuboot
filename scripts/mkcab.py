@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""Put a firmware update capsule in the cabinet fwupd installs, with the
+metadata that says which device it is for.
+
+    mkcab.py CAPSULE OUT.cab VERSION [--class firmware|eeprom] [--date YYYY-MM-DD] [--notes TEXT]
+
+CAPSULE is what scripts/mkcapsule.py wrote and VERSION the number it carries,
+which the ESRT reports once the update is applied. `fwupdmgr install OUT.cab`
+installs it, and `fwupdtool get-details OUT.cab` shows what fwupd makes of it.
+Needs `gcab`.
+"""
+
+import datetime
+import os
+import subprocess
+import sys
+import tempfile
+from xml.sax.saxutils import escape
+
+RESOURCES = {
+    "firmware": (
+        "org.rusty-pi.pi4-server-firmware.firmware",
+        "pi4-server-firmware",
+        "The UEFI firmware for headless Raspberry Pi 4 servers, in start4.elf",
+        "7d1c0a4e-5b83-4f2a-9c61-e2084a3d95b7",
+    ),
+    "eeprom": (
+        "org.rusty-pi.pi4-server-firmware.eeprom",
+        "Raspberry Pi 4 EEPROM bootloader",
+        "The stock EEPROM bootloader, updated with its configuration and keys kept",
+        "3f8a0c5e-91d2-4b7a-a6c3-5d1e08f2b947",
+    ),
+}
+
+
+def metainfo(resource, version, date, notes):
+    component, name, summary, guid = RESOURCES[resource]
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<component type="firmware">
+  <id>{component}</id>
+  <name>{escape(name)}</name>
+  <summary>{escape(summary)}</summary>
+  <description>
+    <p>{escape(summary)}.</p>
+  </description>
+  <provides>
+    <firmware type="flashed">{guid}</firmware>
+  </provides>
+  <url type="homepage">https://github.com/rusty-pi/pi4-server-firmware</url>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer_name>rusty-pi</developer_name>
+  <releases>
+    <release version="{version}" date="{date}">
+      <description>
+        <p>{escape(notes)}</p>
+      </description>
+    </release>
+  </releases>
+  <custom>
+    <value key="LVFS::UpdateProtocol">org.uefi.capsule</value>
+    <value key="LVFS::VersionFormat">number</value>
+  </custom>
+</component>
+"""
+
+
+def main():
+    args = sys.argv[1:]
+    options = {"--class": "firmware", "--date": None, "--notes": None}
+    for flag in options:
+        if flag in args:
+            at = args.index(flag)
+            options[flag] = args[at + 1]
+            del args[at : at + 2]
+    if len(args) != 3 or options["--class"] not in RESOURCES:
+        sys.exit(__doc__)
+    capsule, out, version = args
+    if not version.isdigit():
+        sys.exit("VERSION is a number")
+    resource = options["--class"]
+    date = options["--date"] or datetime.datetime.fromtimestamp(int(version), datetime.timezone.utc).strftime("%Y-%m-%d")
+    notes = options["--notes"] or f"Version {version}."
+    stamp = datetime.datetime.fromisoformat(date).replace(tzinfo=datetime.timezone.utc).timestamp()
+    with tempfile.TemporaryDirectory() as tmp:
+        files = {"firmware.bin": open(capsule, "rb").read(), "firmware.metainfo.xml": metainfo(resource, version, date, notes).encode()}
+        for name, data in files.items():
+            path = os.path.join(tmp, name)
+            open(path, "wb").write(data)
+            os.utime(path, (stamp, stamp))
+        subprocess.run(["gcab", "--create", "--nopath", os.path.abspath(out), *files], cwd=tmp, check=True)
+
+
+main()

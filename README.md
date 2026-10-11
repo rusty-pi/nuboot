@@ -21,6 +21,10 @@ for:
   tree, so a board with secure boot programmed takes this firmware in a signed
   `boot.img` under Raspberry Pi's own bootloader ([docs/boot.md](docs/boot.md)).
 
+- **Updates through fwupd.** The firmware and the EEPROM bootloader are ESRT
+  resources, and a signed capsule that fwupd stages is applied as a tryboot
+  and committed once it has reached the OS ([docs/updates.md](docs/updates.md)).
+
 Out of scope: HATs, IPv6 and ACPI (the operating system gets a device tree).
 
 > [!NOTE]
@@ -156,6 +160,7 @@ pimu boot --eeprom out/stock-pieeprom.bin --sd boot/
 | `src/mailbox.rs` | The property mailbox |
 | `src/arm.rs`, `src/fdt.rs` | Starting the ARM, and the device tree it gets |
 | `scripts/mkcapsule.py` | Puts a signed `boot.img` and `boot.sig` in a firmware update capsule |
+| `scripts/mkcab.py` | Puts a capsule in the cabinet `fwupdmgr install` takes ([docs/updates.md](docs/updates.md)) |
 | `scripts/mkbootimg.py` | Puts `start4.elf` in a signed `boot.img` and `boot.sig` |
 | `uefi/` | The UEFI firmware, its Secure Boot keys, and the armstub and decompressor the ARM starts in |
 
