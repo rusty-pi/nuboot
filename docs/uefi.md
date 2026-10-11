@@ -133,7 +133,8 @@ reorder them: it has neither a signing key nor the seal key. Dropping the
 newest record of a variable returns it to its previous value. Where the flash
 does not answer, or no device private key is fused, the seal is missing and a
 variable other than `KEK`, `db` and `dbx` lasts until reset. Writing a whole new
-`pieeprom.bin` clears the store.
+`pieeprom.bin` clears the store; [eeprom.md](eeprom.md#updating-from-the-os)
+shows how to write the firmware alone.
 
 ### The test build
 

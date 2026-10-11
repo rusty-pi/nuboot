@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "store-tamper"
+description: "A board with its device private key fused (a test key, not a board's) whose flash store was written from outside: only the records that are sealed and in sequence, and not behind a torn one, come back."
+
+boot:
+  eeprom: "../out/pieeprom-tamper.bin"
+  otp_row:
+    - "56=0xc0de2001"
+    - "57=0xc0de3112"
+    - "58=0xc0de4223"
+    - "59=0xc0de5334"
+    - "60=0xc0de6445"
+    - "61=0xc0de7556"
+    - "62=0xc0de8667"
+    - "63=0xc0de9778"
+  sd:
+    files:
+      EFI/BOOT/BOOTAA64.EFI: "../out/store-tamper.efi"
+  until: "tamper test: done"
+  wall_secs: 900
+
+milestones:
+  - why: "A record that is sealed and in sequence comes back."
+    line: "tamper test: Good present"
+  - why: "So does the one after it."
+    line: "tamper test: Fresh present"
+  - why: "A record with the wrong seal is ignored."
+    line: "tamper test: Forged absent"
+  - why: "A sealed record numbered below the ones before it, put back from an older copy, is ignored."
+    line: "tamper test: Stale absent"
+  - why: "A record whose digest does not match ends the log."
+    line: "tamper test: Torn absent"
+  - why: "Whatever follows it is not read."
+    line: "tamper test: AfterTorn absent"

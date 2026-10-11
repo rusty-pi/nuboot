@@ -129,6 +129,8 @@ jobs:
           path: |
             out/pieeprom.bin
             out/pieeprom-test.bin
+            out/pieeprom-tamper.bin
+            out/store-tamper.efi
             out/start4.elf
             out/hello.efi
             out/watchdog-hang.efi

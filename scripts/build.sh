@@ -41,3 +41,7 @@ toolchain/bin/vc4-elf-objcopy --strip-debug target/vc4-none-elf/release/start4 "
 toolchain/bin/vc4-elf-size "out/start4$suffix.elf"
 toolchain/bin/vc4-elf-objcopy -O binary target/vc4-none-elf/release/bootcode out/bootcode.bin
 scripts/mkeeprom.py out/bootcode.bin "out/start4$suffix.elf" out/stock-pieeprom.bin "out/pieeprom$suffix.bin"
+# The tamper scenario's image: a variable store with damage in it.
+if [ -n "$suffix" ]; then
+  scripts/mkstore.py "out/pieeprom$suffix.bin" out/pieeprom-tamper.bin
+fi

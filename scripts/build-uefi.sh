@@ -162,6 +162,7 @@ sign "$mb/target/aarch64-unknown-uefi/release/tpm2-test.efi" "$out/tpm2-test.efi
 st="$here/uefi/test-apps/store"
 (cd "$st" && cargo build --release --target aarch64-unknown-uefi)
 sign "$st/target/aarch64-unknown-uefi/release/enroll.efi" "$out/store-enroll.efi"
+sign "$st/target/aarch64-unknown-uefi/release/tamper.efi" "$out/store-tamper.efi"
 sbsign --key "$keys/x.key" --cert "$keys/x.crt" --output "$out/store-enrolled.efi" \
   "$st/target/aarch64-unknown-uefi/release/enrolled.efi" 2>/dev/null
 

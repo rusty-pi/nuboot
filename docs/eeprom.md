@@ -89,6 +89,18 @@ The scenarios that run the test applications boot `out/pieeprom-test.bin`
 (`scripts/build.sh --test-keys`), whose UEFI firmware also trusts the key
 they are signed with ([uefi.md](uefi.md#secure-boot)).
 
+## Updating from the OS
+
+A flash layout with the image's two regions writes the firmware and leaves the
+variable store as it is:
+
+```bash
+printf '000000:067fff firmware\n068000:07ffff store\n' > layout.txt
+flashrom -p linux_spi:dev=/dev/spidev0.0,spispeed=16000 -l layout.txt -i firmware -w pieeprom.bin
+```
+
+A whole-image write clears the store.
+
 ## Known limitations
 
 - A board whose secure boot is programmed (OTP boot mode row `0x0000C8B0`:
