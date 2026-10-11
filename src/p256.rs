@@ -231,23 +231,69 @@ fn from_mont(a: &Limbs, mo: &Modulus) -> Limbs {
     mont_mul(a, &one, mo)
 }
 
-/// `a^e` for a Montgomery `a` and a plain exponent.
-fn pow(a: &Limbs, e: &Limbs, mo: &Modulus) -> Limbs {
-    let mut result = mo.one;
-    for i in (0..256).rev() {
-        result = mont_sqr(&result, mo);
-        if e[i / 32] >> (i % 32) & 1 != 0 {
-            result = mont_mul(&result, a, mo);
-        }
+fn sqr_times(a: &Limbs, times: u32, mo: &Modulus) -> Limbs {
+    let mut r = *a;
+    for _ in 0..times {
+        r = mont_sqr(&r, mo);
     }
-    result
+    r
 }
 
-/// `a^-1` for a Montgomery, non-zero `a` (Fermat: the modulus is prime).
-fn invert(a: &Limbs, mo: &Modulus) -> Limbs {
-    let mut two = [0u32; 8];
-    two[0] = 2;
-    pow(a, &sub_raw(&mo.m, &two).0, mo)
+/// `a^(2^k - 1)` for the `k` the inversion chains need: 30 and 32.
+struct Runs {
+    thirty: Limbs,
+    thirty_two: Limbs,
+}
+
+fn runs(a: &Limbs, mo: &Modulus) -> Runs {
+    let two = mont_mul(&mont_sqr(a, mo), a, mo);
+    let three = mont_mul(&mont_sqr(&two, mo), a, mo);
+    let six = mont_mul(&sqr_times(&three, 3, mo), &three, mo);
+    let twelve = mont_mul(&sqr_times(&six, 6, mo), &six, mo);
+    let fifteen = mont_mul(&sqr_times(&twelve, 3, mo), &three, mo);
+    let thirty = mont_mul(&sqr_times(&fifteen, 15, mo), &fifteen, mo);
+    let thirty_two = mont_mul(&sqr_times(&thirty, 2, mo), &two, mo);
+    Runs { thirty, thirty_two }
+}
+
+/// `a^-1` modulo the field prime for a Montgomery, non-zero `a`: `a^(p-2)`,
+/// where `p - 2` is 32 ones, 31 zeros and a one, 96 zeros, 62 ones, a zero and
+/// a one.
+fn invert_field(a: &Limbs) -> Limbs {
+    let mo = &FIELD;
+    let r = runs(a, mo);
+    let mut x = mont_mul(&sqr_times(&r.thirty_two, 32, mo), a, mo);
+    x = mont_mul(&sqr_times(&x, 128, mo), &r.thirty_two, mo);
+    x = mont_mul(&sqr_times(&x, 32, mo), &r.thirty_two, mo);
+    x = mont_mul(&sqr_times(&x, 30, mo), &r.thirty, mo);
+    mont_mul(&sqr_times(&x, 2, mo), a, mo)
+}
+
+/// The low 128 bits of the group order less two.
+const ORDER_TAIL: [u8; 16] = [0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63, 0x25, 0x4f];
+
+/// `a^-1` modulo the group order for a Montgomery, non-zero `a`: `a^(n-2)`,
+/// where `n - 2` is 32 ones, 32 zeros, 64 ones and then 128 bits of no pattern,
+/// taken a nibble at a time.
+fn invert_order(a: &Limbs) -> Limbs {
+    let mo = &ORDER;
+    let r = runs(a, mo);
+    let sixty_four = mont_mul(&sqr_times(&r.thirty_two, 32, mo), &r.thirty_two, mo);
+    let mut x = sqr_times(&r.thirty_two, 32, mo);
+    x = mont_mul(&sqr_times(&x, 64, mo), &sixty_four, mo);
+    let mut table = [*a; 16];
+    for j in 2..16 {
+        table[j] = mont_mul(&table[j - 1], a, mo);
+    }
+    for byte in ORDER_TAIL {
+        for nibble in [byte >> 4, byte & 0xf] {
+            x = sqr_times(&x, 4, mo);
+            if nibble != 0 {
+                x = mont_mul(&x, &table[nibble as usize], mo);
+            }
+        }
+    }
+    x
 }
 
 /// A point with Jacobian coordinates in the field's Montgomery form: `z == 0`
@@ -412,7 +458,7 @@ fn to_affine(p: &Jacobian) -> Option<Point> {
     if is_zero(&p.z) {
         return None;
     }
-    let zi = invert(&p.z, &FIELD);
+    let zi = invert_field(&p.z);
     let zi2 = fsqr(&zi);
     let x = fmul(&p.x, &zi2);
     let y = fmul(&fmul(&p.y, &zi2), &zi);
@@ -484,7 +530,7 @@ pub fn sign(d: &[u8; 32], digest: &[u8; 32], k: &[u8; 32]) -> Option<([u8; 32], 
     let zm = to_mont(&z, &ORDER);
     let sum = add_mod(&zm, &order_mul(&rm, &dm), &ORDER);
     let km = to_mont(&from_bytes(k), &ORDER);
-    let s = from_mont(&order_mul(&invert(&km, &ORDER), &sum), &ORDER);
+    let s = from_mont(&order_mul(&invert_order(&km), &sum), &ORDER);
     if is_zero(&s) {
         return None;
     }
@@ -498,7 +544,7 @@ pub fn verify(q: &Point, digest: &[u8; 32], r: &[u8; 32], s: &[u8; 32]) -> bool 
     }
     let (rl, sl) = (from_bytes(r), from_bytes(s));
     let z = from_bytes(&reduce_order(digest));
-    let w = invert(&to_mont(&sl, &ORDER), &ORDER);
+    let w = invert_order(&to_mont(&sl, &ORDER));
     let u1 = from_mont(&order_mul(&to_mont(&z, &ORDER), &w), &ORDER);
     let u2 = from_mont(&order_mul(&to_mont(&rl, &ORDER), &w), &ORDER);
     let sum = add(&multiply_generator(&u1), &multiply(&affine(q), &u2));
