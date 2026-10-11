@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "capsule-apply"
+description: "A board with its device private key fused (a test key, not a board's) finds a capsule for a later firmware build on the card, writes it over the flash region and restarts. The build that starts is the capsule's, finds the update recorded in the flash store and tells the OS it succeeded."
+
+boot:
+  eeprom: "../out/pieeprom-test.bin"
+  otp_row:
+    - "56=0xc0de2001"
+    - "57=0xc0de3112"
+    - "58=0xc0de4223"
+    - "59=0xc0de5334"
+    - "60=0xc0de6445"
+    - "61=0xc0de7556"
+    - "62=0xc0de8667"
+    - "63=0xc0de9778"
+  sd:
+    files:
+      EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+      EFI/UpdateCapsule/next.cap: "../out/capsule-apply.cap"
+  until: "firmware updated  version=2147483000"
+  wall_secs: 1800
+
+milestones:
+  - why: "The capsule is for a later build and signed by the test key."
+    line: "capsule verified"
+  - why: "The flash region reads back as the capsule's image."
+    line: "flash region written"
+  - why: "The firmware restarts on what it wrote."
+    line: "firmware written, restarting"
+  - why: "The new build reads the record the old one left in the sealed store."
+    line: "firmware updated  version=2147483000"

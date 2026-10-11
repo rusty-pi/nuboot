@@ -14,12 +14,11 @@ use r_efi::efi;
 use r_efi::protocols::simple_file_system;
 
 use crate::util::{W, eq_ignore_case};
-use crate::{esrt, fat, info, proto, secure, warn};
+use crate::{error, esrt, fat, firmware, info, proto, secure, var, warn};
 
 const DIRECTORY: &str = "\\EFI\\UpdateCapsule";
 const MAGIC: &[u8; 4] = b"P4FW";
 /// What the firmware owns of the flash: below the variable store.
-const REGION: usize = 0x70000;
 const HEADER: usize = 28;
 
 /// `EFI_CERT_TYPE_PKCS7_GUID`.
@@ -61,7 +60,7 @@ fn check(file: &[u8]) -> Result<Capsule, (u32, &'static str)> {
     }
     let version = u32_at(image, 4).ok_or(invalid("no version"))?;
     let region = &image[8..];
-    if region.len() > REGION {
+    if region.len() > firmware::REGION {
         return Err((esrt::INSUFFICIENT_RESOURCES, "image is larger than the firmware's flash region"));
     }
     if version <= esrt::VERSION {
@@ -70,8 +69,28 @@ fn check(file: &[u8]) -> Result<Capsule, (u32, &'static str)> {
     Ok(Capsule { version, region: region.to_vec() })
 }
 
+/// What a capsule's application leaves for the boot after it, until that boot
+/// has told the OS how it went: the version it installed.
+const PENDING: &str = "FwUpdateVersion";
+
+/// If a capsule was applied before this boot, say how it went: the firmware
+/// that started is the version the capsule carried or it is not.
+pub fn resume() {
+    let Some(data) = var::bytes(PENDING, &esrt::FIRMWARE_CLASS) else { return };
+    var::forget(PENDING, esrt::FIRMWARE_CLASS);
+    let version = data.get(..4).and_then(|b| b.try_into().ok()).map_or(0, u32::from_le_bytes);
+    if version == esrt::VERSION {
+        info!("capsule", "firmware updated"; version = version);
+        esrt::attempted(version, esrt::SUCCESS);
+    } else {
+        warn!("capsule", "the firmware that started is not the capsule's version"; capsule = version, running = esrt::VERSION);
+        esrt::attempted(version, esrt::UNSUCCESSFUL);
+    }
+}
+
 /// Look for capsules on every file system and check each one.
 pub fn scan() {
+    resume();
     let directory: Vec<u16> = DIRECTORY.encode_utf16().collect();
     for fs in proto::with(Some(&simple_file_system::PROTOCOL_GUID)) {
         let Ok(names) = fat::list_files(fs, &directory) else { continue };
@@ -100,7 +119,25 @@ pub fn scan() {
     }
 }
 
+/// Write the capsule's image over the firmware and restart on it.
 fn apply(capsule: &Capsule) {
-    warn!("capsule", "writing the flash is not implemented"; version = capsule.version);
+    if !var::keeps() {
+        warn!("capsule", "no device key or flash store to record the update in, not applying"; version = capsule.version);
+        esrt::attempted(capsule.version, esrt::UNSUCCESSFUL);
+        return;
+    }
+    let status = var::keep(PENDING, esrt::FIRMWARE_CLASS, &capsule.version.to_le_bytes());
+    if status.is_error() {
+        warn!("capsule", "update not recorded, not applying"; status = status.as_usize());
+        esrt::attempted(capsule.version, esrt::UNSUCCESSFUL);
+        return;
+    }
+    info!("capsule", "applying"; version = capsule.version, bytes = capsule.region.len());
+    if firmware::write(&capsule.region) {
+        info!("capsule", "firmware written, restarting"; version = capsule.version);
+        crate::watchdog::reset(false);
+    }
+    error!("capsule", "firmware not written"; version = capsule.version);
+    var::forget(PENDING, esrt::FIRMWARE_CLASS);
     esrt::attempted(capsule.version, esrt::UNSUCCESSFUL);
 }

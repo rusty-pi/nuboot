@@ -65,6 +65,25 @@ fn add(name: &str, guid: efi::Guid, attributes: u32, data: Vec<u8>, fixed: bool)
     vars.push(Var { name, guid, attributes, data, fixed, time: [0; 16], history: Vec::new() });
 }
 
+/// Whether what [`keep`] keeps survives a reset: the board has a device key
+/// to seal it with, and the flash store answers.
+pub fn keeps() -> bool {
+    SEAL.get().is_some() && store::available()
+}
+
+/// A variable the firmware keeps across resets for itself: not visible to
+/// the OS, and sealed in the flash store when the board has a device key.
+pub fn keep(name: &str, guid: efi::Guid, data: &[u8]) -> efi::Status {
+    let name: Vec<u16> = name.encode_utf16().collect();
+    write_plain(&name, guid, NV | BS, data, None)
+}
+
+/// Drop what [`keep`] kept.
+pub fn forget(name: &str, guid: efi::Guid) -> efi::Status {
+    let name: Vec<u16> = name.encode_utf16().collect();
+    write_plain(&name, guid, 0, &[], None)
+}
+
 /// What a variable holds, for the firmware's own use.
 pub fn bytes(name: &str, guid: &efi::Guid) -> Option<Vec<u8>> {
     let name: Vec<u16> = name.encode_utf16().collect();

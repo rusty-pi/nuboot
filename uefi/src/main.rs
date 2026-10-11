@@ -27,6 +27,7 @@ mod esrt;
 mod event;
 mod fat;
 mod fdt;
+mod firmware;
 mod image;
 mod mailbox;
 mod mem;

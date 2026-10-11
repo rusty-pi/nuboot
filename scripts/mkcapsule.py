@@ -6,7 +6,7 @@
 KEY and CERT (PEM) are the signer's: a key one of the firmware's own `db`
 entries holds. VERSION is the number the ESRT carries once the capsule is
 applied. FILE is the flash region the firmware owns (up to 0x70000 bytes, from
-offset 0); without it a short test pattern. --corrupt flips a byte after the
+offset 0, erased bytes at its end left off); without it a short test pattern. --corrupt flips a byte after the
 signing.
 """
 
@@ -29,7 +29,7 @@ def main():
     region = bytes(range(256)) * 16
     if "--image" in args:
         at = args.index("--image")
-        region = open(args[at + 1], "rb").read()
+        region = open(args[at + 1], "rb").read().rstrip(b"\xff")
         del args[at : at + 2]
     if len(args) != 4:
         sys.exit(__doc__)

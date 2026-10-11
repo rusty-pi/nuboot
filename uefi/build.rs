@@ -7,14 +7,17 @@ fn main() {
 
     // What orders one build after another: the commit's time.
     println!("cargo:rerun-if-env-changed=FIRMWARE_COMMIT");
-    let time = std::process::Command::new("git")
-        .args(["log", "-1", "--format=%ct"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|t| t.trim().to_string())
-        .filter(|t| t.parse::<u32>().is_ok())
-        .unwrap_or_else(|| "0".to_string());
+    println!("cargo:rerun-if-env-changed=FIRMWARE_TIME");
+    let time = std::env::var("FIRMWARE_TIME").ok().filter(|t| t.parse::<u32>().is_ok()).unwrap_or_else(|| {
+        std::process::Command::new("git")
+            .args(["log", "-1", "--format=%ct"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|t| t.trim().to_string())
+            .filter(|t| t.parse::<u32>().is_ok())
+            .unwrap_or_else(|| "0".to_string())
+    });
     println!("cargo:rustc-env=FIRMWARE_TIME={time}");
 
     // keys/dbx-aarch64.txt as the 32-byte hashes one after the other.

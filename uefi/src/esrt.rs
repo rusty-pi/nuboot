@@ -23,7 +23,7 @@ const FIRMWARE_TYPE_SYSTEM: u32 = 1;
 /// `ESRT` entry's version: 1.
 const TABLE_VERSION: u64 = 1;
 /// `LAST_ATTEMPT_STATUS_SUCCESS`.
-const SUCCESS: u32 = 0;
+pub const SUCCESS: u32 = 0;
 pub const UNSUCCESSFUL: u32 = 1;
 pub const INSUFFICIENT_RESOURCES: u32 = 2;
 pub const INCORRECT_VERSION: u32 = 3;

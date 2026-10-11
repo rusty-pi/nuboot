@@ -166,7 +166,24 @@ there is checked:
 A capsule that fails sets the ESRT's last attempt version and status
 (`4` invalid format, `5` authentication error, `3` incorrect version, `2`
 image too large) and is logged with the reason. `scripts/mkcapsule.py` builds
-one. A capsule that passes is logged, and the flash is not written yet.
+one.
+
+A capsule that passes is applied when the board has a device key and the flash
+store answers, so that the update can be recorded:
+
+1. The version goes into a sealed variable in the flash store, which the OS
+   cannot see or change.
+2. The flash region is written sector by sector, the first sector last, a
+   sector that already holds its bytes is skipped, and the region is read back
+   and compared, up to three times.
+3. The board restarts.
+4. The firmware that starts reads the variable and removes it. The ESRT's last
+   attempt status is success when the firmware's version is the capsule's, and
+   unsuccessful when it is not.
+
+A power loss between the first erase and the last program leaves an EEPROM the
+boot ROM does not accept, which only `recovery.bin` on an SD card or `rpiboot`
+over USB-C recovers.
 
 ## Building
 
