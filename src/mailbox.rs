@@ -12,7 +12,7 @@
 //! firmware does not know is left as it came, and the buffer is marked
 //! answered either way, which is what the stock firmware does.
 
-use crate::{crypto, debug, error, idle, info, keystore, measure, mmio, tpm2, vl805, warn, watchdog};
+use crate::{crypto, debug, error, idle, info, keystore, measure, mmio, tpm2, varstore, vl805, warn, watchdog};
 
 const VPU_VIEW: u32 = 0x7e00_b980;
 /// Mailbox 0, which the ARM reads.
@@ -25,6 +25,10 @@ const STATUS_FULL: u32 = 1 << 31;
 const STATUS_EMPTY: u32 = 1 << 30;
 
 const CHANNEL_PROPERTY: u32 = 8;
+/// The channel the runtime services use to have the variable store written:
+/// its messages are answered in the buffer and not on mailbox 0, where the
+/// OS's own driver takes whatever arrives for its requests.
+const CHANNEL_RUNTIME: u32 = 7;
 const RESPONSE: u32 = 0x8000_0000;
 const CODE_ERROR: u32 = 0x8000_0001;
 /// The largest buffer walked, so a bad size word cannot run off into memory.
@@ -65,6 +69,12 @@ const TAG_CRYPTO_GEN_ECDSA_KEY: u32 = 0x0003_0095;
 const TAG_CRYPTO_GET_KEY_USAGE: u32 = 0x0003_009c;
 const TAG_CRYPTO_SET_KEY_USAGE: u32 = 0x0003_809c;
 
+/// Add a record to the variable store, as UEFI wrote it, or sign and add the
+/// write of a variable no signature guards. Both are for the runtime services
+/// ([`CHANNEL_RUNTIME`]). The answer is a status word: 0, or what went wrong.
+const TAG_STORE_APPEND: u32 = 0x0003_00a6;
+const TAG_STORE_PERSIST: u32 = 0x0003_00a7;
+
 /// Event `n` of what the VPU measured before the ARM started, for the log
 /// UEFI keeps: the index in, then the PCR, the event type, the digest, the
 /// length of the data and the data.
@@ -78,7 +88,10 @@ pub fn serve(timeout_us: u32) {
         let message = mmio::read(DATA1);
         let channel = message & 0xf;
         if channel == CHANNEL_PROPERTY {
-            answer(message & !0xf);
+            answer(message & !0xf, false);
+        } else if channel == CHANNEL_RUNTIME {
+            answer(message & !0xf, true);
+            continue;
         } else {
             warn!("mailbox", "request on a channel this firmware does not serve";
                 channel = channel, message = format_args!("{message:#010x}"));
@@ -90,7 +103,7 @@ pub fn serve(timeout_us: u32) {
 }
 
 /// Answer the buffer at bus address `bus`, in place.
-fn answer(bus: u32) {
+fn answer(bus: u32, runtime: bool) {
     // The ARM's bus addresses alias SDRAM at 0xC000_0000, uncached, as the
     // VPU's own do.
     let base = 0xc000_0000 | (bus & 0x3fff_ffff);
@@ -117,7 +130,47 @@ fn answer(bus: u32) {
             set(1, CODE_ERROR);
             return;
         }
+        if runtime != matches!(tag, TAG_STORE_APPEND | TAG_STORE_PERSIST) {
+            i = value + room / 4;
+            continue;
+        }
         match tag {
+            TAG_STORE_APPEND => {
+                let length = word(i + 2) as usize;
+                let record = store_buffer();
+                let status = if length <= room as usize && length <= record.len() {
+                    for (n, byte) in record[..length].iter_mut().enumerate() {
+                        *byte = (word(value + n as u32 / 4) >> (8 * (n % 4))) as u8;
+                    }
+                    store_status(varstore::append(&record[..length]))
+                } else {
+                    1
+                };
+                set(value, status);
+                set(i + 2, RESPONSE | 4);
+            }
+            TAG_STORE_PERSIST if room >= 32 => {
+                let (kind, attributes) = (word(value), word(value + 1));
+                let (name_bytes, data_bytes) = (word(value + 2) as usize, word(value + 3) as usize);
+                let mut guid = [0u8; 16];
+                for (n, byte) in guid.iter_mut().enumerate() {
+                    *byte = (word(value + 4 + n as u32 / 4) >> (8 * (n % 4))) as u8;
+                }
+                let total = 16 + name_bytes.next_multiple_of(4) + data_bytes;
+                let status = if name_bytes <= 512 && data_bytes <= varstore::MAX_RECORD && total <= room as usize {
+                    let scratch = store_buffer();
+                    let data_at = name_bytes.next_multiple_of(4);
+                    for (n, byte) in scratch[..data_at + data_bytes].iter_mut().enumerate() {
+                        *byte = (word(value + 8 + n as u32 / 4) >> (8 * (n % 4))) as u8;
+                    }
+                    let (name, data) = scratch.split_at(data_at);
+                    store_status(varstore::persist(kind, attributes, &guid, &name[..name_bytes], &data[..data_bytes]))
+                } else {
+                    1
+                };
+                set(value, status);
+                set(i + 2, RESPONSE | 4);
+            }
             TAG_NOTIFY_XHCI_RESET if room >= 4 => {
                 let device = word(value);
                 let status = vl805::firmware_reset();
@@ -305,4 +358,21 @@ fn answer(bus: u32) {
 fn crypto_message() -> &'static mut [u8; crypto::HMAC_MESSAGE_MAX] {
     static mut MESSAGE: [u8; crypto::HMAC_MESSAGE_MAX] = [0; crypto::HMAC_MESSAGE_MAX];
     unsafe { &mut *(&raw mut MESSAGE) }
+}
+
+fn store_status(result: Result<(), varstore::Error>) -> u32 {
+    match result {
+        Ok(()) => 0,
+        Err(varstore::Error::Malformed) => 1,
+        Err(varstore::Error::Refused) => 2,
+        Err(varstore::Error::NoDeviceKey) => 3,
+        Err(varstore::Error::Full) => 4,
+        Err(varstore::Error::Flash) => 5,
+    }
+}
+
+/// Room for a record or a variable's name and value on its way into the store.
+fn store_buffer() -> &'static mut [u8; varstore::MAX_RECORD] {
+    static mut BUFFER: [u8; varstore::MAX_RECORD] = [0; varstore::MAX_RECORD];
+    unsafe { &mut *(&raw mut BUFFER) }
 }

@@ -96,8 +96,9 @@ pub fn bytes(name: &str, guid: &efi::Guid) -> Option<Vec<u8>> {
 pub fn export_runtime() {
     crate::rtvar::clear();
     for v in VARS.get().iter().filter(|v| visible(v) && v.attributes & RT != 0) {
-        let writable = !v.fixed && !is_key(&v.name, &v.guid) && v.attributes & AUTH == 0;
-        if !crate::rtvar::add(&v.name, &v.guid, v.attributes, &v.data, writable) {
+        let key = !v.fixed && is_key(&v.name, &v.guid);
+        let writable = !v.fixed && !key && v.attributes & AUTH == 0;
+        if !crate::rtvar::add(&v.name, &v.guid, v.attributes, &v.data, writable, key) {
             warn!("var", "variable not kept for the OS: runtime table full"; name = W(&v.name));
         }
     }

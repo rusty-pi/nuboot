@@ -41,7 +41,7 @@ from `start4.elf`'s:
 |---|---|
 | Memory | An identity map: RAM below `0xFC00_0000` and from 4 to 8 GiB normal write-back, the 2 MiB at `0x20_0000` non-cacheable for DMA, the rest device. The memory map is `/memory` from the device tree, less `/memreserve/`, `/reserved-memory`, the armstub's page at 0, the tree and the firmware itself |
 | Boot services | Memory, pools, events and timers (polled; there are no interrupts), protocol handlers, `LoadImage`/`StartImage`/`Exit` for PE32+ AArch64 images, `ExitBootServices` |
-| Runtime services | `GetVariable`, `GetNextVariableName`, `SetVariable` and `QueryVariableInfo` after `ExitBootServices`, from a 128 KiB table in the firmware image, which is typed as runtime services code and data. The OS reads the variables the firmware holds with runtime access and creates or changes others; `PK`, `KEK`, `db`, `dbx` and the Secure Boot state refuse writes, and a write lasts until reset. The `EFI_RT_PROPERTIES_TABLE` lists only these four, so `SetVirtualAddressMap` is not offered and the OS maps the runtime regions where they are. Every other runtime service returns `EFI_UNSUPPORTED`; Linux resets through `bcm2835-wdt` |
+| Runtime services | `GetVariable`, `GetNextVariableName`, `SetVariable` and `QueryVariableInfo` after `ExitBootServices`, from a 128 KiB table in the firmware image, which is typed as runtime services code and data, and the mailbox's page, typed as memory-mapped I/O for the OS to map. The OS reads the variables the firmware holds with runtime access and creates or changes others, and the writes outlast a reset ([below](#variables-the-os-writes)). `PK` and the Secure Boot state refuse writes. The `EFI_RT_PROPERTIES_TABLE` lists only these four, so `SetVirtualAddressMap` is not offered and the OS maps the runtime regions where they are. Every other runtime service returns `EFI_UNSUPPORTED`; Linux resets through `bcm2835-wdt` |
 | Console | `SimpleTextOutput` and `SimpleTextInput` on the PL011 at `0xFE20_1000`, with VT100 keys |
 | Storage | The SD card on EMMC2 (`0xFE34_0000`), and USB drives (bulk-only mass storage) on the VL805's root ports or behind a hub. `BlockIo`, `DiskIo`, MBR and GPT partitions, and a read-only FAT12/16/32 `SimpleFileSystem` |
 | USB | The VL805's xHCI behind the PCIe root complex, which `start4.elf` has brought up and given its firmware |
@@ -137,6 +137,26 @@ newest record of a variable returns it to its previous value. Where the flash
 does not answer, or no device private key is fused, there is no signature and a
 variable other than `KEK`, `db` and `dbx` lasts until reset. Writing a whole new
 `pieeprom.bin` clears the store.
+
+### Variables the OS writes
+
+After `ExitBootServices` the runtime services keep a write the OS makes in
+their table, and tell the VPU over the mailbox, on a channel of their own
+(7) that the OS's mailbox driver does not listen on, so that nothing is posted
+back to disturb it: the VPU answers in the message's own buffer.
+
+- A non-volatile variable no signature guards is signed by the VPU with the
+  device key, as UEFI signs the ones it writes, and appended to the flash store,
+  with the sequence number the next record needs. A board with no device key
+  keeps the write in the table until reset.
+- A write of `KEK`, `db` or `dbx` is a signed update (what `efi-updatevar` and
+  fwupd's `uefi-db`, `uefi-dbx` and `uefi-kek` plugins write). The runtime
+  services cannot check the signature, so they append the record as it is, and
+  UEFI checks it against `PK` and the `KEK`s at the next boot like every stored
+  write. The table keeps the old value until then; the update takes effect at
+  the restart fwupd asks for.
+- A bank of the store that is full takes no more until UEFI compacts it at the
+  next boot, and the write is then the table's only.
 
 ### The test build
 
@@ -260,7 +280,8 @@ pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed b
 - Nothing reads `BootOrder`: the boot is always the removable-media path.
 - `dbx` holds image hashes only; a certificate in it is ignored.
 - Storage is read-only to EFI applications; the firmware writes only the files an update needs.
-- A runtime `SetVariable` lasts until reset.
+- A write the OS makes to a variable while a full bank of the store waits for
+  UEFI to compact it lasts until reset.
 - No NVMe, no network boot, no USB keyboards.
 - The xHCI driver gives each empty root port 400 ms to show a connection,
   since a SuperSpeed port reads empty until its link has trained.

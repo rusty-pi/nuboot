@@ -3,8 +3,17 @@
 //! where they are (`EFI_RT_PROPERTIES_TABLE` does not offer
 //! `SetVirtualAddressMap`), so they run from the image's own code and touch
 //! nothing but the table below: no allocation, no logging, no registers of
-//! the board. The variables that are readable at runtime are copied into it
-//! at `ExitBootServices`; a write the OS makes lasts until reset.
+//! the board but one page, the mailbox's. The variables that are readable at
+//! runtime are copied into it at `ExitBootServices`.
+//!
+//! A write the OS makes to a non-volatile variable no signature guards goes to
+//! the VPU too, which signs it with the device key and appends it to the flash
+//! store, so that it is there at the next boot. A write to `KEK`, `db` or
+//! `dbx` is made of a signature and is appended as it is, for UEFI to check at
+//! the next boot against `PK` and the `KEK`s, and takes effect then; the table
+//! keeps the old value until then. The VPU's answer comes in the message's own
+//! buffer: its channel is not the one the OS's mailbox driver listens on, and
+//! nothing is posted back.
 
 use core::ffi::c_void;
 
@@ -27,6 +36,34 @@ const HEADER: usize = 32;
 const DELETED: u16 = 1;
 /// The OS may change it: not `PK`, `KEK`, `db`, `dbx` or the Secure Boot state.
 const WRITABLE: u16 = 2;
+/// `KEK`, `db` or `dbx`: an authenticated write may change it.
+const KEY: u16 = 4;
+
+/// The mailbox registers' page, which the OS has to map for these services.
+pub const MAILBOX_PAGE: u64 = 0xfe00_b000;
+const MAIL1_WRITE: u64 = 0xfe00_b8a0;
+const MAIL1_STATUS: u64 = 0xfe00_b8b8;
+const MAIL_FULL: u32 = 1 << 31;
+const CHANNEL_RUNTIME: u32 = 7;
+const RESPONSE: u32 = 0x8000_0000;
+const TAG_STORE_APPEND: u32 = 0x0003_00a6;
+const TAG_STORE_PERSIST: u32 = 0x0003_00a7;
+/// The most the VPU takes of a variable.
+const PERSIST_MAX: usize = 16 * 1024;
+const PERSIST_NAME_MAX: usize = 512;
+const TIME_BASED: u32 = efi::VARIABLE_TIME_BASED_AUTHENTICATED_WRITE_ACCESS;
+const NV: u32 = efi::VARIABLE_NON_VOLATILE;
+const SET: u32 = 1;
+const DELETE: u32 = 2;
+const RECORD_MAGIC: u32 = 0x5245_4331;
+
+const MESSAGE_WORDS: usize = 6 + 8 + (PERSIST_MAX + PERSIST_NAME_MAX + 4096) / 4;
+
+/// The message to the VPU: where the first word of its value is, and the rest.
+#[repr(C, align(64))]
+struct Message([u32; MESSAGE_WORDS]);
+
+static MESSAGE: Global<Message> = Global::new(Message([0; MESSAGE_WORDS]));
 
 #[repr(C, align(8))]
 struct Table([u8; CAPACITY]);
@@ -189,8 +226,134 @@ pub fn clear() {
 }
 
 /// Add a variable the OS may read, and change when `writable`. Whether it fit.
-pub fn add(name: &[u16], guid: &efi::Guid, attributes: u32, data: &[u8], writable: bool) -> bool {
-    push(name, guid, attributes, if writable { WRITABLE } else { 0 }, &[(data.as_ptr(), data.len())])
+pub fn add(name: &[u16], guid: &efi::Guid, attributes: u32, data: &[u8], writable: bool, key: bool) -> bool {
+    let flags = if writable { WRITABLE } else { 0 } | if key { KEY } else { 0 };
+    push(name, guid, attributes, flags, &[(data.as_ptr(), data.len())])
+}
+
+fn counter() -> u64 {
+    let now: u64;
+    unsafe { core::arch::asm!("isb", "mrs {0}, cntpct_el0", out(reg) now) };
+    now
+}
+
+fn frequency() -> u64 {
+    let hz: u64;
+    unsafe { core::arch::asm!("mrs {0}, cntfrq_el0", out(reg) hz) };
+    hz
+}
+
+fn flush(at: usize, len: usize) {
+    for line in (at & !63..at + len).step_by(64) {
+        unsafe { core::arch::asm!("dc civac, {}", in(reg) line) };
+    }
+    unsafe { core::arch::asm!("dsb sy") };
+}
+
+/// The message's value, which the VPU reads and answers in.
+fn value() -> &'static mut [u8] {
+    let m = MESSAGE.get().0.as_mut_ptr() as *mut u8;
+    unsafe { core::slice::from_raw_parts_mut(m.add(20), 4 * (MESSAGE_WORDS - 6)) }
+}
+
+/// Post `tag` with the first `len` bytes of [`value`] as its value, and wait
+/// for the VPU's status word, which it writes over the value's first. `None`
+/// if it did not answer.
+fn post(tag: u32, len: usize) -> Option<u32> {
+    let words = len.div_ceil(4);
+    if words + 7 > MESSAGE_WORDS {
+        return None;
+    }
+    let m = MESSAGE.get().0.as_mut_ptr();
+    unsafe {
+        core::ptr::write_bytes((m.add(5) as *mut u8).add(len), 0, 4 * words - len);
+        core::ptr::write_volatile(m, (4 * (words + 6)) as u32);
+        core::ptr::write_volatile(m.add(1), 0);
+        core::ptr::write_volatile(m.add(2), tag);
+        core::ptr::write_volatile(m.add(3), (4 * words) as u32);
+        core::ptr::write_volatile(m.add(4), len as u32);
+        core::ptr::write_volatile(m.add(5 + words), 0);
+    }
+    flush(m as usize, 4 * (words + 6));
+    let bus = 0xc000_0000 | m as u32;
+    let deadline = counter() + 5 * frequency();
+    unsafe {
+        while core::ptr::read_volatile(MAIL1_STATUS as *const u32) & MAIL_FULL != 0 {
+            if counter() > deadline {
+                return None;
+            }
+        }
+        core::ptr::write_volatile(MAIL1_WRITE as *mut u32, bus | CHANNEL_RUNTIME);
+        loop {
+            flush(m as usize, 4 * (words + 6));
+            if core::ptr::read_volatile(m.add(1)) == RESPONSE {
+                return Some(core::ptr::read_volatile(m.add(5)));
+            }
+            if counter() > deadline {
+                return None;
+            }
+        }
+    }
+}
+
+/// Have the VPU sign and store a change of a non-volatile variable no
+/// signature guards: `data` is what it holds now, none for a deletion.
+fn persist(kind: u32, attributes: u32, guid: &efi::Guid, name: &[u16], data: *const u8, len: usize) {
+    if attributes & NV == 0 || len > PERSIST_MAX || name.len() * 2 > PERSIST_NAME_MAX || name.is_empty() {
+        return;
+    }
+    let out = value();
+    out[0..4].copy_from_slice(&kind.to_le_bytes());
+    out[4..8].copy_from_slice(&attributes.to_le_bytes());
+    out[8..12].copy_from_slice(&((name.len() * 2) as u32).to_le_bytes());
+    out[12..16].copy_from_slice(&(len as u32).to_le_bytes());
+    out[16..32].copy_from_slice(guid.as_bytes());
+    for (i, c) in name.iter().enumerate() {
+        out[32 + 2 * i..34 + 2 * i].copy_from_slice(&c.to_le_bytes());
+    }
+    let at = 32 + (name.len() * 2).next_multiple_of(4);
+    out[32 + name.len() * 2..at].fill(0);
+    unsafe { core::ptr::copy_nonoverlapping(data, out.as_mut_ptr().add(at), len) };
+    post(TAG_STORE_PERSIST, at + len);
+}
+
+/// A write of `KEK`, `db` or `dbx`, the value `bytes` that `SetVariable` was
+/// given: a time, a certificate holding a signature, and the new value. The
+/// VPU appends the record UEFI made of such a write when it took one.
+fn write_key(name: &[u16], guid: &efi::Guid, attributes: u32, bytes: &[u8], append: bool) -> efi::Status {
+    let length = u32::from_le_bytes([bytes.get(16).copied().unwrap_or(0), bytes.get(17).copied().unwrap_or(0), bytes.get(18).copied().unwrap_or(0), bytes.get(19).copied().unwrap_or(0)]) as usize;
+    let end = 16usize.saturating_add(length);
+    if bytes.len() < 40 || length < 24 || end > bytes.len() || name.len() * 2 > PERSIST_NAME_MAX || bytes.len() > PERSIST_MAX {
+        return efi::Status::INVALID_PARAMETER;
+    }
+    let (time, descriptor, payload) = (&bytes[..16], &bytes[16..end], &bytes[end..]);
+    let kind = if payload.is_empty() && !append { DELETE } else { SET };
+    let body = 60 + name.len() * 2 + payload.len() + descriptor.len();
+    let total = body.next_multiple_of(4) + 32;
+    let out = value();
+    out[..total].fill(0);
+    out[0..4].copy_from_slice(&RECORD_MAGIC.to_le_bytes());
+    out[4..8].copy_from_slice(&(total as u32).to_le_bytes());
+    out[8..12].copy_from_slice(&kind.to_le_bytes());
+    out[12..16].copy_from_slice(&attributes.to_le_bytes());
+    out[16..32].copy_from_slice(guid.as_bytes());
+    out[32..48].copy_from_slice(time);
+    out[48..52].copy_from_slice(&(name.len() as u32).to_le_bytes());
+    out[52..56].copy_from_slice(&(payload.len() as u32).to_le_bytes());
+    out[56..60].copy_from_slice(&(descriptor.len() as u32).to_le_bytes());
+    for (i, c) in name.iter().enumerate() {
+        out[60 + 2 * i..62 + 2 * i].copy_from_slice(&c.to_le_bytes());
+    }
+    let data_at = 60 + name.len() * 2;
+    out[data_at..data_at + payload.len()].copy_from_slice(payload);
+    out[data_at + payload.len()..data_at + payload.len() + descriptor.len()].copy_from_slice(descriptor);
+    let digest = crate::sha256::digest(&out[..body.next_multiple_of(4)]);
+    out[body.next_multiple_of(4)..total].copy_from_slice(&digest);
+    match post(TAG_STORE_APPEND, total) {
+        Some(0) => efi::Status::SUCCESS,
+        Some(4) => efi::Status::OUT_OF_RESOURCES,
+        _ => efi::Status::DEVICE_ERROR,
+    }
 }
 
 pub extern "efiapi" fn get_variable(
@@ -263,10 +426,18 @@ pub extern "efiapi" fn set_variable(
         return efi::Status::INVALID_PARAMETER;
     }
     let append = attributes & APPEND != 0;
+    let given = attributes;
     let attributes = attributes & !APPEND;
     let delete = attributes == 0 || (size == 0 && !append);
     let existing = find(name, &guid);
     if let Some(e) = &existing {
+        if e.flags & KEY != 0 {
+            if attributes != e.attributes || attributes & TIME_BASED == 0 {
+                return efi::Status::INVALID_PARAMETER;
+            }
+            let bytes = if size == 0 { &[][..] } else { unsafe { core::slice::from_raw_parts(data as *const u8, size) } };
+            return write_key(name, &guid, given, bytes, append);
+        }
         if e.flags & WRITABLE == 0 {
             return efi::Status::WRITE_PROTECTED;
         }
@@ -274,6 +445,7 @@ pub extern "efiapi" fn set_variable(
     if delete {
         let Some(e) = existing else { return efi::Status::NOT_FOUND };
         put(e.at + 14, &(e.flags | DELETED).to_le_bytes());
+        persist(DELETE, e.attributes, &guid, name, [].as_ptr(), 0);
         return efi::Status::SUCCESS;
     }
     if attributes & AUTH != 0 {
@@ -302,6 +474,9 @@ pub extern "efiapi" fn set_variable(
     }
     if let Some(e) = old {
         put(e.at + 14, &(e.flags | DELETED).to_le_bytes());
+    }
+    if let Some(e) = find(name, &guid) {
+        persist(SET, attributes, &guid, name, unsafe { base().add(e.data_at()) }, e.data_len);
     }
     efi::Status::SUCCESS
 }

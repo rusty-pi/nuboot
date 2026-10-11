@@ -17,6 +17,17 @@ const CMD_READ: u8 = 0x03;
 const CMD_FAST_READ: u8 = 0x0b;
 const CMD_READ_SFDP: u8 = 0x5a;
 const CMD_READ_ID: u8 = 0x9f;
+const CMD_READ_STATUS: u8 = 0x05;
+const CMD_WRITE_ENABLE: u8 = 0x06;
+const CMD_WRITE_STATUS: u8 = 0x01;
+const CMD_PAGE_PROGRAM: u8 = 0x02;
+const CMD_SECTOR_ERASE: u8 = 0x20;
+
+const STATUS_BUSY: u8 = 1;
+const STATUS_PROTECT: u8 = 0b0001_1100;
+
+pub const PAGE: usize = 256;
+pub const SECTOR: usize = 4096;
 
 /// SPI0's pins on ALT4. GPIO 42 also drives the activity LED.
 const SPI_PINS: [u32; 4] = [43, 40, 41, 42];
@@ -93,6 +104,12 @@ impl Transfer {
             *b = xfer(0);
         }
     }
+
+    pub fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            xfer(b);
+        }
+    }
 }
 
 impl Drop for Transfer {
@@ -126,4 +143,57 @@ pub fn read(addr: u32, buf: &mut [u8]) {
 /// A fast read from `addr`, streamed.
 pub fn fast_read(addr: u32) -> Transfer {
     Transfer::start(CMD_FAST_READ, Some(addr), true)
+}
+
+fn status() -> u8 {
+    Transfer::start(CMD_READ_STATUS, None, false).byte()
+}
+
+fn wait_idle(timeout_us: u32) -> bool {
+    timer::wait(timeout_us, || status() & STATUS_BUSY == 0)
+}
+
+fn write_enable() {
+    Transfer::start(CMD_WRITE_ENABLE, None, false);
+}
+
+/// Clear the flash's block protection, if it is on.
+fn unprotect() -> bool {
+    if status() & STATUS_PROTECT == 0 {
+        return true;
+    }
+    write_enable();
+    Transfer::start(CMD_WRITE_STATUS, None, false).write(&[0]);
+    wait_idle(100_000) && status() & STATUS_PROTECT == 0
+}
+
+/// Erase the 4 KiB sector that holds `addr`.
+pub fn erase_sector(addr: u32) -> bool {
+    if !unprotect() {
+        return false;
+    }
+    write_enable();
+    Transfer::start(CMD_SECTOR_ERASE, Some(addr & !(SECTOR as u32 - 1)), false);
+    wait_idle(1_000_000)
+}
+
+/// Program `data` at `addr`, which has to be erased there: bits only go from 1
+/// to 0.
+pub fn program(addr: u32, data: &[u8]) -> bool {
+    if !unprotect() {
+        return false;
+    }
+    let mut addr = addr as usize;
+    let mut data = data;
+    while !data.is_empty() {
+        let (page, rest) = data.split_at((PAGE - addr % PAGE).min(data.len()));
+        write_enable();
+        Transfer::start(CMD_PAGE_PROGRAM, Some(addr as u32), false).write(page);
+        if !wait_idle(100_000) {
+            return false;
+        }
+        addr += page.len();
+        data = rest;
+    }
+    true
 }

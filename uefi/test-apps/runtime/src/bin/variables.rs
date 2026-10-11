@@ -66,7 +66,7 @@ pub extern "efiapi" fn efi_main(image: Handle, system_table: *mut SystemTable) -
     check("SecureBoot is not writable", set(rt, "SecureBoot", &GLOBAL, BS_RT, &[0]) == Status::WRITE_PROTECTED);
     check("PK is not writable", set(rt, "PK", &GLOBAL, BS_RT | NV, &[0]) == Status::WRITE_PROTECTED);
     check("PK is not deleted", set(rt, "PK", &GLOBAL, 0, &[]) == Status::WRITE_PROTECTED);
-    check("db is not writable", set(rt, "db", &SECURITY_DB, BS_RT | NV, &[0]) == Status::WRITE_PROTECTED);
+    check("db refuses a write without a signature", set(rt, "db", &SECURITY_DB, BS_RT | NV, &[0]) == Status::INVALID_PARAMETER);
 
     check("a new variable is set", set(rt, "RtTest", &OURS, BS_RT | NV, &[1, 2, 3]) == Status::SUCCESS);
     let (status, size, _) = get(rt, "RtTest", &OURS, &mut out);

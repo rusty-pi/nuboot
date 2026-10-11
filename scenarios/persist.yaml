@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "persist"
+description: "A board with its device private key fused (a test key, not a board's): an EFI application exits boot services and writes through the runtime services a non-volatile variable, an append to it, a deletion and a signed update of db, then resets. The VPU signs and appends the variable writes to the flash store and appends the db update as it is. After the reset the variables are as written, and UEFI has checked the db update against KEK and applied it."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  otp_row:
+    - "56=0xc0de2001"
+    - "57=0xc0de3112"
+    - "58=0xc0de4223"
+    - "59=0xc0de5334"
+    - "60=0xc0de6445"
+    - "61=0xc0de7556"
+    - "62=0xc0de8667"
+    - "63=0xc0de9778"
+  sd:
+    files:
+      start4.elf: "../out/start4-test.elf"
+      EFI/BOOT/BOOTAA64.EFI: "../out/persist.efi"
+  until: "persist test: done"
+  wall_secs: 3000
+
+milestones:
+  - why: "The write after ExitBootServices is accepted."
+    line: "runtime test: a variable is written after ExitBootServices ok"
+  - why: "A db update signed by a KEK key is accepted at runtime."
+    line: "runtime test: a signed update of db is accepted ok"
+  - why: "After the reset the variable has what was written and appended."
+    line: "runtime test: the variable is still there with what was appended ok"
+  - why: "The deletion lasted."
+    line: "runtime test: the deleted variable is gone ok"
+  - why: "The signed update took effect at the boot after."
+    line: "runtime test: db holds the certificate the signed update added ok"

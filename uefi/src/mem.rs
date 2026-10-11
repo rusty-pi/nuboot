@@ -111,6 +111,11 @@ impl Map {
         }
     }
 
+    /// Add device registers the OS's runtime services need to the map.
+    pub fn add_mmio(&mut self, start: u64, end: u64) {
+        self.set(start & !(PAGE - 1), end.next_multiple_of(PAGE), efi::MEMORY_MAPPED_IO, true);
+    }
+
     /// Mark RAM in `[start, end)` as `ty`, rounding out to pages.
     pub fn mark(&mut self, start: u64, end: u64, ty: u32) {
         let start = start & !(PAGE - 1);
@@ -194,16 +199,21 @@ impl Map {
     pub fn write(&self, out: *mut u8) {
         for (i, d) in self.d[..self.n].iter().enumerate() {
             let runtime = matches!(d.ty, efi::RUNTIME_SERVICES_CODE | efi::RUNTIME_SERVICES_DATA);
+            let attribute = if d.ty == efi::MEMORY_MAPPED_IO {
+                efi::MEMORY_UC | efi::MEMORY_RUNTIME
+            } else {
+                efi::MEMORY_UC
+                    | efi::MEMORY_WC
+                    | efi::MEMORY_WT
+                    | efi::MEMORY_WB
+                    | if runtime { efi::MEMORY_RUNTIME } else { 0 }
+            };
             let desc = efi::MemoryDescriptor {
                 r#type: d.ty,
                 physical_start: d.start,
                 virtual_start: 0,
                 number_of_pages: d.pages,
-                attribute: efi::MEMORY_UC
-                    | efi::MEMORY_WC
-                    | efi::MEMORY_WT
-                    | efi::MEMORY_WB
-                    | if runtime { efi::MEMORY_RUNTIME } else { 0 },
+                attribute,
             };
             unsafe {
                 let at = out.add(i * DESCRIPTOR_SIZE);
@@ -336,14 +346,18 @@ impl Heap {
 }
 
 /// The pools, by memory type: loader code and data, boot services code and
-/// data, runtime services code and data.
-static HEAPS: Global<[Heap; 6]> = Global::new([
+/// data, runtime services code and data, and what the Linux EFI stub keeps for
+/// the kernel (the TPM event log, the RNG seed, the memory map): ACPI reclaim
+/// and ACPI NVS.
+static HEAPS: Global<[Heap; 8]> = Global::new([
     Heap::new(efi::LOADER_CODE),
     Heap::new(efi::LOADER_DATA),
     Heap::new(efi::BOOT_SERVICES_CODE),
     Heap::new(efi::BOOT_SERVICES_DATA),
     Heap::new(efi::RUNTIME_SERVICES_CODE),
     Heap::new(efi::RUNTIME_SERVICES_DATA),
+    Heap::new(efi::ACPI_RECLAIM_MEMORY),
+    Heap::new(efi::ACPI_MEMORY_NVS),
 ]);
 
 fn heap(ty: u32) -> Option<&'static mut Heap> {

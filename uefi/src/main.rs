@@ -113,6 +113,8 @@ fn memory_map(tree: &fdt::Fdt, tree_addr: u64) {
     // The armstub's page: the spin table the secondary cores wait on, and the
     // watchdog word.
     map.mark(0, mem::PAGE, efi::RESERVED_MEMORY_TYPE);
+    // What the runtime services reach the VPU through.
+    map.add_mmio(rtvar::MAILBOX_PAGE, rtvar::MAILBOX_PAGE + mem::PAGE);
     map.mark(DMA_ARENA.0, DMA_ARENA.1, efi::BOOT_SERVICES_DATA);
     map.mark(tree_addr, tree_addr + tree.size() as u64, efi::BOOT_SERVICES_DATA);
     map.mark(start, runtime_end, efi::RUNTIME_SERVICES_CODE);
