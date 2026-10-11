@@ -161,6 +161,31 @@ refused "unseal with another signature" unseal_authorized other.sig aout2.txt
 tool tpm2_pcrextend 7:sha256=0000000000000000000000000000000000000000000000000000000000000003 >/dev/null 2>&1
 refused "unseal once the PCRs no longer match the signed policy" unseal_authorized approved.sig aout3.txt
 
+check "make the primary persistent" tool tpm2_evictcontrol -C o -c prim.ctx 0x81000001
+check "read the persistent key" tool tpm2_readpublic -c 0x81000001 -n persistent-name.bin
+check "its name is the primary's" cmp name1.bin persistent-name.bin
+check "seal a secret under the persistent key" tool tpm2_create -C 0x81000001 -i secret.txt -u pseal.pub -r pseal.priv
+refused "a second persistent key at the same handle" tool tpm2_evictcontrol -C o -c prim2.ctx 0x81000001
+check "remove the persistent key" tool tpm2_evictcontrol -C o -c 0x81000001
+refused "reading the persistent key once it is removed" tool tpm2_readpublic -c 0x81000001
+
+# systemd's own client: a disk key sealed to PCR 7 and unsealed to unlock the
+# volume, which goes through a persistent storage root key, salted and
+# encrypted sessions and a PCR policy.
+if command -v systemd-cryptenroll >/dev/null && command -v cryptsetup >/dev/null; then
+  tpm="mssim:host=127.0.0.1,port=$port"
+  truncate -s 32M luks.img
+  printf pass >luks.key
+  chmod 600 luks.key
+  cryptsetup luksFormat --type luks2 --batch-mode --pbkdf pbkdf2 --pbkdf-force-iterations 1000 --key-file luks.key luks.img >/dev/null 2>&1
+  check "systemd-cryptenroll seals a disk key to PCR 7" systemd-cryptenroll --tpm2-device="$tpm" --tpm2-pcrs=7 --unlock-key-file=luks.key luks.img
+  check "systemd-cryptenroll unseals it to unlock the volume" systemd-cryptenroll --unlock-tpm2-device="$tpm" --recovery-key luks.img
+  tool tpm2_pcrextend 7:sha256=0000000000000000000000000000000000000000000000000000000000000004 >/dev/null 2>&1
+  refused "unlocking the volume once PCR 7 has changed" systemd-cryptenroll --unlock-tpm2-device="$tpm" --recovery-key luks.img
+else
+  echo "systemd-cryptenroll is not installed: its client is not tested"
+fi
+
 if [ "$failures" -ne 0 ]; then
   echo "$failures check(s) failed"
   exit 1

@@ -49,6 +49,8 @@ const RC_BAD_TAG: u32 = 0x1e;
 /// bit 6 says it is a parameter (as `RC_P`), bit 7 a handle.
 const RC_VALUE: u32 = 0x84;
 const RC_HASH: u32 = 0x083;
+const RC_NV_DEFINED: u32 = 0x14c;
+const RC_NV_SPACE: u32 = 0x14b;
 const RC_RANGE: u32 = 0x08d;
 const RC_LOCALITY: u32 = 0x107;
 const RC_HANDLE: u32 = 0x08b;
@@ -99,7 +101,8 @@ const CC_STIR_RANDOM: u32 = 0x146;
 /// Commands in numeric order, for `TPM_CAP_COMMANDS`: the number of handles in
 /// the command (bits 25-27 of `TPMA_CC`), and 8 more when the response has a
 /// handle (bit 28).
-const COMMANDS: [(u32, u32); 37] = [
+const COMMANDS: [(u32, u32); 38] = [
+    (object::CC_EVICT_CONTROL, 2),
     (object::CC_CREATE_PRIMARY, 1 | 8),
     (CC_PCR_RESET, 1),
     (CC_INCREMENTAL_SELF_TEST, 0),
@@ -147,7 +150,8 @@ struct Spec {
     authorized: usize,
 }
 
-const OBJECT_COMMANDS: [Spec; 23] = [
+const OBJECT_COMMANDS: [Spec; 24] = [
+    Spec { code: object::CC_EVICT_CONTROL, handles: 2, authorized: 1 },
     Spec { code: object::CC_CREATE_PRIMARY, handles: 1, authorized: 1 },
     Spec { code: object::CC_CREATE, handles: 1, authorized: 1 },
     Spec { code: object::CC_LOAD, handles: 1, authorized: 1 },
@@ -200,7 +204,7 @@ const fn four(s: &[u8; 4]) -> u32 {
 }
 
 /// `TPM_PT_*` fixed and variable properties, in property order.
-const PROPERTIES: [(u32, u32); 55] = [
+const PROPERTIES: [(u32, u32); 56] = [
     (0x100, four(b"2.0\0")),
     (0x101, 0),
     (0x102, 159),
@@ -256,6 +260,7 @@ const PROPERTIES: [(u32, u32); 55] = [
     (0x206, 64),
     (0x207, 3),
     (0x208, 0),
+    (0x209, object::PERSISTENT_SLOTS as u32),
 ];
 
 /// Where a response is built.
@@ -427,6 +432,7 @@ fn dispatch(code: u32, handles: &[u32; 3], params: &mut In, a: &mut session::Aut
         sign::CC_VERIFY_SIGNATURE => sign::verify(&mut command),
         session::CC_POLICY_SECRET => session::policy_secret(handles[0], handles[1], params, a),
         object::CC_READ_PUBLIC => object::read_public_command(&mut command),
+        object::CC_EVICT_CONTROL => object::evict_control(&mut command),
         object::CC_TEST_PARMS => object::test_parms(&mut command),
         object::CC_FLUSH_CONTEXT => context::flush(params),
         object::CC_CONTEXT_SAVE => context::save(handles[0], params, a),
@@ -557,6 +563,14 @@ fn get_capability(input: &mut In, out: &mut Out) -> Result<(), u32> {
                     }
                     &loaded[..n]
                 }
+                0x81 => {
+                    for (handle, _) in object::persistent() {
+                        loaded[n] = handle;
+                        n += 1;
+                    }
+                    loaded[..n].sort_unstable();
+                    &loaded[..n]
+                }
                 0x02 | 0x03 => {
                     for handle in session::handles().filter(|h| h >> 24 == kind) {
                         loaded[n] = handle;
@@ -594,9 +608,14 @@ fn get_capability(input: &mut In, out: &mut Out) -> Result<(), u32> {
             let shown = list.clone().take(count).count();
             more = list.count() > shown;
             out.u32(shown as u32);
+            let held = object::persistent().count() as u32;
             for (p, v) in PROPERTIES.iter().filter(|(p, _)| *p >= property).take(count) {
                 out.u32(*p);
-                out.u32(*v);
+                out.u32(match *p {
+                    0x208 => held,
+                    0x209 => object::PERSISTENT_SLOTS as u32 - held,
+                    _ => *v,
+                });
             }
         }
         8 => {

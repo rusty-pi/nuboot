@@ -123,7 +123,7 @@ pub fn save(handle: u32, params: &In, a: &mut Authorization) -> Result<(), u32> 
     let mut plain = [0u8; 700];
     let mut w = Writer { buf: &mut plain, at: 0 };
     let hierarchy;
-    if let Some(slot) = object::slot_of(handle) {
+    if let Some(slot) = object::transient_of(handle) {
         write_object(slot, &mut w);
         hierarchy = slot.origin.hierarchy;
     } else if let Some(s) = session::session_of(handle) {

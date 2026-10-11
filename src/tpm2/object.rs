@@ -15,7 +15,7 @@ use super::session::Authorization;
 use super::{
     ALG_HMAC, ALG_KEYEDHASH, ALG_NULL, ALG_SHA256, In, Out, RC_ATTRIBUTES, RC_CURVE, RC_HANDLE, RC_HIERARCHY, RC_INTEGRITY,
     RC_KDF, RC_KEY, RC_OBJECT_MEMORY, RC_P, RC_RANGE, RC_SCHEME, RC_SIZE, RC_SYMMETRIC, RC_TYPE, RC_VALUE,
-    RC_COMMAND_SIZE, RC_1,
+    RC_COMMAND_SIZE, RC_NV_DEFINED, RC_NV_SPACE, RC_1, RC_2,
 };
 use crate::{aes, kdf, keystore, p256, rng, sha256};
 
@@ -37,6 +37,10 @@ pub const RH_PLATFORM: u32 = 0x4000_000c;
 
 pub const TRANSIENT_FIRST: u32 = 0x8000_0000;
 pub const SLOTS: usize = 4;
+pub const PERSISTENT_FIRST: u32 = 0x8100_0000;
+pub const PERSISTENT_PLATFORM_FIRST: u32 = 0x8180_0000;
+pub const PERSISTENT_LAST: u32 = 0x81ff_ffff;
+pub const PERSISTENT_SLOTS: usize = 2;
 
 const FIXED_TPM: u32 = 1 << 1;
 const FIXED_PARENT: u32 = 1 << 4;
@@ -68,6 +72,7 @@ pub const CC_CONTEXT_SAVE: u32 = 0x162;
 pub const CC_CONTEXT_LOAD: u32 = 0x161;
 pub const CC_TEST_PARMS: u32 = 0x18a;
 pub const CC_LOAD_EXTERNAL: u32 = 0x167;
+pub const CC_EVICT_CONTROL: u32 = 0x120;
 
 const MAX_PUBLIC: usize = 288;
 const MAX_PRIVATE: usize = 260;
@@ -453,12 +458,40 @@ const EMPTY: Slot = Slot {
 };
 
 static mut SLOTS_TABLE: [Slot; SLOTS] = [EMPTY; SLOTS];
+static mut PERSISTENT_TABLE: [Slot; PERSISTENT_SLOTS] = [EMPTY; PERSISTENT_SLOTS];
+static mut PERSISTENT_HANDLES: [u32; PERSISTENT_SLOTS] = [0; PERSISTENT_SLOTS];
 
 pub fn table() -> &'static mut [Slot; SLOTS] {
     unsafe { &mut *(&raw mut SLOTS_TABLE) }
 }
 
+/// The objects that were made persistent, which last until the TPM restarts.
+pub fn persistent() -> impl Iterator<Item = (u32, &'static Slot)> {
+    let handles = unsafe { &*(&raw const PERSISTENT_HANDLES) };
+    let table = unsafe { &*(&raw const PERSISTENT_TABLE) };
+    handles.iter().copied().zip(table.iter()).filter(|(_, slot)| slot.used)
+}
+
+fn persistent_index(handle: u32) -> Option<usize> {
+    let handles = unsafe { &*(&raw const PERSISTENT_HANDLES) };
+    let table = unsafe { &*(&raw const PERSISTENT_TABLE) };
+    handles.iter().zip(table.iter()).position(|(h, slot)| slot.used && *h == handle)
+}
+
+pub fn is_persistent(handle: u32) -> bool {
+    (PERSISTENT_FIRST..=PERSISTENT_LAST).contains(&handle)
+}
+
+/// A loaded object: transient, or persistent.
 pub fn slot_of(handle: u32) -> Option<&'static mut Slot> {
+    if is_persistent(handle) {
+        let index = persistent_index(handle)?;
+        return Some(unsafe { &mut (*(&raw mut PERSISTENT_TABLE))[index] });
+    }
+    transient_of(handle)
+}
+
+pub fn transient_of(handle: u32) -> Option<&'static mut Slot> {
     let index = handle.checked_sub(TRANSIENT_FIRST)? as usize;
     table().get_mut(index).filter(|s| s.used)
 }
@@ -468,7 +501,7 @@ fn free_slot() -> Result<usize, u32> {
 }
 
 pub fn flush(handle: u32) -> bool {
-    match slot_of(handle) {
+    match transient_of(handle) {
         Some(slot) => {
             *slot = EMPTY;
             true
@@ -1038,6 +1071,54 @@ pub fn unseal(c: &mut Command) -> Result<(), u32> {
     let raw = parameters.buf;
     c.auth.response_params(&raw[..n]);
     keystore::zero(raw);
+    Ok(())
+}
+
+/// `TPM2_EvictControl`: make a primary key persistent at a handle, or remove
+/// the persistent object that is there. The key is not copied anywhere that
+/// outlasts the TPM: a primary is a function of its hierarchy and template,
+/// so a tool that finds no persistent key makes it again.
+pub fn evict_control(c: &mut Command) -> Result<(), u32> {
+    let (auth, object) = (c.handles[0], c.handles[1]);
+    let persistent_handle = c.params.u32().ok_or(RC_COMMAND_SIZE)?;
+    if c.params.rest() != 0 {
+        return Err(RC_COMMAND_SIZE);
+    }
+    let allowed = match auth {
+        RH_OWNER => PERSISTENT_FIRST..PERSISTENT_PLATFORM_FIRST,
+        RH_PLATFORM => PERSISTENT_PLATFORM_FIRST..PERSISTENT_LAST + 1,
+        _ => return Err(RC_HIERARCHY | RC_1),
+    };
+    if !allowed.contains(&persistent_handle) {
+        return Err(RC_RANGE | RC_P | RC_1);
+    }
+    if is_persistent(object) {
+        let index = persistent_index(object).ok_or(RC_HANDLE | RC_2)?;
+        if object != persistent_handle {
+            return Err(RC_VALUE | RC_P | RC_1);
+        }
+        unsafe {
+            (*(&raw mut PERSISTENT_TABLE))[index] = EMPTY;
+            (*(&raw mut PERSISTENT_HANDLES))[index] = 0;
+        }
+        return Ok(());
+    }
+    let slot = transient_of(object).ok_or(RC_HANDLE | RC_2)?;
+    let attributes = slot.public().attributes;
+    if attributes & FIXED_TPM == 0 || attributes & FIXED_PARENT == 0 {
+        return Err(RC_ATTRIBUTES | RC_2);
+    }
+    if slot.origin.hierarchy != auth {
+        return Err(RC_HIERARCHY | RC_2);
+    }
+    if persistent_index(persistent_handle).is_some() {
+        return Err(RC_NV_DEFINED);
+    }
+    let index = unsafe { (*(&raw const PERSISTENT_TABLE)).iter().position(|s| !s.used) }.ok_or(RC_NV_SPACE)?;
+    unsafe {
+        (*(&raw mut PERSISTENT_TABLE))[index] = slot.clone();
+        (*(&raw mut PERSISTENT_HANDLES))[index] = persistent_handle;
+    }
     Ok(())
 }
 

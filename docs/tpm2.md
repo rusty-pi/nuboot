@@ -47,6 +47,7 @@ One bank, SHA-256, of 24 PCRs. Every PCR can be extended from locality 0 but
 | `TPM2_LoadExternal` | a public key, ECC P-256 or RSA-2048, under the owner, endorsement, platform or null hierarchy; no private part |
 | `TPM2_Sign`, `Quote`, `VerifySignature` | ECDSA over P-256 and SHA-256, with a key that signs; a restricted key (an attestation key) signs only what the TPM attested or a digest that `Hash` ticketed; `VerifySignature` also checks RSASSA (PKCS#1 v1.5) with SHA-256 by a loaded RSA public key |
 | `TPM2_ContextSave`, `ContextLoad`, `FlushContext` | objects and sessions |
+| `TPM2_EvictControl` | a primary key made persistent at a handle in the owner's or the platform's range, two at most, and removed again; they last until the TPM restarts, and a tool that finds none makes the primary again |
 | `TPM2_StartAuthSession` | HMAC, policy and trial sessions, unsalted or salted to a primary key with ECDH, bound to nothing or to an object, with AES-128-CFB for parameter encryption or none |
 | `TPM2_PolicyPCR`, `PolicyOR`, `PolicyAuthValue`, `PolicyPassword`, `PolicySecret`, `PolicyAuthorize`, `PolicyCommandCode`, `PolicyGetDigest`, `PolicyRestart` | |
 
@@ -126,4 +127,7 @@ changed, a salted HMAC session that also encrypts the secret on its way in, a
 signing key whose signature OpenSSL accepts, an endorsement key, an
 attestation key and a quote that `tpm2_checkquote` accepts, and a secret sealed
 under a policy that an RSA key authorizes and unsealed with that key's
-signature of a PCR policy.
+signature of a PCR policy, a primary key made persistent and removed, and,
+with `systemd-cryptenroll` and `cryptsetup` installed, a LUKS2 volume whose key
+is sealed to PCR 7 and unsealed to unlock it, which stops working once the PCR
+has changed.

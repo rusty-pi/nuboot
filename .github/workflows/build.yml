@@ -186,16 +186,17 @@ jobs:
 
   # Every `scenarios/*.yaml` is a job, so a new scenario needs no edit here.
   # The TPM's code on the host: its crypto against reference vectors, and the
-  # whole TPM driven by tpm2-tools over the simulator's socket protocol.
+  # whole TPM driven by tpm2-tools and systemd-cryptenroll over the
+  # simulator's socket protocol.
   tpm:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - name: Install tpm2-tools
+      - name: Install tpm2-tools and cryptsetup
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends tpm2-tools
+          sudo apt-get install -y --no-install-recommends tpm2-tools cryptsetup-bin
       - name: Test
         run: scripts/test-tpm.sh
 
