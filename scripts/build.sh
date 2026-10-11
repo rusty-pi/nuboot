@@ -45,6 +45,10 @@ toolchain/bin/vc4-elf-size "out/start4$suffix.elf"
 # signed boot, once with a key the EEPROM trusts (out/boot-test-pubkey.bin) and
 # once with one it does not.
 if [ -n "$suffix" ]; then
+  mkdir -p out/test-keys
+  for name in boot boot-stranger; do
+    [ -f "out/test-keys/$name.key" ] || openssl genrsa -out "out/test-keys/$name.key" 2048 2>/dev/null
+  done
   scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-tamper.bin
   scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-pending.bin --update pending 2147483000
   scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-proven.bin --update proven 2147483000
@@ -56,10 +60,6 @@ if [ -n "$suffix" ]; then
     --boot-img out/boot-eeprom.img --boot-sig out/boot-eeprom.sig
   scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-eeprom-pending.bin --update pending 1790000001 --eeprom --backup out/store-eeprom.bak
   scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-stamped.bin --stamp 1790000001 --empty
-  mkdir -p out/test-keys
-  for name in boot boot-stranger; do
-    [ -f "out/test-keys/$name.key" ] || openssl genrsa -out "out/test-keys/$name.key" 2048 2>/dev/null
-  done
   scripts/mkbootimg.py out/test-keys/boot.key out/start4-test.elf out --prefix boot-test --pubkey out/boot-test-pubkey.bin
   scripts/mkbootimg.py out/test-keys/boot-stranger.key out/start4-test.elf out --prefix boot-stranger
 fi

@@ -179,9 +179,13 @@ if command -v systemd-cryptenroll >/dev/null && command -v cryptsetup >/dev/null
   chmod 600 luks.key
   cryptsetup luksFormat --type luks2 --batch-mode --pbkdf pbkdf2 --pbkdf-force-iterations 1000 --key-file luks.key luks.img >/dev/null 2>&1
   check "systemd-cryptenroll seals a disk key to PCR 7" systemd-cryptenroll --tpm2-device="$tpm" --tpm2-pcrs=7 --unlock-key-file=luks.key luks.img
-  check "systemd-cryptenroll unseals it to unlock the volume" systemd-cryptenroll --unlock-tpm2-device="$tpm" --recovery-key luks.img
-  tool tpm2_pcrextend 7:sha256=0000000000000000000000000000000000000000000000000000000000000004 >/dev/null 2>&1
-  refused "unlocking the volume once PCR 7 has changed" systemd-cryptenroll --unlock-tpm2-device="$tpm" --recovery-key luks.img
+  if systemd-cryptenroll --help | grep -q -- --unlock-tpm2-device; then
+    check "systemd-cryptenroll unseals it to unlock the volume" systemd-cryptenroll --unlock-tpm2-device="$tpm" --recovery-key luks.img
+    tool tpm2_pcrextend 7:sha256=0000000000000000000000000000000000000000000000000000000000000004 >/dev/null 2>&1
+    refused "unlocking the volume once PCR 7 has changed" systemd-cryptenroll --unlock-tpm2-device="$tpm" --recovery-key luks.img
+  else
+    echo "this systemd-cryptenroll cannot unlock with the TPM: the unsealing is not tested"
+  fi
 else
   echo "systemd-cryptenroll is not installed: its client is not tested"
 fi
