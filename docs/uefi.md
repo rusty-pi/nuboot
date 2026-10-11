@@ -75,7 +75,8 @@ The keys are built in, from `uefi/keys/` and `keys/` ([Keys](#keys)):
 | `dbx` | The AArch64 image hashes in Microsoft's revocation list (`dbx-aarch64.txt`, from [microsoft/secureboot_objects](https://github.com/microsoft/secureboot_objects)) |
 | `SecureBoot`, `SetupMode`, `AuditMode`, `DeployedMode` | 1, 0, 0, 1 |
 
-None of them can be written. A distribution boots through its shim, which
+`PK` and the state variables cannot be written, and `KEK`, `db` and `dbx`
+change only through signed updates ([Updating the keys](#updating-the-keys)). A distribution boots through its shim, which
 checks GRUB and the kernel against its own keys and the MOK list; shim's
 SBAT revocations apply as they do on any other machine.
 

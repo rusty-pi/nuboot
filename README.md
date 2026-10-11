@@ -15,8 +15,8 @@ for:
 - **UEFI with Secure Boot** as the way an operating system is started: a
   small UEFI of its own in `uefi/` that runs only images signed by a key in
   `db`, Microsoft's UEFI CAs by default, so a distribution's shim and GRUB
-  boot as they are ([docs/uefi.md](docs/uefi.md)). Enrolling the owner's own
-  keys in their place is not there yet.
+  boot as they are ([docs/uefi.md](docs/uefi.md)). The platform key is built in,
+  and `KEK`, `db` and `dbx` change through updates that a `PK` or `KEK` key signs.
 - **One file**: `start4.elf` carries the UEFI firmware and the board's device
   tree, so a board with secure boot programmed takes this firmware in a signed
   `boot.img` under Raspberry Pi's own bootloader ([docs/boot.md](docs/boot.md)).
