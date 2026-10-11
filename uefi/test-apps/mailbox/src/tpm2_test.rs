@@ -45,7 +45,11 @@ impl Command {
     }
     /// A password session with an empty password, as the authorization area.
     fn password(&mut self) -> &mut Self {
-        self.u32(9).u32(0x4000_0009).u16(0).put(&[0]).u16(0)
+        self.password_of(&[])
+    }
+    /// A password session with this password.
+    fn password_of(&mut self, password: &[u8]) -> &mut Self {
+        self.u32(9 + password.len() as u32).u32(0x4000_0009).u16(0).put(&[0]).u16(password.len() as u16).put(password)
     }
     fn done(&mut self) -> &[u8] {
         let len = self.len as u32;
@@ -93,19 +97,21 @@ pub extern "efiapi" fn efi_main(_image: Handle, system_table: *mut SystemTable) 
         return Status::NOT_FOUND;
     }
     let submit: Submit = unsafe { core::mem::transmute(*(protocol as *const usize).add(3)) };
-    let mut run = |name: &str, command: &[u8]| {
+    let mut run = |name: &str, command: &[u8]| -> ([u8; 1024], usize) {
         let mut response = [0u8; 1024];
         let status = submit(protocol, command.len() as u32, command.as_ptr(), 1024, response.as_mut_ptr());
         say(system_table, "tpm2 test: ");
         say(system_table, name);
         say(system_table, " ");
+        let mut len = 0;
         if status.is_error() {
             say(system_table, "failed");
         } else {
-            let len = u32::from_be_bytes(response[2..6].try_into().unwrap()) as usize;
-            hex(system_table, &response[..len.min(1024)]);
+            len = (u32::from_be_bytes(response[2..6].try_into().unwrap()) as usize).min(1024);
+            hex(system_table, &response[..len]);
         }
         say(system_table, "\r\n");
+        (response, len)
     };
     let digest = [0x11u8; 32];
 
@@ -128,8 +134,54 @@ pub extern "efiapi" fn efi_main(_image: Handle, system_table: *mut SystemTable) 
     run("pcr-extend-no-session", Command::new(0x8001, 0x182).u32(16).u32(1).u16(0xb).put(&digest).done());
     run("get-random", Command::new(0x8001, 0x17b).u16(16).done());
     run("hash", Command::new(0x8001, 0x17d).u16(3).put(b"abc").u16(0xb).u32(0x4000_0007).done());
-    run("unknown-command", Command::new(0x8001, 0x131).done());
+    run("unknown-command", Command::new(0x8001, 0x129).done());
     run("short-command", &[0x80, 0x01, 0x00, 0x00, 0x00, 0x0a, 0x00, 0x00, 0x01, 0x44]);
+
+    // An ECC P-256 storage key under the owner hierarchy, and a secret sealed
+    // under it.
+    let storage: &[u8] = &[
+        0x00, 0x23, 0x00, 0x0b, 0x00, 0x03, 0x00, 0x72, 0x00, 0x00, 0x00, 0x06, 0x00, 0x80, 0x00, 0x43, 0x00, 0x10, 0x00, 0x03,
+        0x00, 0x10, 0x00, 0x00, 0x00, 0x00,
+    ];
+    let sealed: &[u8] = &[0x00, 0x08, 0x00, 0x0b, 0x00, 0x00, 0x00, 0x52, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00];
+    let (r, _) = run(
+        "create-primary",
+        Command::new(0x8002, 0x131).u32(0x4000_0001).password().put(&[0, 4, 0, 0, 0, 0]).u16(storage.len() as u16).put(storage).u16(0).u32(0).done(),
+    );
+    let primary = u32::from_be_bytes(r[10..14].try_into().unwrap());
+    let (r, n) = run(
+        "create-sealed",
+        Command::new(0x8002, 0x153)
+            .u32(primary)
+            .password()
+            .u16(11)
+            .u16(2)
+            .put(b"pw")
+            .u16(5)
+            .put(b"hello")
+            .u16(sealed.len() as u16)
+            .put(sealed)
+            .u16(0)
+            .u32(0)
+            .done(),
+    );
+    // The private and public parts, as `Load` wants them: after the response's
+    // header and parameter size.
+    let private_len = u16::from_be_bytes(r[14..16].try_into().unwrap()) as usize;
+    let public_at = 14 + 2 + private_len;
+    let public_len = u16::from_be_bytes(r[public_at..public_at + 2].try_into().unwrap()) as usize;
+    let _ = n;
+    let mut load = Command::new(0x8002, 0x157);
+    load.u32(primary).password().put(&r[14..16 + private_len]).put(&r[public_at..public_at + 2 + public_len]);
+    let (r, _) = run("load", load.done());
+    let item = u32::from_be_bytes(r[10..14].try_into().unwrap());
+    run("unseal", Command::new(0x8002, 0x15e).u32(item).password_of(b"pw").done());
+    run("unseal-wrong-password", Command::new(0x8002, 0x15e).u32(item).password_of(b"no").done());
+    run("read-public", Command::new(0x8001, 0x173).u32(item).done());
+    run("getcap-transient", Command::new(0x8001, 0x17a).u32(1).u32(0x8000_0000).u32(8).done());
+    run("flush-item", Command::new(0x8001, 0x165).u32(item).done());
+    run("flush-primary", Command::new(0x8001, 0x165).u32(primary).done());
+    run("flush-again", Command::new(0x8001, 0x165).u32(primary).done());
     say(system_table, "tpm2 test: done\r\n");
     Status::SUCCESS
 }

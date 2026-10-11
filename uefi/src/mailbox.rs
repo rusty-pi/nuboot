@@ -17,6 +17,9 @@ const CHANNEL_PROPERTY: u32 = 8;
 const RESPONSE: u32 = 0x8000_0000;
 /// How long the VPU is given to answer.
 const ANSWER_US: u64 = 200_000;
+/// How long it is given for a TPM command, which can be a key's worth of
+/// arithmetic.
+const TPM_ANSWER_US: u64 = 5_000_000;
 
 const TAG_EXTEND_BOOT_MEASUREMENT: u32 = 0x0003_00a1;
 const TAG_GET_STORE_KEY: u32 = 0x0003_00a5;
@@ -43,14 +46,14 @@ static BIG: Big = Big(UnsafeCell::new([0; 6 + TPM_MAX / 4 + 1]));
 
 /// Post `message` (a whole property buffer at `at`, `len` bytes) and wait for
 /// the VPU to answer it. Whether it did.
-fn post(at: u64, len: usize) -> bool {
+fn post(at: u64, len: usize, answer_us: u64) -> bool {
     cache_flush(at, len);
     let message = (0xc000_0000 | at as u32) | CHANNEL_PROPERTY;
     if !util::wait_for(ANSWER_US, || util::read32(MAIL1_STATUS) & FULL == 0) {
         return false;
     }
     util::write32(MAIL1_WRITE, message);
-    let replied = util::wait_for(ANSWER_US, || {
+    let replied = util::wait_for(answer_us, || {
         util::read32(MAIL0_STATUS) & EMPTY == 0 && util::read32(MAIL0_READ) == message
     });
     if replied {
@@ -75,7 +78,7 @@ fn call(tag: u32, value: &[u32]) -> bool {
         }
         write_volatile(buf.add(words), 0);
     }
-    if !post(buf as u64, 4 * (words + 1)) {
+    if !post(buf as u64, 4 * (words + 1), ANSWER_US) {
         return false;
     }
     let status = unsafe { read_volatile(buf.add(4)) };
@@ -101,7 +104,7 @@ pub fn tpm2_command(command: &[u8], response: &mut [u8]) -> Option<usize> {
         }
         write_volatile(buf.add(5 + TPM_MAX / 4), 0);
     }
-    if !post(buf as u64, 4 * (6 + TPM_MAX / 4 + 1)) {
+    if !post(buf as u64, 4 * (6 + TPM_MAX / 4 + 1), TPM_ANSWER_US) {
         return None;
     }
     let status = unsafe { read_volatile(buf.add(4)) };
@@ -144,7 +147,7 @@ pub fn early_event(index: u32) -> Option<EarlyEvent> {
         }
         write_volatile(buf.add(5 + WORDS), 0);
     }
-    if !post(buf as u64, 4 * (6 + WORDS + 1)) {
+    if !post(buf as u64, 4 * (6 + WORDS + 1), ANSWER_US) {
         return None;
     }
     let word = |i: usize| unsafe { read_volatile(buf.add(5 + i)) };

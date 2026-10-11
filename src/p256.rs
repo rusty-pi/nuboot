@@ -106,30 +106,55 @@ fn sub_mod(a: &Limbs, b: &Limbs, mo: &Modulus) -> Limbs {
     if borrow { add_raw(&d, &mo.m).0 } else { d }
 }
 
+/// The 64-bit product of two 32-bit numbers, as its low and high words, from
+/// 16-bit halves: the VPU has no widening multiply, so a `u64` product is a
+/// library call there.
+#[inline(always)]
+fn mul_wide(a: u32, b: u32) -> (u32, u32) {
+    let (a0, a1) = (a & 0xffff, a >> 16);
+    let (b0, b1) = (b & 0xffff, b >> 16);
+    let p00 = a0 * b0;
+    let p01 = a0 * b1;
+    let p10 = a1 * b0;
+    let p11 = a1 * b1;
+    let mid = (p00 >> 16) + (p01 & 0xffff) + (p10 & 0xffff);
+    let lo = (p00 & 0xffff) | (mid << 16);
+    let hi = p11 + (p01 >> 16) + (p10 >> 16) + (mid >> 16);
+    (lo, hi)
+}
+
+/// `x + a * b + carry` as a low word and the carry out, which fits a word.
+#[inline(always)]
+fn mul_add(x: u32, a: u32, b: u32, carry: u32) -> (u32, u32) {
+    let (lo, hi) = mul_wide(a, b);
+    let (s, c1) = x.overflowing_add(lo);
+    let (s, c2) = s.overflowing_add(carry);
+    (s, hi + c1 as u32 + c2 as u32)
+}
+
 /// Montgomery product `a * b / 2^256 mod m`.
 fn mont_mul(a: &Limbs, b: &Limbs, mo: &Modulus) -> Limbs {
     let mut t = [0u32; 10];
     for i in 0..8 {
-        let mut carry = 0u64;
+        let mut carry = 0u32;
         for j in 0..8 {
-            let s = t[j] as u64 + a[j] as u64 * b[i] as u64 + carry;
-            t[j] = s as u32;
-            carry = s >> 32;
+            let (s, c) = mul_add(t[j], a[j], b[i], carry);
+            t[j] = s;
+            carry = c;
         }
-        let s = t[8] as u64 + carry;
-        t[8] = s as u32;
-        t[9] = (s >> 32) as u32;
+        let (s, c) = t[8].overflowing_add(carry);
+        t[8] = s;
+        t[9] = c as u32;
         let q = t[0].wrapping_mul(mo.n0);
-        let s = t[0] as u64 + q as u64 * mo.m[0] as u64;
-        let mut carry = s >> 32;
+        let (_, mut carry) = mul_add(t[0], q, mo.m[0], 0);
         for j in 1..8 {
-            let s = t[j] as u64 + q as u64 * mo.m[j] as u64 + carry;
-            t[j - 1] = s as u32;
-            carry = s >> 32;
+            let (s, c) = mul_add(t[j], q, mo.m[j], carry);
+            t[j - 1] = s;
+            carry = c;
         }
-        let s = t[8] as u64 + carry;
-        t[7] = s as u32;
-        t[8] = t[9] + (s >> 32) as u32;
+        let (s, c) = t[8].overflowing_add(carry);
+        t[7] = s;
+        t[8] = t[9] + c as u32;
     }
     let mut out = [0u32; 8];
     out.copy_from_slice(&t[..8]);

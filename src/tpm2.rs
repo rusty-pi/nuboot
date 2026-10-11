@@ -9,11 +9,19 @@
 //!
 //! One bank, SHA-256, of 24 PCRs, all extendable from locality 0 as the PC
 //! Client profile has it except 17-22 (DRTM, which nothing here does), and
-//! PCRs 16 and 23 resettable. No hierarchy and no keys yet, so every command
-//! that names a handle but a PCR gets `TPM_RC_COMMAND_CODE`.
+//! PCRs 16 and 23 resettable. The hierarchies, the primary keys under them and
+//! the data sealed under those are in [`object`]; sessions and policies in
+//! [`session`]; what lets a tool keep them between commands in [`context`].
 
 use crate::keystore::{self, PCRS};
 use crate::{rng, sha256, stc};
+
+#[path = "tpm2/context.rs"]
+mod context;
+#[path = "tpm2/object.rs"]
+mod object;
+#[path = "tpm2/session.rs"]
+mod session;
 
 pub const MAX_COMMAND: usize = 2048;
 
@@ -45,7 +53,28 @@ const RC_AUTH_UNAVAILABLE: u32 = 0x12f;
 const RC_AUTH_MISSING: u32 = 0x125;
 const RC_SIZE: u32 = 0x095;
 const RC_P: u32 = 0x40;
+const RC_S: u32 = 0x800;
 const RC_1: u32 = 0x100;
+const RC_2: u32 = 0x200;
+const RC_ATTRIBUTES: u32 = 0x082;
+const RC_HIERARCHY: u32 = 0x085;
+const RC_KDF: u32 = 0x08c;
+const RC_KEY: u32 = 0x09c;
+const RC_TYPE: u32 = 0x08a;
+const RC_AUTH_FAIL: u32 = 0x08e;
+const RC_SCHEME: u32 = 0x092;
+const RC_SYMMETRIC: u32 = 0x096;
+const RC_POLICY_FAIL: u32 = 0x09d;
+const RC_INTEGRITY: u32 = 0x09f;
+const RC_BAD_AUTH: u32 = 0x0a2;
+const RC_POLICY_CC: u32 = 0x0a4;
+const RC_CURVE: u32 = 0x0a6;
+const RC_ECC_POINT: u32 = 0x0a7;
+const RC_OBJECT_MEMORY: u32 = 0x902;
+const RC_SESSION_MEMORY: u32 = 0x903;
+const RC_AUTH_TYPE: u32 = 0x124;
+const RC_PCR_CHANGED: u32 = 0x128;
+const RC_AUTHSIZE: u32 = 0x144;
 
 const CC_STARTUP: u32 = 0x144;
 const CC_SHUTDOWN: u32 = 0x145;
@@ -62,10 +91,11 @@ const CC_HASH: u32 = 0x17d;
 const CC_READ_CLOCK: u32 = 0x181;
 const CC_STIR_RANDOM: u32 = 0x146;
 
-/// Commands in numeric order, for `TPM_CAP_COMMANDS`; the attributes are what
-/// `TPMA_CC` carries besides the code: the number of handles in the command
-/// (bits 25-27).
-const COMMANDS: [(u32, u32); 14] = [
+/// Commands in numeric order, for `TPM_CAP_COMMANDS`: the number of handles in
+/// the command (bits 25-27 of `TPMA_CC`), and 8 more when the response has a
+/// handle (bit 28).
+const COMMANDS: [(u32, u32); 31] = [
+    (object::CC_CREATE_PRIMARY, 1 | 8),
     (CC_PCR_RESET, 1),
     (CC_INCREMENTAL_SELF_TEST, 0),
     (CC_SELF_TEST, 0),
@@ -73,13 +103,57 @@ const COMMANDS: [(u32, u32); 14] = [
     (CC_SHUTDOWN, 0),
     (CC_STIR_RANDOM, 0),
     (CC_PCR_EVENT, 1),
+    (object::CC_CREATE, 1),
+    (object::CC_LOAD, 1 | 8),
+    (object::CC_UNSEAL, 1),
+    (object::CC_CONTEXT_LOAD, 8),
+    (object::CC_CONTEXT_SAVE, 1),
+    (object::CC_FLUSH_CONTEXT, 0),
+    (session::CC_POLICY_AUTH_VALUE, 1),
+    (session::CC_POLICY_COMMAND_CODE, 1),
+    (session::CC_POLICY_OR, 1),
+    (object::CC_READ_PUBLIC, 1),
+    (session::CC_START_AUTH_SESSION, 2 | 8),
     (CC_GET_CAPABILITY, 0),
     (CC_GET_RANDOM, 0),
     (CC_GET_TEST_RESULT, 0),
     (CC_HASH, 0),
     (CC_PCR_READ, 0),
+    (session::CC_POLICY_PCR, 1),
+    (session::CC_POLICY_RESTART, 1),
     (CC_READ_CLOCK, 0),
     (CC_PCR_EXTEND, 1),
+    (session::CC_POLICY_GET_DIGEST, 1),
+    (object::CC_TEST_PARMS, 0),
+    (session::CC_POLICY_PASSWORD, 1),
+];
+
+/// A command that names objects or sessions: how many handles it has, how many
+/// of them it needs authorized, and whether it makes a handle.
+struct Spec {
+    code: u32,
+    handles: usize,
+    authorized: usize,
+}
+
+const OBJECT_COMMANDS: [Spec; 17] = [
+    Spec { code: object::CC_CREATE_PRIMARY, handles: 1, authorized: 1 },
+    Spec { code: object::CC_CREATE, handles: 1, authorized: 1 },
+    Spec { code: object::CC_LOAD, handles: 1, authorized: 1 },
+    Spec { code: object::CC_UNSEAL, handles: 1, authorized: 1 },
+    Spec { code: object::CC_READ_PUBLIC, handles: 1, authorized: 0 },
+    Spec { code: object::CC_FLUSH_CONTEXT, handles: 0, authorized: 0 },
+    Spec { code: object::CC_CONTEXT_SAVE, handles: 1, authorized: 0 },
+    Spec { code: object::CC_CONTEXT_LOAD, handles: 0, authorized: 0 },
+    Spec { code: object::CC_TEST_PARMS, handles: 0, authorized: 0 },
+    Spec { code: session::CC_START_AUTH_SESSION, handles: 2, authorized: 0 },
+    Spec { code: session::CC_POLICY_PCR, handles: 1, authorized: 0 },
+    Spec { code: session::CC_POLICY_GET_DIGEST, handles: 1, authorized: 0 },
+    Spec { code: session::CC_POLICY_RESTART, handles: 1, authorized: 0 },
+    Spec { code: session::CC_POLICY_OR, handles: 1, authorized: 0 },
+    Spec { code: session::CC_POLICY_AUTH_VALUE, handles: 1, authorized: 0 },
+    Spec { code: session::CC_POLICY_PASSWORD, handles: 1, authorized: 0 },
+    Spec { code: session::CC_POLICY_COMMAND_CODE, handles: 1, authorized: 0 },
 ];
 
 const ALG_HMAC: u16 = 0x0005;
@@ -88,11 +162,17 @@ const ALG_SHA256: u16 = 0x000b;
 const ALG_NULL: u16 = 0x0010;
 /// `TPMA_ALGORITHM`: asymmetric, symmetric, hash, object, signing, encrypting,
 /// method are bits 0, 1, 2, 3, 8, 9, 10.
-const ALGS: [(u16, u32); 4] = [
+const ALGS: [(u16, u32); 10] = [
     (ALG_HMAC, 1 << 2 | 1 << 8),
+    (object::ALG_AES, 1 << 1),
     (ALG_KEYEDHASH, 1 << 3),
     (ALG_SHA256, 1 << 2),
     (ALG_NULL, 0),
+    (object::ALG_ECDSA, 1 << 0 | 1 << 8 | 1 << 10),
+    (object::ALG_ECDH, 1 << 0 | 1 << 10),
+    (object::ALG_ECC, 1 << 0 | 1 << 3),
+    (object::ALG_SYMCIPHER, 1 << 3),
+    (object::ALG_CFB, 1 << 10),
 ];
 
 /// The first byte of the vendor strings, packed four to a property.
@@ -237,6 +317,9 @@ pub fn execute(command: &[u8], response: &mut [u8]) -> usize {
     if tag != ST_NO_SESSIONS && tag != ST_SESSIONS {
         return fail(response, RC_BAD_TAG);
     }
+    if let Some(spec) = OBJECT_COMMANDS.iter().find(|spec| spec.code == code) {
+        return object_command(spec, tag, &mut input, response);
+    }
     let mut body = Out { buf: response, at: 10 };
     let result = run(code, tag, &mut input, &mut body);
     match result {
@@ -249,6 +332,82 @@ pub fn execute(command: &[u8], response: &mut [u8]) -> usize {
             len
         }
         Err(rc) => fail(response, rc),
+    }
+}
+
+/// The name of what a handle stands for, as it goes into a command's hash: an
+/// object's name, and for everything else the handle itself.
+pub(self) fn name_for(handle: u32) -> ([u8; 34], usize) {
+    let mut name = [0u8; 34];
+    match object::slot_of(handle) {
+        Some(slot) => (slot.name, 34),
+        None => {
+            name[..4].copy_from_slice(&handle.to_be_bytes());
+            (name, 4)
+        }
+    }
+}
+
+/// A command on objects or sessions: its handles, authorization and
+/// parameters in the form the specification gives them, and the response.
+#[allow(unused_variables)]
+fn object_command(spec: &Spec, tag: u16, input: &mut In, response: &mut [u8]) -> usize {
+    let started = stc::now();
+    let result = object_run(spec, tag, input, response);
+    keystore::scrub();
+    crate::debug!("tpm2", "object command done"; code = format_args!("{:#x}", spec.code), us = stc::now() - started);
+    match result {
+        Ok(len) => len,
+        Err(rc) => fail(response, rc),
+    }
+}
+
+fn object_run(spec: &Spec, tag: u16, input: &mut In, response: &mut [u8]) -> Result<usize, u32> {
+    let mut handles = [0u32; 3];
+    for handle in handles.iter_mut().take(spec.handles) {
+        *handle = input.u32().ok_or(RC_COMMAND_SIZE)?;
+    }
+    let area = if tag == ST_SESSIONS {
+        let size = input.u32().ok_or(RC_COMMAND_SIZE)? as usize;
+        input.take(size).ok_or(RC_COMMAND_SIZE)?
+    } else {
+        &[]
+    };
+    let (sent, count) = session::parse_area(area)?;
+    let wire = &input.buf[input.at..];
+    let mut names = [([0u8; 34], 0usize); 3];
+    for (name, handle) in names.iter_mut().zip(&handles).take(spec.handles) {
+        *name = name_for(*handle);
+    }
+    let a = session::Authorization::get();
+    let outcome = (|| {
+        session::authorize(a, spec.code, &handles[..spec.handles], &names[..spec.handles], spec.authorized, &sent[..count], wire)?;
+        let plain = a.decrypted_len();
+        let mut params = In { buf: if plain.is_some() { session::plain(plain.unwrap()) } else { wire }, at: 0 };
+        dispatch(spec.code, &handles, &mut params, a)
+    })();
+    let result = match outcome {
+        Ok(()) => Ok(session::respond(a, spec.code, response)),
+        Err(rc) => Err(rc),
+    };
+    a.wipe();
+    result
+}
+
+fn dispatch(code: u32, handles: &[u32; 3], params: &mut In, a: &mut session::Authorization) -> Result<(), u32> {
+    let mut command = object::Command { handles: [handles[0], handles[1]], params: In { buf: params.buf, at: params.at }, auth: a };
+    match code {
+        object::CC_CREATE_PRIMARY => object::create_primary(&mut command),
+        object::CC_CREATE => object::create(&mut command),
+        object::CC_LOAD => object::load(&mut command),
+        object::CC_UNSEAL => object::unseal(&mut command),
+        object::CC_READ_PUBLIC => object::read_public_command(&mut command),
+        object::CC_TEST_PARMS => object::test_parms(&mut command),
+        object::CC_FLUSH_CONTEXT => context::flush(params),
+        object::CC_CONTEXT_SAVE => context::save(handles[0], params, a),
+        object::CC_CONTEXT_LOAD => context::load(params, a),
+        session::CC_START_AUTH_SESSION => session::start_auth_session(code, &handles[..2], params, a),
+        _ => session::policy(code, handles[0], params, a),
     }
 }
 
@@ -361,9 +520,25 @@ fn get_capability(input: &mut In, out: &mut Out) -> Result<(), u32> {
         }
         1 => {
             let kind = property >> 24;
+            let mut loaded = [0u32; 16];
+            let mut n = 0;
             let handles: &[u32] = match kind {
                 0x00 => &PCR_HANDLES,
                 0x40 => &[0x4000_0001, 0x4000_0007, 0x4000_000a, 0x4000_000b, 0x4000_000c, 0x4000_0009],
+                0x80 => {
+                    for (i, _) in object::table().iter().enumerate().filter(|(_, s)| s.used) {
+                        loaded[n] = object::TRANSIENT_FIRST + i as u32;
+                        n += 1;
+                    }
+                    &loaded[..n]
+                }
+                0x02 | 0x03 => {
+                    for handle in session::handles().filter(|h| h >> 24 == kind) {
+                        loaded[n] = handle;
+                        n += 1;
+                    }
+                    &loaded[..n]
+                }
                 _ => &[],
             };
             let list = handles.iter().filter(|h| **h >= property);
@@ -380,7 +555,7 @@ fn get_capability(input: &mut In, out: &mut Out) -> Result<(), u32> {
             more = list.count() > shown;
             out.u32(shown as u32);
             for (cc, handles) in COMMANDS.iter().filter(|(cc, _)| *cc >= property).take(count) {
-                out.u32(cc | handles << 25);
+                out.u32(cc | (handles & 7) << 25 | (handles >> 3) << 28);
             }
         }
         5 => {
@@ -399,9 +574,16 @@ fn get_capability(input: &mut In, out: &mut Out) -> Result<(), u32> {
                 out.u32(*v);
             }
         }
-        // PCR properties, ECC curves, the audit and PP command lists, the
-        // authorization policies and the vendor range: empty lists.
-        3 | 4 | 7 | 8 | 9 | 0x100 => {
+        8 => {
+            let more_curves = object::CURVE_P256 as u32 >= property;
+            out.u32(more_curves as u32);
+            if more_curves {
+                out.u16(object::CURVE_P256);
+            }
+        }
+        // PCR properties, the audit and PP command lists, the authorization
+        // policies and the vendor range: empty lists.
+        3 | 4 | 7 | 9 | 0x100 => {
             out.u32(0);
         }
         _ => return Err(RC_VALUE | RC_P | RC_1),

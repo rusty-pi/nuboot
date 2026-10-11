@@ -51,12 +51,19 @@ as a MOK, or sign with a key the image's kernel already trusts.
 ## What works
 
 The TPM answers what `docs/tpm2.md` lists: PCR reads, extends and events,
-`TPM2_GetCapability`, `TPM2_GetRandom`, `TPM2_Hash`. So `tpm2_pcrread`,
-`tpm2_pcrextend`, `tpm2_getcap`, `tpm2_getrandom`, `tpm2_eventlog` and
-`systemd-analyze pcrs` work, `systemd-pcrextend` and the units that extend
-PCR 11 and 15 at boot do their job, and the kernel's hardware random number
-generator takes bytes from the TPM.
+`TPM2_GetCapability`, `TPM2_GetRandom`, `TPM2_Hash`, and ECC primary keys with
+secrets sealed under them and unsealed against a PCR policy. So `tpm2_pcrread`,
+`tpm2_pcrextend`, `tpm2_getcap`, `tpm2_getrandom`, `tpm2_eventlog`,
+`tpm2_createprimary -G ecc`, `tpm2_create`, `tpm2_load` and `tpm2_unseal` work,
+and so do `systemd-analyze pcrs`, `systemd-pcrextend` and the units that extend
+PCR 11 and 15 at boot. The kernel's hardware random number generator takes
+bytes from the TPM.
 
-There are no keys or sessions yet, so anything that creates or loads an
-object, such as `systemd-cryptenroll --tpm2-device=auto`, `tpm2_createprimary`
-or a quote, gets `TPM_RC_COMMAND_CODE`.
+`systemd-cryptenroll --tpm2-device=auto` seals a disk key under an ECC primary
+key to a PCR policy, and `systemd-cryptsetup` unseals it, the same way. On a
+board with the device private key fused the key survives reboots and firmware
+updates; on one without, it is gone at the next boot.
+
+A key that signs (`tpm2_sign`, a quote), a policy signed by a key
+(`PolicyAuthorize`, which `systemd-measure` and signed PCR 11 policies use) and
+RSA keys get `TPM_RC_COMMAND_CODE`.

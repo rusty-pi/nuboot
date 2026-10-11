@@ -185,7 +185,53 @@ def main():
     tag, rc, body = header(r["hash"])
     if rc != 0 or body[2:34] != sha256(b"abc"):
         fail(f"Hash: {body.hex()}")
+    check_objects(r)
     print("the TPM's properties, PCR reads, extends, event, reset, hash and error codes are as the specification has them")
+    print("a primary key is created, a secret sealed under it, loaded and unsealed, and what is refused is refused")
+
+
+def tpm2b(data, at):
+    """The TPM2B at `at` of `data`, and where it ends."""
+    (size,) = struct.unpack(">H", data[at : at + 2])
+    return data[at + 2 : at + 2 + size], at + 2 + size
+
+
+def check_objects(r):
+    """The key and the sealed data: what they answer and what they refuse."""
+    tag, rc, body = header(r["create-primary"])
+    if tag != 0x8002 or rc != 0 or body[:4] != struct.pack(">I", 0x80000000):
+        fail(f"CreatePrimary: {rc:#x} {body[:8].hex()}")
+    public, at = tpm2b(body, 8)
+    if public[:4] != struct.pack(">HH", 0x23, 0xB) or len(public) != 90:
+        fail(f"CreatePrimary's public area: {public.hex()}")
+    name, _ = tpm2b(body, len(body) - 5 - 36)
+    if name != struct.pack(">H", 0xB) + sha256(public):
+        fail("CreatePrimary's name is not the hash of its public area")
+    tag, rc, body = header(r["create-sealed"])
+    if rc != 0:
+        fail(f"Create: {rc:#x}")
+    tag, rc, body = header(r["load"])
+    if rc != 0 or len(body) < 4 + 4 + 2 + 34:
+        fail(f"Load: {rc:#x} {body.hex()}")
+    loaded_name, _ = tpm2b(body, 8)
+    tag, rc, body = header(r["unseal"])
+    data, _ = tpm2b(body, 4)
+    if rc != 0 or data != b"hello":
+        fail(f"Unseal: {rc:#x} {body.hex()}")
+    expect_rc(r, "unseal-wrong-password", 0xA2 | 0x800 | 0x100)
+    tag, rc, body = header(r["read-public"])
+    if rc != 0:
+        fail(f"ReadPublic: {rc:#x}")
+    public, at = tpm2b(body, 0)
+    name, at = tpm2b(body, at)
+    if name != loaded_name or name != struct.pack(">H", 0xB) + sha256(public):
+        fail("ReadPublic's name is not Load's, or not the hash of the public area")
+    tag, rc, body = header(r["getcap-transient"])
+    if rc != 0 or struct.unpack(">I", body[5:9])[0] != 2:
+        fail(f"two objects are loaded: {body.hex()}")
+    expect_rc(r, "flush-item", 0)
+    expect_rc(r, "flush-primary", 0)
+    expect_rc(r, "flush-again", 0x8B | 0x40 | 0x100)
 
 
 if __name__ == "__main__":

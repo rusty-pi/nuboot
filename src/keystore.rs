@@ -26,18 +26,21 @@
 
 use core::ptr::{read_volatile, write_volatile};
 
-use crate::{cache, critical, otp, sha256};
+use crate::{cache, critical, otp, rng, sha256};
 
 const FIRST_ROW: u32 = 56;
 const ROWS: usize = 8;
 const LABEL: &[u8] = b"pi4-server-firmware boot key v1";
 const STORE_LABEL: &[u8] = b"pi4-server-firmware variable store key v1";
+const TPM_LABEL: &[u8] = b"pi4-server-firmware TPM secret v1";
 pub const PCRS: usize = 24;
 
 static mut PCR: [[u8; 32]; PCRS] = [[0; 32]; PCRS];
 static mut COUNT: u32 = 0;
 static mut TAKEN: bool = false;
 static mut STORE_TAKEN: bool = false;
+static mut BOOT_SECRET: [u8; 32] = [0; 32];
+static mut BOOT_SECRET_SET: bool = false;
 
 pub enum Refused {
     NoSuchRegister,
@@ -114,6 +117,47 @@ fn derive_store() -> Option<[u8; 32]> {
     Some(key)
 }
 
+/// A secret of the TPM called `label`: with `stable`, the same at every boot on
+/// a board whose private key is fused, and random for this boot on one whose is
+/// not; without, random for this boot. The TPM's seeds and proofs come from
+/// here when they are used, and are not kept.
+pub fn tpm_secret(label: &[u8], stable: bool) -> [u8; 32] {
+    let _section = critical::enter();
+    let mut message = [0u8; TPM_LABEL.len() + 32];
+    message[..TPM_LABEL.len()].copy_from_slice(TPM_LABEL);
+    message[TPM_LABEL.len()..TPM_LABEL.len() + label.len()].copy_from_slice(label);
+    let message = &message[..TPM_LABEL.len() + label.len()];
+    match private_key().filter(|_| stable) {
+        Some(mut private) => {
+            let secret = sha256::hmac(&private, message);
+            zero(&mut private);
+            secret
+        }
+        None => {
+            if !unsafe { read_volatile(&raw const BOOT_SECRET_SET) } {
+                let mut fresh = [0u8; 32];
+                rng::fill(&mut fresh);
+                unsafe {
+                    write_volatile(&raw mut BOOT_SECRET, fresh);
+                    write_volatile(&raw mut BOOT_SECRET_SET, true);
+                }
+            }
+            sha256::hmac(unsafe { &*(&raw const BOOT_SECRET) }, message)
+        }
+    }
+}
+
+/// Whether the board's private key is fused, so the TPM's keys outlast a boot.
+pub fn device_key_fused() -> bool {
+    match private_key() {
+        Some(mut private) => {
+            zero(&mut private);
+            true
+        }
+        None => false,
+    }
+}
+
 fn private_key() -> Option<[u8; ROWS * 4]> {
     let mut private = [0u8; ROWS * 4];
     let mut fused = 0;
@@ -146,7 +190,7 @@ fn derive(mask: u32) -> Option<[u8; 32]> {
 /// Overwrite the stack below the caller, where the frames of the calls that
 /// held the key and its hash have been, and push the zeros out of the caches.
 #[inline(never)]
-fn scrub() {
+pub fn scrub() {
     const WORDS: usize = 1024;
     let mut below = [0u32; WORDS];
     for word in below.iter_mut() {
