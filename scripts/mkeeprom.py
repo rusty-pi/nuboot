@@ -14,6 +14,7 @@ import struct
 import sys
 
 SIZE = 512 * 1024
+STORE = 0x62000
 MAGIC_BOOTCODE = 0x55AAF00F
 MAGIC_FILE = 0x55AAF11F
 MAGIC_MASK = 0xFFFFF00F
@@ -76,10 +77,12 @@ def main():
         image += b"\xff" * (-len(image) % 8)
     if len(image) > SIZE:
         sys.exit(f"the image is {len(image)} bytes, {len(image) - SIZE} over the EEPROM's {SIZE}")
+    if len(image) > STORE:
+        sys.exit(f"the image is {len(image)} bytes, {len(image) - STORE} into the variable store at {STORE:#x}")
     free = SIZE - len(image)
     image += b"\xff" * free
     open(out_path, "wb").write(image)
-    print(f"{out_path}: {SIZE - free} bytes used, {free} free")
+    print(f"{out_path}: {SIZE - free} bytes used, {STORE - (SIZE - free)} free below the variable store")
 
 
 main()

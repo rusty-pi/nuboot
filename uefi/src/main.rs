@@ -37,7 +37,9 @@ mod secure;
 #[path = "../../src/sha256.rs"]
 #[allow(dead_code)]
 mod sha256;
+mod spiflash;
 mod stc;
+mod store;
 mod tcg2;
 mod sync;
 mod tables;

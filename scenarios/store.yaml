@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "store"
+description: "An EFI application enrols a certificate in db with an update signed by a KEK key; after a reset the flash store brings it back and an image only that certificate signs boots."
+
+boot:
+  eeprom: "../out/pieeprom-test.bin"
+  sd:
+    files:
+      EFI/BOOT/BOOTAA64.EFI: "../out/store-enroll.efi"
+      enrolled.efi: "../out/store-enrolled.efi"
+      db-x.auth: "../out/db-x.auth"
+      db-bad.auth: "../out/db-bad.auth"
+  until: "store test: done"
+  wall_secs: 900
+
+milestones:
+  - why: "The first boot has no enrolled certificate."
+    line: "store test: enrolled image refused"
+  - why: "An update signed by a key that is neither PK nor in KEK is refused."
+    line: "store test: update signed by a stranger refused"
+  - why: "An update signed by a KEK key is accepted and written to the flash store."
+    line: "store test: update accepted, resetting"
+  - why: "After the reset the store holds the update and replays it."
+    line: "flash store loaded"
+  - why: "The image only the enrolled certificate signs verifies against db."
+    line: "store test: enrolled image loaded"
+  - why: "It runs."
+    line: "store test: enrolled image runs"

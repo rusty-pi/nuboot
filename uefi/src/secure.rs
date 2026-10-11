@@ -47,6 +47,9 @@ const WIN_CERT_PKCS_SIGNED_DATA: u16 = 0x0002;
 const TIME_AUTH: u32 = efi::VARIABLE_TIME_BASED_AUTHENTICATED_WRITE_ACCESS;
 
 static TRUSTED: Global<Vec<Cert<'static>>> = Global::new(Vec::new());
+/// The owner of each entry in [`TRUSTED`], in the same order.
+static OWNERS: Global<Vec<[u8; 16]>> = Global::new(Vec::new());
+static REVOKED: Global<Vec<[u8; 32]>> = Global::new(Vec::new());
 
 /// An `EFI_SIGNATURE_LIST` of `entries`, each `size` bytes after its owner.
 fn signature_list(out: &mut Vec<u8>, owner: efi::Guid, ty: efi::Guid, size: usize, entries: &[&[u8]]) {
@@ -61,51 +64,131 @@ fn signature_list(out: &mut Vec<u8>, owner: efi::Guid, ty: efi::Guid, size: usiz
     }
 }
 
-/// Parse the keys and publish them, and the Secure Boot state, as the
-/// variables an OS loader reads.
-pub fn init() {
+/// The platform key, which no write changes.
+pub fn platform_key() -> &'static [u8] {
+    PK
+}
+
+/// The DER certificates in `EFI_SIGNATURE_LIST`s, each with its owner.
+pub fn x509_entries(lists: &[u8]) -> Vec<([u8; 16], &[u8])> {
+    let mut out = Vec::new();
+    for_each_entry(lists, |ty, owner, body| {
+        if ty == CERT_X509.as_bytes() {
+            out.push((*owner, body));
+        }
+    });
+    out
+}
+
+fn for_each_entry<'a>(mut lists: &'a [u8], mut each: impl FnMut(&[u8], &[u8; 16], &'a [u8])) {
+    while lists.len() >= 28 {
+        let size = u32_at(lists, 16).unwrap_or(0) as usize;
+        let header = u32_at(lists, 20).unwrap_or(0) as usize;
+        let entry = u32_at(lists, 24).unwrap_or(0) as usize;
+        let Some(list) = lists.get(..size) else { return };
+        if entry <= 16 || 28 + header > size {
+            return;
+        }
+        for e in list[28 + header..].chunks_exact(entry) {
+            each(&list[..16], e[..16].try_into().unwrap(), &e[16..]);
+        }
+        lists = &lists[size..];
+    }
+}
+
+/// Whether `lists` is a run of well-formed `EFI_SIGNATURE_LIST`s of kinds
+/// this firmware knows: what an update may not break.
+pub fn well_formed(mut lists: &[u8]) -> bool {
+    while !lists.is_empty() {
+        if lists.len() < 28 {
+            return false;
+        }
+        let size = u32_at(lists, 16).unwrap_or(0) as usize;
+        let header = u32_at(lists, 20).unwrap_or(0) as usize;
+        let entry = u32_at(lists, 24).unwrap_or(0) as usize;
+        let known = lists[..16] == *CERT_X509.as_bytes() || lists[..16] == *CERT_SHA256.as_bytes();
+        let Some(body) = size.checked_sub(28 + header) else { return false };
+        if !known || size > lists.len() || entry <= 16 || body % entry != 0 {
+            return false;
+        }
+        lists = &lists[size..];
+    }
+    true
+}
+
+/// `PK`, `KEK`, `db` and `dbx` as this firmware ships them.
+fn defaults() -> [Vec<u8>; 4] {
     let mut pk = Vec::new();
     signature_list(&mut pk, OWNER, CERT_X509, PK.len(), &[PK]);
     let mut kek = Vec::new();
     signature_list(&mut kek, OWNER, CERT_X509, KEK.len(), &[KEK]);
+    if !TEST_DB.is_empty() {
+        signature_list(&mut kek, OWNER, CERT_X509, TEST_DB.len(), &[TEST_DB]);
+    }
     let mut db = Vec::new();
     let certs = DB.into_iter().map(|der| (MICROSOFT, der));
     let own = core::iter::once((OWNER, DB_OWN));
     let test = (!TEST_DB.is_empty()).then_some((OWNER, TEST_DB));
     for (owner, der) in certs.chain(own).chain(test) {
-        match Cert::parse(der) {
-            Some(c) => {
-                signature_list(&mut db, owner, CERT_X509, der.len(), &[der]);
-                TRUSTED.get().push(c);
-            }
-            None => warn!("secboot", "built-in certificate not understood, left out of db"; bytes = der.len()),
-        }
-    }
-    if !TEST_DB.is_empty() {
-        let name = TRUSTED.get().last().map_or("?", |c| c.name());
-        warn!("secboot", "test build: its own test key is in db, not for a real board"; key = name);
+        signature_list(&mut db, owner, CERT_X509, der.len(), &[der]);
     }
     let mut dbx = Vec::new();
     let hashes: Vec<&[u8]> = DBX.chunks_exact(32).collect();
     signature_list(&mut dbx, MICROSOFT, CERT_SHA256, 32, &hashes);
+    [pk, kek, db, dbx]
+}
 
+/// Publish the Secure Boot state and the keys as the variables an OS loader
+/// reads, with what the flash store holds on top of the built-in keys.
+pub fn init() {
+    let [pk, kek, db, dbx] = defaults();
     let state = BS | RT;
     var::fixed("SecureBoot", var::GLOBAL, state, alloc::vec![1]);
     var::fixed("SetupMode", var::GLOBAL, state, alloc::vec![0]);
     var::fixed("AuditMode", var::GLOBAL, state, alloc::vec![0]);
     var::fixed("DeployedMode", var::GLOBAL, state, alloc::vec![1]);
-    var::fixed("PK", var::GLOBAL, NV | BS | RT | TIME_AUTH, pk.clone());
-    var::fixed("KEK", var::GLOBAL, NV | BS | RT | TIME_AUTH, kek.clone());
-    var::fixed("db", var::SECURITY_DB, NV | BS | RT | TIME_AUTH, db.clone());
-    var::fixed("dbx", var::SECURITY_DB, NV | BS | RT | TIME_AUTH, dbx.clone());
+    var::fixed("PK", var::GLOBAL, NV | BS | RT | TIME_AUTH, pk);
+    var::seed("KEK", var::GLOBAL, NV | BS | RT | TIME_AUTH, kek);
+    var::seed("db", var::SECURITY_DB, NV | BS | RT | TIME_AUTH, db);
+    var::seed("dbx", var::SECURITY_DB, NV | BS | RT | TIME_AUTH, dbx);
+    var::load_store();
+    refresh();
+    if !TEST_DB.is_empty() {
+        warn!("secboot", "test build: its own test key is in db, not for a real board");
+    }
+    for (name, guid) in [("PK", var::GLOBAL), ("KEK", var::GLOBAL), ("db", var::SECURITY_DB), ("dbx", var::SECURITY_DB)] {
+        crate::tcg2::measure_variable(name, &guid, &var::bytes(name, &guid).unwrap_or_default());
+    }
     crate::tcg2::measure_variable("SecureBoot", &var::GLOBAL, &[1]);
-    crate::tcg2::measure_variable("PK", &var::GLOBAL, &pk);
-    crate::tcg2::measure_variable("KEK", &var::GLOBAL, &kek);
-    crate::tcg2::measure_variable("db", &var::SECURITY_DB, &db);
-    crate::tcg2::measure_variable("dbx", &var::SECURITY_DB, &dbx);
-    info!("secboot", "Secure Boot enforced"; db = TRUSTED.get().len(), dbx = hashes.len());
+    info!("secboot", "Secure Boot enforced"; db = TRUSTED.get().len(), dbx = REVOKED.get().len());
 }
 
+/// Take the certificates and hashes `db` and `dbx` hold now.
+pub fn refresh() {
+    let trusted = TRUSTED.get();
+    let owners = OWNERS.get();
+    trusted.clear();
+    owners.clear();
+    let db = var::bytes("db", &var::SECURITY_DB).unwrap_or_default();
+    for (owner, der) in x509_entries(&db) {
+        let der: &'static [u8] = alloc::boxed::Box::leak(der.to_vec().into_boxed_slice());
+        match Cert::parse(der) {
+            Some(c) => {
+                trusted.push(c);
+                owners.push(owner);
+            }
+            None => warn!("secboot", "certificate in db not understood, left out"; bytes = der.len()),
+        }
+    }
+    let revoked = REVOKED.get();
+    revoked.clear();
+    let dbx = var::bytes("dbx", &var::SECURITY_DB).unwrap_or_default();
+    for_each_entry(&dbx, |ty, _, body| {
+        if ty == CERT_SHA256.as_bytes() && body.len() == 32 {
+            revoked.push(body.try_into().unwrap());
+        }
+    });
+}
 fn u16_at(b: &[u8], at: usize) -> Option<u16> {
     Some(u16::from_le_bytes(b.get(at..at + 2)?.try_into().ok()?))
 }
@@ -157,7 +240,7 @@ fn authenticode(img: &[u8]) -> Option<([u8; 32], &[u8])> {
 }
 
 fn in_dbx(hash: &[u8]) -> bool {
-    DBX.chunks_exact(32).any(|h| h == hash)
+    REVOKED.get().iter().any(|h| h == hash)
 }
 
 /// An image's Authenticode hash, whether or not it is signed.
@@ -167,10 +250,10 @@ pub fn authenticode_hash(image: &[u8]) -> Option<[u8; 32]> {
 
 /// The `EFI_SIGNATURE_DATA` `db` holds for a certificate: its owner, then the
 /// certificate.
-fn signature_entry(der: &[u8]) -> Vec<u8> {
-    let owner = if der == DB_OWN || der == TEST_DB { OWNER } else { MICROSOFT };
-    let mut out = owner.as_bytes().to_vec();
-    out.extend_from_slice(der);
+fn signature_entry(anchor: &Cert) -> Vec<u8> {
+    let at = TRUSTED.get().iter().position(|c| core::ptr::eq(c, anchor)).unwrap_or(0);
+    let mut out = OWNERS.get().get(at).map_or([0; 16], |o| *o).to_vec();
+    out.extend_from_slice(anchor.whole);
     out
 }
 
@@ -192,7 +275,7 @@ pub fn check(image: &[u8], path: &dyn Display) -> Result<([u8; 32], Vec<u8>), &'
                 Ok(signed) => match pkcs7::anchor(&signed, TRUSTED.get()) {
                     Some(anchor) => {
                         info!("secboot", "image verified"; signer = signed.chain[0].name(), db = anchor.name(), path = path);
-                        return Ok((hash, signature_entry(anchor.whole)));
+                        return Ok((hash, signature_entry(anchor)));
                     }
                     None => why = "not signed by a key in db",
                 },

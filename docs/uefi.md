@@ -49,7 +49,7 @@ from `start4.elf`'s:
 | `ResetSystem` | The power manager's watchdog (`PM_RSTC`/`PM_WDOG`), halt through `PM_RSTS` |
 | `SetWatchdogTimer`, `ExitBootServices` | Handed to `start4.elf`, which has the boot watchdog ([eeprom.md](eeprom.md#boot-watchdog)) |
 | Device tree | Passed on to the OS as the `EFI_DTB_TABLE` configuration table |
-| Variables | Held in RAM for the boot |
+| Variables | Held in RAM for the boot; `KEK`, `db` and `dbx` also in the flash store |
 
 The SD card is tried before USB.
 
@@ -96,6 +96,32 @@ that has the certificates but not the keys, such as CI, names them in
 `PI4_PK_CERT`, `PI4_KEK_CERT` and `PI4_DB_CERT` (DER files) instead. Sign
 what the firmware boots with `keys/db.key` and `keys/db.crt`, for example
 `sbsign --key keys/db.key --cert keys/db.crt`.
+
+### Updating the keys
+
+`PK` cannot be written. `KEK`, `db` and `dbx` take time-based authenticated
+writes, the way `efi-updatevar` and `sign-efi-sig-list` make them: `KEK` is
+signed by the key in `PK`, `db` and `dbx` by that key or one in `KEK`, with a
+timestamp later than the variable's last, and the value an `EFI_SIGNATURE_LIST`
+of X.509 certificates or SHA-256 hashes. A write without a signature gets
+`EFI_SECURITY_VIOLATION`. `scripts/mkauth.py` builds one:
+
+```bash
+scripts/mkauth.py keys/kek.key keys/kek.crt db customer.crt db-customer.auth
+```
+
+An accepted write takes effect for the next `LoadImage` and is kept in the
+flash store.
+
+### The variable store
+
+The flash store is a log of the accepted writes to `KEK`, `db` and `dbx` in the
+last 120 KiB of the EEPROM (two banks of 60 KiB from `0x62000`). Every boot
+starts from the built-in keys and checks each stored write again against the
+keys as they were when it was made, so a change made to the flash from the OS
+can drop a write but not add one. Dropping the newest write of a variable
+returns it to its previous value. Where the flash does not answer, a write
+lasts until reset. Writing a whole new `pieeprom.bin` clears the store.
 
 ### The test build
 
@@ -149,12 +175,10 @@ pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed b
 - The device tree is Raspberry Pi's for the Pi 4B whatever the board, with
   nothing filled in but `/memory@0`.
 - Nothing sets the ARM's clock.
-- Variables are volatile: there is no variable store, so boot entries and the
-  MOK list last only for the boot, and the boot is always the removable-media
-  path.
-- The Secure Boot keys are built in, and `KEK`, `db` and `dbx` cannot be
-  changed at run time.
-- `dbx` holds image hashes only, no certificates.
+- Variables other than `KEK`, `db` and `dbx` are volatile, so boot entries and
+  the MOK list last only for the boot, and the boot is always the
+  removable-media path.
+- `dbx` holds image hashes only; a certificate in it is ignored.
 - Storage is read-only to EFI applications.
 - No NVMe, no network boot, no USB keyboards.
 - The xHCI driver gives each empty root port 400 ms to show a connection,

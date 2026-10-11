@@ -15,7 +15,8 @@ on an 8-byte boundary, as the boot ROM and the stock tools expect.
 | `memsys00.bin` .. `memsys08.bin`, `mcb.bin` (`0x55aaf44f`) | the stock image, unchanged | 103 KB |
 | `vl805hub.bin`, `vl805mcu.bin` (`0x55aaf33f`) | the stock image, unchanged | 67 KB |
 | `start4.elf` (`0x55aaf11f`) | `src/bin/start4.rs`, with `pi4-uefi.bin` and the device tree in it | 156 KB |
-| free | | 153 KB |
+| free | | 4 KB |
+| variable store | the UEFI variable log, two banks of 60 KiB from `0x62000` ([uefi.md](uefi.md#the-variable-store)) | 120 KiB |
 
 `memsys00.bin` to `memsys08.bin` are the nine passes of the LPDDR4 training
 firmware and `mcb.bin` the table of SDRAM parts and their timings.
@@ -93,7 +94,9 @@ they are signed with ([uefi.md](uefi.md#secure-boot)).
 - A board whose secure boot is programmed (OTP boot mode row `0x0000C8B0`:
   bit 14 set and the development key revoked) accepts only a bootcode with an
   RSA signature from a key in its boot ROM, which only Raspberry Pi holds.
-  This image carries an HMAC instead, so such a board does not boot it.
+  This image carries an HMAC instead, so such a board does not boot it. The
+  check is the boot ROM's code run in pimu with those fuses; no board with
+  secure boot programmed has run it.
 - The bootcode's HMAC is left zero, so a board's boot ROM refuses the image:
   it runs in pimu only.
 - The property mailbox answers `NOTIFY_XHCI_RESET` (reload the VL805's

@@ -12,6 +12,8 @@ const RSA_ENCRYPTION: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 
 const SHA256: &[u8] = &[0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02, 0x01];
 const SIGNED_DATA: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x02];
 const MESSAGE_DIGEST: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x09, 0x04];
+/// `id-data`.
+const DATA: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01];
 /// `SPC_INDIRECT_DATA_OBJID`.
 const SPC_INDIRECT_DATA: &[u8] = &[0x2b, 0x06, 0x01, 0x04, 0x01, 0x82, 0x37, 0x02, 0x01, 0x04];
 const COMMON_NAME: &[u8] = &[0x55, 0x04, 0x03];
@@ -152,10 +154,16 @@ pub struct Signed<'a> {
 /// certificates it carries, signed its content. What the content's hash is
 /// and whether the signer is trusted is the caller's to check.
 pub fn signed_data(der: &[u8]) -> Result<Signed<'_>, &'static str> {
-    signed_data_inner(der).ok_or("signature malformed or of a kind not supported")?
+    signed_data_inner(der, None).ok_or("signature malformed or of a kind not supported")?
 }
 
-fn signed_data_inner(der: &[u8]) -> Option<Result<Signed<'_>, &'static str>> {
+/// Check a detached `SignedData` over `content`, as an authenticated
+/// variable carries: that its signer signed exactly those bytes.
+pub fn signed_content<'a>(der: &'a [u8], content: &[u8]) -> Result<Signed<'a>, &'static str> {
+    signed_data_inner(der, Some(content)).ok_or("signature malformed or of a kind not supported")?
+}
+
+fn signed_data_inner<'a>(der: &'a [u8], detached: Option<&[u8]>) -> Option<Result<Signed<'a>, &'static str>> {
     let mut ci = Der(Der(der).body(SEQ)?);
     if ci.body(OID)? != SIGNED_DATA {
         return None;
@@ -164,17 +172,28 @@ fn signed_data_inner(der: &[u8]) -> Option<Result<Signed<'_>, &'static str>> {
     sd.body(INT)?;
     sd.body(SET)?;
     let mut content = Der(sd.body(SEQ)?);
-    if content.body(OID)? != SPC_INDIRECT_DATA {
-        return None;
-    }
-    let spc = Der(content.body(CTX0)?).expect(SEQ)?;
-    let mut s = Der(spc.body);
-    s.expect(SEQ)?;
-    let mut digest_info = Der(s.body(SEQ)?);
-    if digest_info.algorithm()? != SHA256 {
-        return Some(Err("image hash not SHA-256"));
-    }
-    let digest = digest_info.body(OCTETS)?;
+    let kind = content.body(OID)?;
+    let (digest, signed_bytes): (&[u8], &[u8]) = match detached {
+        None => {
+            if kind != SPC_INDIRECT_DATA {
+                return None;
+            }
+            let spc = Der(content.body(CTX0)?).expect(SEQ)?;
+            let mut s = Der(spc.body);
+            s.expect(SEQ)?;
+            let mut digest_info = Der(s.body(SEQ)?);
+            if digest_info.algorithm()? != SHA256 {
+                return Some(Err("image hash not SHA-256"));
+            }
+            (digest_info.body(OCTETS)?, spc.body)
+        }
+        Some(bytes) => {
+            if kind != DATA {
+                return None;
+            }
+            (&[], bytes)
+        }
+    };
 
     let mut certs = Vec::new();
     if let Some(set) = sd.optional(CTX0) {
@@ -210,7 +229,7 @@ fn signed_data_inner(der: &[u8]) -> Option<Result<Signed<'_>, &'static str>> {
     while let Some(attr) = a.next() {
         let mut attr = Der(attr.body);
         if attr.body(OID)? == MESSAGE_DIGEST {
-            if Der(attr.body(SET)?).body(OCTETS)? != sha256::digest(spc.body) {
+            if Der(attr.body(SET)?).body(OCTETS)? != sha256::digest(signed_bytes) {
                 return Some(Err("signed attributes do not match the content"));
             }
             found = true;

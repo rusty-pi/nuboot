@@ -130,6 +130,17 @@ sign() {
   sbsign --key "$keys/db.key" --cert "$keys/db.crt" --output "$2" "$1" 2>/dev/null
 }
 
+# A second certificate, enrolled in db at run time by the store test with an
+# update the test key signs, and a third that signs an update the test key
+# does not hold KEK for.
+for name in x stranger; do
+  [[ -f "$keys/$name.key" ]] || openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 3650 \
+    -subj "/CN=pi4-server-firmware $name test key" \
+    -keyout "$keys/$name.key" -out "$keys/$name.crt" 2>/dev/null
+done
+"$here/scripts/mkauth.py" "$keys/db.key" "$keys/db.crt" db "$keys/x.crt" "$out/db-x.auth"
+"$here/scripts/mkauth.py" "$keys/stranger.key" "$keys/stranger.crt" db "$keys/stranger.crt" "$out/db-bad.auth"
+
 hello="$here/uefi/test-apps/hello"
 (cd "$hello" && rustup target add aarch64-unknown-uefi >/dev/null &&
   cargo build --release --target aarch64-unknown-uefi)
@@ -147,6 +158,12 @@ sign "$mb/target/aarch64-unknown-uefi/release/boot-key.efi" "$out/boot-key.efi"
 sign "$mb/target/aarch64-unknown-uefi/release/boot-key-unbound.efi" "$out/boot-key-unbound.efi"
 sign "$mb/target/aarch64-unknown-uefi/release/boot-key-unbound-b.efi" "$out/boot-key-unbound-b.efi"
 sign "$mb/target/aarch64-unknown-uefi/release/tpm2-test.efi" "$out/tpm2-test.efi"
+
+st="$here/uefi/test-apps/store"
+(cd "$st" && cargo build --release --target aarch64-unknown-uefi)
+sign "$st/target/aarch64-unknown-uefi/release/enroll.efi" "$out/store-enroll.efi"
+sbsign --key "$keys/x.key" --cert "$keys/x.crt" --output "$out/store-enrolled.efi" \
+  "$st/target/aarch64-unknown-uefi/release/enrolled.efi" 2>/dev/null
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT

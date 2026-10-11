@@ -138,6 +138,10 @@ jobs:
             out/boot-key-unbound.efi
             out/boot-key-unbound-b.efi
             out/tpm2-test.efi
+            out/store-enroll.efi
+            out/store-enrolled.efi
+            out/db-x.auth
+            out/db-bad.auth
             out/shimaa64.efi
             out/systemd-bootaa64.efi
             out/uki.efi
