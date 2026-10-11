@@ -14,8 +14,8 @@ on an 8-byte boundary, as the boot ROM and the stock tools expect.
 | bootcode (`0x55aaf00f`) | `src/bin/bootcode.rs` | 45 KB |
 | `memsys00.bin` .. `memsys08.bin`, `mcb.bin` (`0x55aaf44f`) | the stock image, unchanged | 103 KB |
 | `vl805hub.bin`, `vl805mcu.bin` (`0x55aaf33f`) | the stock image, unchanged | 67 KB |
-| `start4.elf` (`0x55aaf11f`) | `src/bin/start4.rs`, with `pi4-uefi.bin` and the device tree in it | 156 KB |
-| free | | 52 KB |
+| `start4.elf` (`0x55aaf44f`) | `src/bin/start4.rs`, with `pi4-uefi.bin` and the device tree in it, as an LZ4 frame | 173 KB |
+| free | | 70 KB |
 | variable store | the UEFI variable log, two banks of 32 KiB from `0x70000` ([uefi.md](uefi.md#the-variable-store)) | 64 KiB |
 
 `memsys00.bin` to `memsys08.bin` are the nine passes of the LPDDR4 training
@@ -27,7 +27,9 @@ Raspberry Pi's, and `scripts/build.sh` takes them out of the stock
 `scripts/mkeeprom.py` puts the image together.
 
 `start4.elf` is stored with its section headers and debug information taken
-off.
+off, packed as an LZ4 frame with the SHA-256 of what it unpacks to after it, as
+the stock image packs its own sections; the bootcode checks the digest before it
+runs it.
 
 ## Boot
 
@@ -131,4 +133,3 @@ A whole-image write clears the store.
   and no other tag. None returns a fuse.
 - `SDRAM_BANKLOW` is the stock default, 3.
 - Nothing sets the ARM's clock.
-- `start4.elf` is stored uncompressed and without a checksum.
