@@ -47,7 +47,7 @@ from `start4.elf`'s:
 | USB | The VL805's xHCI behind the PCIe root complex, which `start4.elf` has brought up and given its firmware |
 | `EFI_RNG_PROTOCOL` | RNG200's FIFO, raw |
 | `ResetSystem` | The power manager's watchdog (`PM_RSTC`/`PM_WDOG`), halt through `PM_RSTS` |
-| `SetWatchdogTimer`, `ExitBootServices` | UEFI beats the board's watchdog from the hypervisor timer's interrupt and hands it back to `start4.elf` at `ExitBootServices` ([eeprom.md](eeprom.md#boot-watchdog)) |
+| `SetWatchdogTimer`, `ExitBootServices` | UEFI beats the board's watchdog from the hypervisor timer's interrupt and hands it back to `start4.elf` at `ExitBootServices` ([boot.md](boot.md#boot-watchdog)) |
 | ESRT | One system firmware resource, the firmware itself, in the `EFI_SYSTEM_RESOURCE_TABLE`, with the commit's time as its version. `OsIndicationsSupported` offers file capsule delivery, and `OsIndications` takes the OS's write |
 | Device tree | Passed on to the OS as the `EFI_DTB_TABLE` configuration table |
 | Variables | Held in RAM, with the non-volatile ones also in the flash store ([below](#the-variable-store)) |
@@ -116,8 +116,9 @@ flash store.
 
 ### The variable store
 
-Non-volatile variables are kept in the last 64 KiB of the EEPROM, a log in two
-banks of 32 KiB from `0x70000`, and come back at the next boot.
+Non-volatile variables are kept in the flash after the stock bootloader's
+sections ([boot.md](boot.md#what-the-eeprom-holds-besides-the-bootloader)), a
+log in two banks of 20 KiB from `0x74000`, and come back at the next boot.
 
 - `KEK`, `db` and `dbx` are stored as the signed writes that made them. Every
   boot starts from the built-in keys and checks each stored write again against
@@ -134,13 +135,12 @@ reorder them: it has neither a signing key nor the seal key. Dropping the
 newest record of a variable returns it to its previous value. Where the flash
 does not answer, or no device private key is fused, the seal is missing and a
 variable other than `KEK`, `db` and `dbx` lasts until reset. Writing a whole new
-`pieeprom.bin` clears the store; [issue 2](https://github.com/rusty-pi/pi4-server-firmware/issues/2)
-shows how to write the firmware alone.
+`pieeprom.bin` clears the store.
 
 ### The test build
 
 `scripts/build.sh --test-keys` (the `test-keys` cargo feature) builds
-`out/pieeprom-test.bin`, whose UEFI firmware also has a test key in `db`: a
+`out/start4-test.elf`, whose UEFI firmware also has a test key in `db`: a
 self-signed certificate `scripts/build-uefi.sh` generates in
 `out/test-keys/` on first use, which is never committed.
 `scripts/build-uefi.sh --test-apps` signs the scenarios' EFI applications
@@ -159,31 +159,14 @@ there is checked:
    image after it. The signer has to chain to a `db` entry that is not
    Microsoft's, whose CAs sign for anyone, and the image's SHA-256 must not
    be in `dbx`.
-3. The image is `P4FW`, a little-endian `u32` version and up to `0x70000` bytes
-   of the flash below the variable store.
+3. The image is `P4FW`, a little-endian `u32` version and at most 16 MiB of
+   payload.
 4. The version is newer than the running firmware's.
 
 A capsule that fails sets the ESRT's last attempt version and status
 (`4` invalid format, `5` authentication error, `3` incorrect version, `2`
 image too large) and is logged with the reason. `scripts/mkcapsule.py` builds
-one.
-
-A capsule that passes is applied when the board has a device key and the flash
-store answers, so that the update can be recorded:
-
-1. The version goes into a sealed variable in the flash store, which the OS
-   cannot see or change.
-2. The flash region is written sector by sector, the first sector last, a
-   sector that already holds its bytes is skipped, and the region is read back
-   and compared, up to three times.
-3. The board restarts.
-4. The firmware that starts reads the variable and removes it. The ESRT's last
-   attempt status is success when the firmware's version is the capsule's, and
-   unsuccessful when it is not.
-
-A power loss between the first erase and the last program leaves an EEPROM the
-boot ROM does not accept, which only `recovery.bin` on an SD card or `rpiboot`
-over USB-C recovers.
+one. A capsule that passes is logged and not applied.
 
 ## Building
 
@@ -202,7 +185,7 @@ build also needs `xz` and `openssl`, and `--test-apps` needs `sbsign`
 ## Size
 
 `pi4-uefi.bin` goes into the EEPROM inside `start4.elf`
-([eeprom.md](eeprom.md)).
+([boot.md](boot.md)).
 
 | build | payload | `pi4-uefi.bin` |
 |---|---|---|
@@ -230,6 +213,8 @@ pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed b
 - Nothing reads `BootOrder`: the boot is always the removable-media path.
 - `dbx` holds image hashes only; a certificate in it is ignored.
 - Storage is read-only to EFI applications.
+- A capsule that verifies is not applied.
+- A runtime `SetVariable` lasts until reset.
 - No NVMe, no network boot, no USB keyboards.
 - The xHCI driver gives each empty root port 400 ms to show a connection,
   since a SuperSpeed port reads empty until its link has trained.

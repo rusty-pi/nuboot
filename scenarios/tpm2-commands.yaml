@@ -3,9 +3,11 @@ name: "tpm2-commands"
 description: "An EFI application sends the TPM on the VPU TPM 2.0 commands through EFI_TCG2_PROTOCOL.SubmitCommand; scripts/check-tpm2.py checks the responses."
 
 boot:
-  eeprom: "../out/pieeprom-test.bin"
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
   sd:
     files:
+      start4.elf: "../out/start4-test.elf"
       EFI/BOOT/BOOTAA64.EFI: "../out/tpm2-test.efi"
   until: "tpm2 test: done"
   wall_secs: 900

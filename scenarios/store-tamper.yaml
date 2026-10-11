@@ -4,6 +4,7 @@ description: "A board with its device private key fused (a test key, not a board
 
 boot:
   eeprom: "../out/pieeprom-tamper.bin"
+  boot_order: "0x1"
   otp_row:
     - "56=0xc0de2001"
     - "57=0xc0de3112"
@@ -15,6 +16,7 @@ boot:
     - "63=0xc0de9778"
   sd:
     files:
+      start4.elf: "../out/start4-test.elf"
       EFI/BOOT/BOOTAA64.EFI: "../out/store-tamper.efi"
   until: "tamper test: done"
   wall_secs: 900

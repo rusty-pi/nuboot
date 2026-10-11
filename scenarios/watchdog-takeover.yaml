@@ -3,9 +3,11 @@ name: "watchdog-takeover"
 description: "An EFI application exits boot services and then arms the watchdog with a timeout of its own, as an operating system's driver does, and stops beating it. start4.elf, which carries the dog for the operating system, sees the shorter count and leaves it to run out instead of reloading it for the rest of its span."
 
 boot:
-  eeprom: "../out/pieeprom-test.bin"
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
   sd:
     files:
+      start4.elf: "../out/start4-test.elf"
       EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-takeover.efi"
   input:
     # Only so `until` waits for the boot after the reset.
@@ -19,5 +21,5 @@ milestones:
     line: "is its to take over  span_s=120"
   - why: "start4.elf saw the short count and stopped reloading."
     line: "the OS has the boot watchdog, left to it"
-  - why: "The board reset and the first stage armed the watchdog again."
+  - why: "The board reset and start4.elf armed the watchdog again."
     line: "boot watchdog armed  budget_s=30"

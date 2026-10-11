@@ -87,7 +87,7 @@ fn firmware_main() -> ! {
     let main_stack = unsafe { stack::Stack::paint_running(&raw mut __stack_bottom, &raw const __stack_top) };
     console::init();
     announce();
-    let watchdog = take_over_watchdog();
+    take_over_watchdog();
 
     let board = Board::read();
     measure::platform(
@@ -118,12 +118,10 @@ fn firmware_main() -> ! {
     // take them on. The dog goes to the ARM, which beats it from UEFI; the
     // monitor thread only waits for `ExitBootServices`. With no ARM to take it,
     // nothing beats it, and the board resets.
-    if watchdog {
-        watchdog::set_deadline(0);
-        if started {
-            watchdog::hand_over();
-            info!("watchdog", "boot watchdog handed to the ARM");
-        }
+    watchdog::set_deadline(0);
+    if started {
+        watchdog::hand_over();
+        info!("watchdog", "boot watchdog handed to the ARM");
     }
 
     idle::init();
@@ -154,19 +152,24 @@ fn announce() {
     }
 }
 
-/// Beat the boot watchdog the bootloader armed, so a boot that hangs resets
-/// the board. Whether there was one.
-fn take_over_watchdog() -> bool {
+/// How long a boot has to reach the ARM when the bootloader armed no watchdog
+/// of its own.
+const BOOT_BUDGET_S: u64 = 30;
+
+/// Beat the boot watchdog, so a boot that hangs resets the board: the one the
+/// bootloader armed, or one of this firmware's own when it armed none.
+fn take_over_watchdog() {
     let timeout_s = handover::boot_watchdog_timeout();
-    let end_at = handover::boot_watchdog_end_at();
+    let mut end_at = handover::boot_watchdog_end_at();
     if timeout_s == 0 || end_at == 0 {
-        return false;
+        end_at = stc::now() + BOOT_BUDGET_S * 1_000_000;
+        info!("watchdog", "boot watchdog armed"; budget_s = BOOT_BUDGET_S);
+    } else {
+        let left_ms = end_at.saturating_sub(stc::now()) / 1000;
+        info!("watchdog", "boot watchdog running"; budget_s = timeout_s, left_ms = left_ms);
     }
-    let left_ms = end_at.saturating_sub(stc::now()) / 1000;
-    info!("watchdog", "boot watchdog running"; budget_s = timeout_s, left_ms = left_ms);
     watchdog::arm_us(10_000_000);
     watchdog::set_deadline(end_at);
-    true
 }
 
 /// How often the monitor looks at the stacks.

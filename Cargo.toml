@@ -11,11 +11,6 @@ test = false
 bench = false
 
 [[bin]]
-name = "bootcode"
-test = false
-bench = false
-
-[[bin]]
 name = "start4"
 test = false
 bench = false
@@ -24,14 +19,12 @@ bench = false
 # Colour the console log with ANSI escapes.
 color = []
 # Trust the key scripts/build-uefi.sh generates in out/test-keys/ besides the
-# built-in ones, and leave the image as out/pieeprom-test.bin: the scenarios'
+# built-in ones, and leave the image as out/start4-test.elf: the scenarios'
 # EFI applications are signed with that key. Never for a real board.
 test-keys = []
 
 [dependencies]
 
-# The first stage has to fit the L2 beside the SDRAM training firmware, which
-# it does not at a lower level.
 [profile.dev]
 panic = "abort"
 opt-level = 2

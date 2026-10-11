@@ -3,9 +3,11 @@ name: "usb-hello"
 description: "No SD card; a USB drive on the VL805's ports. start4.elf brings up the PCIe link and gives the VL805 its firmware out of the EEPROM, and the UEFI firmware's xHCI driver finds the drive and runs \\EFI\\BOOT\\BOOTAA64.EFI from it."
 
 boot:
-  eeprom: "../out/pieeprom-test.bin"
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x4"
   usb:
     files:
+      start4.elf: "../out/start4-test.elf"
       EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
   until: "hello test: done"
   wall_secs: 900

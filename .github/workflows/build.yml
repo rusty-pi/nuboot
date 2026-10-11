@@ -1,7 +1,7 @@
 name: build
 
-# Every push builds pieeprom.bin and start4.elf and boots each scenario in
-# `scenarios/` in pimu.
+# Every push builds start4.elf and boots each scenario in `scenarios/` in pimu
+# under Raspberry Pi's EEPROM bootloader.
 on:
   push:
     branches: [main]
@@ -51,7 +51,7 @@ jobs:
           fi
           rm vc4-elf-*.deb
 
-      # scripts/mkeeprom.py puts the EEPROM image together, and
+      # scripts/mkstore.py makes the tamper scenario's EEPROM image, and
       # scripts/build-uefi.sh signs the test applications with sbsign.
       - name: Install Python and sbsigntool
         run: |
@@ -127,11 +127,17 @@ jobs:
         with:
           name: firmware
           path: |
-            out/pieeprom.bin
-            out/pieeprom-test.bin
+            out/stock-pieeprom.bin
             out/pieeprom-tamper.bin
             out/store-tamper.efi
             out/start4.elf
+            out/start4-test.elf
+            out/capsule-new.cap
+            out/capsule-old.cap
+            out/capsule-corrupt.cap
+            out/capsule-stranger.cap
+            out/capsule-junk.cap
+            out/runtime-variables.efi
             out/hello.efi
             out/watchdog-hang.efi
             out/watchdog-exit.efi

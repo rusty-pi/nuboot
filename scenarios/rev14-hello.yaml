@@ -1,23 +1,23 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "rev14-hello"
-description: "uefi-hello on a Pi 4B rev 1.4, whose core rail is on its own PMIC: the first stage sets up 0x1D the way that board needs."
+description: "uefi-hello on a Pi 4B rev 1.4, whose core rail is on its own PMIC: the boot goes the same way."
 
 boot:
-  eeprom: "../out/pieeprom-test.bin"
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
   board_rev: "d03114"
   sd:
     files:
+      start4.elf: "../out/start4-test.elf"
       EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
   until: "hello test: done"
   wall_secs: 900
 
 milestones:
-  - why: "The boot ROM entered the first stage."
-    line: "pi4-server-firmware bootcode"
+  - why: "The stock bootloader started start4.elf off the card."
+    line: "started by the EEPROM bootloader  medium=sd"
   - why: "It is a rev 1.4 board."
     line: "revision=d03114 pcb=1.4"
-  - why: "The first stage loaded start4.elf out of the EEPROM after bringing up the SDRAM."
-    line: "start4.elf loaded"
   - why: "start4.elf started the ARM."
     line: "ARM started in UEFI"
   - why: "The armstub took the cores to EL2 and the primary core decompressed the UEFI firmware and entered it."

@@ -1,22 +1,22 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "uefi-hello"
-description: "This tree's EEPROM image, with nothing stock in it but the SDRAM training firmware, in its test build. The first stage brings up the SDRAM and starts start4.elf out of the EEPROM, which starts the ARM in the UEFI firmware. It finds the SD card, checks the signature on \\EFI\\BOOT\\BOOTAA64.EFI against db and runs it."
+description: "The stock EEPROM bootloader starts this firmware's start4.elf off the card, in its test build. start4.elf starts the ARM in the UEFI firmware, which finds the SD card, checks the signature on \\EFI\\BOOT\\BOOTAA64.EFI against db and runs it."
 
 boot:
-  eeprom: "../out/pieeprom-test.bin"
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
   sd:
     files:
+      start4.elf: "../out/start4-test.elf"
       EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
   until: "hello test: done"
   wall_secs: 900
 
 milestones:
-  - why: "The boot ROM entered the first stage."
-    line: "pi4-server-firmware bootcode"
-  - why: "The first stage loaded start4.elf out of the EEPROM after bringing up the SDRAM."
-    line: "start4.elf loaded"
-  - why: "start4.elf found the handover the first stage left."
-    line: "medium=eeprom"
+  - why: "The stock bootloader started start4.elf off the card."
+    line: "started by the EEPROM bootloader  medium=sd"
+  - why: "start4.elf found the handover the bootloader left."
+    line: "medium=sd"
   - why: "start4.elf started the ARM."
     line: "ARM started in UEFI"
   - why: "The armstub took the cores to EL2 and the primary core decompressed the UEFI firmware and entered it."

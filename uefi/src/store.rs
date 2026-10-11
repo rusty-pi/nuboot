@@ -1,5 +1,5 @@
-//! The variable store: a log of records in two banks at the end of the
-//! EEPROM's flash. Records are only appended; a full bank is replaced by a
+//! The variable store: a log of records in two banks in the free tail of the
+//! stock EEPROM image's flash, after its last section. Records are only appended; a full bank is replaced by a
 //! fresh one holding what is still live, which becomes valid once its header
 //! is written. A record carries its own SHA-256, so one cut short by a power
 //! loss ends the log instead of being read.
@@ -11,8 +11,8 @@ use crate::spiflash::{self, PAGE, SECTOR};
 use crate::util::Global;
 use crate::{debug, info, warn};
 
-const BASE: u32 = 0x70000;
-const BANK: u32 = 0x8000;
+const BASE: u32 = 0x74000;
+const BANK: u32 = 0x5000;
 const BANKS: [u32; 2] = [BASE, BASE + BANK];
 
 const BANK_MAGIC: u32 = 0x5634_4950;

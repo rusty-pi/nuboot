@@ -3,9 +3,11 @@ name: "watchdog-fault"
 description: "An EFI application asks for ten minutes of watchdog, then faults. UEFI stops with interrupts masked, nothing beats the dog, and the board resets within 16 s."
 
 boot:
-  eeprom: "../out/pieeprom-test.bin"
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
   sd:
     files:
+      start4.elf: "../out/start4-test.elf"
       EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-fault.efi"
   input:
     # Only so `until` waits for the boot after the reset.
@@ -19,5 +21,5 @@ milestones:
     line: "boot watchdog handed to the ARM"
   - why: "The application is running."
     line: "watchdog test: faulting"
-  - why: "The board reset and the first stage armed the watchdog again."
+  - why: "The board reset and start4.elf armed the watchdog again."
     line: "boot watchdog armed  budget_s=30"

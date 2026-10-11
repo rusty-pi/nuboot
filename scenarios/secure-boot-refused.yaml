@@ -1,11 +1,13 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "secure-boot-refused"
-description: "The EEPROM image as it goes on a board, and an EFI application signed with the test key, which only the test build trusts. The UEFI firmware refuses to run it and has nothing else to boot."
+description: "The stock EEPROM bootloader starts this firmware's start4.elf from the card, and it, and an EFI application signed with the test key, which only the test build trusts. The UEFI firmware refuses to run it and has nothing else to boot."
 
 boot:
-  eeprom: "../out/pieeprom.bin"
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
   sd:
     files:
+      start4.elf: "../out/start4.elf"
       EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
   until: "nothing to boot"
   wall_secs: 900

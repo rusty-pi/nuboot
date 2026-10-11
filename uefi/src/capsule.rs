@@ -14,12 +14,14 @@ use r_efi::efi;
 use r_efi::protocols::simple_file_system;
 
 use crate::util::{W, eq_ignore_case};
-use crate::{error, esrt, fat, firmware, info, proto, secure, var, warn};
+use crate::{esrt, fat, info, proto, secure, var, warn};
 
 const DIRECTORY: &str = "\\EFI\\UpdateCapsule";
 const MAGIC: &[u8; 4] = b"P4FW";
 /// What the firmware owns of the flash: below the variable store.
 const HEADER: usize = 28;
+/// The most an image may carry.
+const MAX_IMAGE: usize = 16 * 1024 * 1024;
 
 /// `EFI_CERT_TYPE_PKCS7_GUID`.
 const PKCS7: efi::Guid =
@@ -60,7 +62,7 @@ fn check(file: &[u8]) -> Result<Capsule, (u32, &'static str)> {
     }
     let version = u32_at(image, 4).ok_or(invalid("no version"))?;
     let region = &image[8..];
-    if region.len() > firmware::REGION {
+    if region.len() > MAX_IMAGE {
         return Err((esrt::INSUFFICIENT_RESOURCES, "image is larger than the firmware's flash region"));
     }
     if version <= esrt::VERSION {
@@ -119,25 +121,7 @@ pub fn scan() {
     }
 }
 
-/// Write the capsule's image over the firmware and restart on it.
 fn apply(capsule: &Capsule) {
-    if !var::keeps() {
-        warn!("capsule", "no device key or flash store to record the update in, not applying"; version = capsule.version);
-        esrt::attempted(capsule.version, esrt::UNSUCCESSFUL);
-        return;
-    }
-    let status = var::keep(PENDING, esrt::FIRMWARE_CLASS, &capsule.version.to_le_bytes());
-    if status.is_error() {
-        warn!("capsule", "update not recorded, not applying"; status = status.as_usize());
-        esrt::attempted(capsule.version, esrt::UNSUCCESSFUL);
-        return;
-    }
-    info!("capsule", "applying"; version = capsule.version, bytes = capsule.region.len());
-    if firmware::write(&capsule.region) {
-        info!("capsule", "firmware written, restarting"; version = capsule.version);
-        crate::watchdog::reset(false);
-    }
-    error!("capsule", "firmware not written"; version = capsule.version);
-    var::forget(PENDING, esrt::FIRMWARE_CLASS);
+    warn!("capsule", "applying a capsule is not implemented"; version = capsule.version);
     esrt::attempted(capsule.version, esrt::UNSUCCESSFUL);
 }

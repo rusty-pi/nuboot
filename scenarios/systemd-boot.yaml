@@ -3,9 +3,11 @@ name: "systemd-boot"
 description: "Debian's systemd-boot, signed with the test key, reads its configuration from the card and starts the unified kernel image it finds there, whose systemd-stub starts the kernel inside it. Both measure into the TPM on the VPU through EFI_TCG2_PROTOCOL as it goes, on top of what the firmware measured."
 
 boot:
-  eeprom: "../out/pieeprom-test.bin"
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
   sd:
     files:
+      start4.elf: "../out/start4-test.elf"
       EFI/BOOT/BOOTAA64.EFI: "../out/systemd-bootaa64.efi"
       EFI/Linux/test.efi: "../out/uki.efi"
       loader/loader.conf: { inline: "timeout 0\nconsole-mode keep\n" }

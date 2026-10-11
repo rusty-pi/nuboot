@@ -3,7 +3,8 @@ name: "store"
 description: "A board with its device private key fused (a test key, not a board's): an EFI application enrols a certificate in db with an update signed by a KEK key; after a reset the flash store brings it back and an image only that certificate signs boots."
 
 boot:
-  eeprom: "../out/pieeprom-test.bin"
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
   otp_row:
     - "56=0xc0de2001"
     - "57=0xc0de3112"
@@ -15,6 +16,7 @@ boot:
     - "63=0xc0de9778"
   sd:
     files:
+      start4.elf: "../out/start4-test.elf"
       EFI/BOOT/BOOTAA64.EFI: "../out/store-enroll.efi"
       enrolled.efi: "../out/store-enrolled.efi"
       db-x.auth: "../out/db-x.auth"

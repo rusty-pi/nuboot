@@ -3,9 +3,11 @@ name: "capsule"
 description: "Firmware update capsules in \\EFI\\UpdateCapsule on the card: the firmware accepts one signed by its own key with a newer version, and refuses an older one, one changed after it was signed, one signed by a key db does not hold, and a file that is no capsule."
 
 boot:
-  eeprom: "../out/pieeprom-test.bin"
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
   sd:
     files:
+      start4.elf: "../out/start4-test.elf"
       EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
       EFI/UpdateCapsule/new.cap: "../out/capsule-new.cap"
       EFI/UpdateCapsule/old.cap: "../out/capsule-old.cap"
@@ -18,8 +20,8 @@ boot:
 milestones:
   - why: "A capsule signed by the test key, newer than the firmware, passes."
     line: "capsule verified  path=\\EFI\\UpdateCapsule\\new.cap"
-  - why: "Without a device key to seal the record of an update in, nothing is written."
-    line: "no device key or flash store to record the update in, not applying"
+  - why: "A verified capsule reaches the apply step."
+    line: "applying a capsule is not implemented"
   - why: "An older version is refused."
     line: "reason=\"version is not newer than the running firmware\""
   - why: "A byte changed after the signing breaks the signature."

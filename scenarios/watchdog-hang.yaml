@@ -3,9 +3,11 @@ name: "watchdog-hang"
 description: "An EFI application asks for a one-second watchdog and hangs in boot services. UEFI stops beating the boot watchdog when the second is up, and the board resets and boots again."
 
 boot:
-  eeprom: "../out/pieeprom-test.bin"
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
   sd:
     files:
+      start4.elf: "../out/start4-test.elf"
       EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-hang.efi"
   input:
     # Only so `until` waits for the boot after the reset.
@@ -15,7 +17,7 @@ boot:
   wall_secs: 900
 
 milestones:
-  - why: "The first stage armed the boot watchdog."
+  - why: "start4.elf armed the boot watchdog."
     line: "boot watchdog armed  budget_s=30"
   - why: "start4.elf handed it to the ARM."
     line: "boot watchdog handed to the ARM"
