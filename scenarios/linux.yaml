@@ -1,10 +1,19 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "linux"
-description: "Debian's arm64 kernel, in a unified kernel image that Debian's systemd-boot starts, boots under the firmware with Secure Boot on, and its first process looks at what the firmware gave it: the kernel's own log of the EFI tables, the Secure Boot variables through efivarfs, the ESRT, the TPM on the VPU through the module in tools/tpm-vpu, and a variable it writes."
+description: "Debian's arm64 kernel, in a unified kernel image that Debian's systemd-boot starts, boots under the firmware with Secure Boot on, and its first process looks at what the firmware gave it: the kernel's own log of the EFI tables, the Secure Boot variables through efivarfs, the ESRT, the TPM on the VPU through the module in tools/tpm-vpu, and a variable it writes and finds again after it resets the board."
 
 boot:
   eeprom: "../out/stock-pieeprom.bin"
   boot_order: "0x1"
+  otp_row:
+    - "56=0xc0de2001"
+    - "57=0xc0de3112"
+    - "58=0xc0de4223"
+    - "59=0xc0de5334"
+    - "60=0xc0de6445"
+    - "61=0xc0de7556"
+    - "62=0xc0de8667"
+    - "63=0xc0de9778"
   sd:
     files:
       start4.elf: "../out/start4-test.elf"
@@ -49,3 +58,5 @@ milestones:
     line: "linux test: LoaderEntrySelected linux-test.efi"
   - why: "The OS can write a variable."
     line: "linux test: variable written"
+  - why: "The OS resets the board, and the variable it wrote is there at the next boot: the VPU signed and kept the write."
+    line: "linux test: variable survived the reset 07000000010203"

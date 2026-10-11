@@ -38,7 +38,16 @@ for i in 0 1 5 9 11 12; do
 done
 log=$(wc -c < /sys/kernel/security/tpm0/binary_bios_measurements 2>&1)
 say "event log $([ "$log" -gt 0 ] 2>/dev/null && echo present || echo "unreadable: $log")"
-printf '\007\000\000\000\001\002\003' > /sys/firmware/efi/efivars/LinuxTest-6b1c0a52-3a7e-4d1f-9a0b-112233445566 && say "variable written"
-say "variable reads $(var LinuxTest 6b1c0a52-3a7e-4d1f-9a0b-112233445566)"
+TEST=6b1c0a52-3a7e-4d1f-9a0b-112233445566
+if [ -e /sys/firmware/efi/efivars/LinuxTest-$TEST ]; then
+    say "variable survived the reset $(var LinuxTest $TEST)"
+else
+    printf '\007\000\000\000\001\002\003' > /sys/firmware/efi/efivars/LinuxTest-$TEST && say "variable written"
+    say "variable reads $(var LinuxTest $TEST)"
+    insmod /bcm2835_wdt.ko
+    say "resetting"
+    reboot -f
+    sleep 60
+fi
 say "done"
 poweroff -f
