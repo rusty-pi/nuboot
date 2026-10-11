@@ -66,7 +66,8 @@ from its monitor thread while a span lasts. When the span is over it stops,
 and the board resets up to 16 s later unless the operating system is beating
 the dog by then. UEFI tells `start4.elf` about `SetWatchdogTimer` and
 `ExitBootServices` through the word at ARM physical `0xfc`, in the
-armstub's page.
+armstub's page, and about `ResetSystem` the same way: `start4.elf` stops
+reloading the dog, which the reset then runs out.
 
 ## Running it in pimu
 

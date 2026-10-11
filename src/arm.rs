@@ -17,10 +17,12 @@ const IMAGE_TREE_WORD: usize = 0xf8;
 /// The word after it, where the UEFI firmware says what it wants of the boot
 /// watchdog ([`crate::watchdog::carry_poll`]): a sequence number in bits
 /// 31:24, so the same request twice is two requests, what happened in 23:20
-/// (1: `SetWatchdogTimer` with the seconds in 19:0, 2: `ExitBootServices`).
+/// (1: `SetWatchdogTimer` with the seconds in 19:0, 2: `ExitBootServices`,
+/// 3: `ResetSystem`, after which the dog is no longer reloaded).
 const IMAGE_WATCHDOG_WORD: u32 = 0xfc;
 pub const WATCHDOG_SET: u32 = 1;
 pub const WATCHDOG_EXIT: u32 = 2;
+pub const WATCHDOG_RESET: u32 = 3;
 
 /// The UEFI firmware's last watchdog request: (sequence, what, seconds), all
 /// zero until it makes one.

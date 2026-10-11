@@ -8,11 +8,12 @@ use crate::util::{read32, write32};
 
 /// The word the VPU firmware reads requests from: a sequence number in bits
 /// 31:24, what happened in 23:20 (1: `SetWatchdogTimer`, its seconds in 19:0;
-/// 2: `ExitBootServices`). It beats the board's watchdog until the span asked
+/// 2: `ExitBootServices`, 3: `ResetSystem`). It beats the board's watchdog until the span asked
 /// for runs out.
 const WORD: u64 = 0xfc;
 const SET: u32 = 1;
 const EXIT: u32 = 2;
+const RESET: u32 = 3;
 
 static SEQ: AtomicU32 = AtomicU32::new(0);
 
@@ -41,13 +42,19 @@ const PM_RSTC_WRCFG_CLR: u32 = 0xFFFF_FFCF;
 /// `PM_RSTS` partition 63: halt in the bootloader.
 const PM_RSTS_HALT: u32 = 0x555;
 
+/// The watchdog's count for a reset UEFI asks for, about a second and a half:
+/// the VPU stops reloading it at its next beat, which is at least once a
+/// second, and a short count would run out before it has read the request.
+const PM_WDOG_AFTER_VPU: u32 = 0x18000;
+
 /// Reset the board, as `bcm2835-wdt` does; with `halt`, to stay off.
 pub fn reset(halt: bool) -> ! {
     if halt {
         let rsts = read32(PM_RSTS);
         write32(PM_RSTS, PM_PASSWORD | (rsts & !0xFFF) | PM_RSTS_HALT);
     }
-    write32(PM_WDOG, PM_PASSWORD | 10);
+    tell_vpu(RESET, 0);
+    write32(PM_WDOG, PM_PASSWORD | PM_WDOG_AFTER_VPU);
     let rstc = read32(PM_RSTC);
     write32(PM_RSTC, PM_PASSWORD | (rstc & PM_RSTC_WRCFG_CLR) | PM_RSTC_WRCFG_FULL_RESET);
     crate::util::halt()

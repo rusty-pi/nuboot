@@ -218,7 +218,13 @@ pub fn append(record: &Record, live: impl FnOnce() -> Vec<Record>) -> bool {
     let bytes = record.encode();
     let end = BANKS[state.bank] + BANK;
     if state.seq != 0 && state.tail as usize + bytes.len() <= end as usize {
+        debug!("store", "appending"; at = state.tail, len = bytes.len());
         if spiflash::program(state.tail, &bytes) {
+            let mut back = alloc::vec![0u8; bytes.len()];
+            spiflash::read(state.tail, &mut back);
+            if back != bytes {
+                warn!("store", "record read back differs"; at = state.tail);
+            }
             state.tail += bytes.len() as u32;
             return true;
         }
@@ -227,7 +233,9 @@ pub fn append(record: &Record, live: impl FnOnce() -> Vec<Record>) -> bool {
     }
     let other = 1 - state.bank;
     let seq = state.seq.wrapping_add(1).max(1);
-    match write_bank(other, seq, &live()) {
+    let records = live();
+    debug!("store", "compacting"; bank = other, records = records.len(), bytes = records.iter().map(|r| r.encode().len()).sum::<usize>());
+    match write_bank(other, seq, &records) {
         Some(tail) => {
             debug!("store", "store moved to the other bank"; bank = other, seq = seq);
             *state = State { ready: true, bank: other, seq, tail };

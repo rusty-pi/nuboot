@@ -241,6 +241,11 @@ pub fn carry_poll() {
                     span_s = OS_WINDOW_S);
                 OS_WINDOW_S
             }
+            crate::arm::WATCHDOG_RESET => {
+                crate::info!("watchdog", "UEFI is resetting the board, the boot watchdog is left to run out");
+                carry_until(0);
+                return;
+            }
             _ => 0,
         };
         if span != 0 {
