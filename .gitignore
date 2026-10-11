@@ -15,3 +15,4 @@
 /tools/tpm-vpu/Module.symvers
 /tools/tpm-vpu/modules.order
 /keys
+/tools/tpm-sim/target

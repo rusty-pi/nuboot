@@ -8,6 +8,7 @@
 use core::panic::PanicInfo;
 use core::ptr::{addr_of, addr_of_mut, read_volatile, write_volatile};
 
+pub mod aes;
 pub mod arm;
 pub mod board;
 pub mod cache;
@@ -21,6 +22,7 @@ pub mod gpio;
 pub mod handover;
 pub mod i2c;
 pub mod idle;
+pub mod kdf;
 pub mod keystore;
 pub mod log;
 pub mod lz4;
@@ -29,6 +31,7 @@ pub mod lzss;
 pub mod mailbox;
 pub mod mmio;
 pub mod otp;
+pub mod p256;
 pub mod pcie;
 pub mod pmic;
 pub mod rng;

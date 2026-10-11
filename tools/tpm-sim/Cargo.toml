@@ -1,0 +1,17 @@
+[package]
+name = "tpm-sim"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+description = "The VPU firmware's TPM and its crypto, built for the host: tested against reference implementations, and served over the TPM simulator protocol for tpm2-tools."
+
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "tpm-sim"
+path = "src/main.rs"
+
+[dependencies]
