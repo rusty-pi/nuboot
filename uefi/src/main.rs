@@ -16,6 +16,7 @@ extern crate alloc;
 pub mod log;
 
 mod block;
+mod capsule;
 mod conio;
 mod console;
 mod critical;
@@ -183,6 +184,7 @@ extern "C" fn pi4_main(tree_addr: u64) -> ! {
     xhci::init();
 
     tcg2::separators();
+    capsule::scan();
     boot(parent);
     error!("boot", "nothing to boot, the boot watchdog will reset the board"; looked_for = REMOVABLE_PATH);
     util::halt()

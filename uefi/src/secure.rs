@@ -286,3 +286,20 @@ pub fn check(image: &[u8], path: &dyn Display) -> Result<([u8; 32], Vec<u8>), &'
     }
     Err(why)
 }
+
+/// Whether `signature`, a detached PKCS #7, is over exactly `content` by a key
+/// this firmware's own `db` entries (not Microsoft's, whose CA signs for
+/// anyone) trust, with a content hash `dbx` does not revoke. The signer's name
+/// if so, the reason if not.
+pub fn verify_own(signature: &[u8], content: &[u8]) -> Result<alloc::string::String, &'static str> {
+    if in_dbx(&crate::sha256::digest(content)) {
+        return Err("content hash is in dbx");
+    }
+    let signed = pkcs7::signed_content(signature, content)?;
+    let anchor = pkcs7::anchor(&signed, TRUSTED.get()).ok_or("not signed by a key in db")?;
+    let at = TRUSTED.get().iter().position(|c| core::ptr::eq(c, anchor)).ok_or("not signed by a key in db")?;
+    if OWNERS.get().get(at) == Some(MICROSOFT.as_bytes()) {
+        return Err("signed by a Microsoft key, which does not sign firmware");
+    }
+    Ok(alloc::string::String::from(signed.chain[0].name()))
+}

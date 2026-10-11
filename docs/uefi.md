@@ -147,6 +147,27 @@ self-signed certificate `scripts/build-uefi.sh` generates in
 with it. The test build logs a warning at every boot; it is not for a real
 board.
 
+## Firmware capsules
+
+The firmware is the one resource in the ESRT, and fwupd's `uefi-capsule`
+plugin updates it by putting a capsule in `\EFI\UpdateCapsule` on the EFI
+system partition. At every boot, before the boot option runs, each `.cap` file
+there is checked:
+
+1. The header's GUID is the firmware's ESRT class, and the sizes fit the file.
+2. A `WIN_CERTIFICATE_UEFI_GUID` holds a detached PKCS #7 signature over the
+   image after it. The signer has to chain to a `db` entry that is not
+   Microsoft's, whose CAs sign for anyone, and the image's SHA-256 must not
+   be in `dbx`.
+3. The image is `P4FW`, a little-endian `u32` version and up to `0x70000` bytes
+   of the flash below the variable store.
+4. The version is newer than the running firmware's.
+
+A capsule that fails sets the ESRT's last attempt version and status
+(`4` invalid format, `5` authentication error, `3` incorrect version, `2`
+image too large) and is logged with the reason. `scripts/mkcapsule.py` builds
+one. A capsule that passes is logged, and the flash is not written yet.
+
 ## Building
 
 ```bash

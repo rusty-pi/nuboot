@@ -95,6 +95,7 @@ pimu boot --scenario scenarios/xhci-reset.yaml   # NOTIFY_XHCI_RESET over the pr
 pimu boot --scenario scenarios/boot-key.yaml     # the boot key bound to PCR 4, once
 pimu boot --scenario scenarios/boot-key-unbound.yaml    # bound to PCR 7
 pimu boot --scenario scenarios/tpm2-commands.yaml  # TPM 2.0 commands on the VPU
+pimu boot --scenario scenarios/capsule.yaml     # firmware update capsules on the card
 pimu boot --scenario scenarios/runtime-variables.yaml  # variables through the runtime services
 pimu boot --scenario scenarios/watchdog-hang.yaml  # a hang in UEFI resets the board
 pimu boot --scenario scenarios/watchdog-exit.yaml  # ExitBootServices hands the dog to the OS

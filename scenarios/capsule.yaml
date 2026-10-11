@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "capsule"
+description: "Firmware update capsules in \\EFI\\UpdateCapsule on the card: the firmware accepts one signed by its own key with a newer version, and refuses an older one, one changed after it was signed, one signed by a key db does not hold, and a file that is no capsule."
+
+boot:
+  eeprom: "../out/pieeprom-test.bin"
+  sd:
+    files:
+      EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+      EFI/UpdateCapsule/new.cap: "../out/capsule-new.cap"
+      EFI/UpdateCapsule/old.cap: "../out/capsule-old.cap"
+      EFI/UpdateCapsule/corrupt.cap: "../out/capsule-corrupt.cap"
+      EFI/UpdateCapsule/stranger.cap: "../out/capsule-stranger.cap"
+      EFI/UpdateCapsule/junk.cap: "../out/capsule-junk.cap"
+  until: "hello test: done"
+  wall_secs: 900
+
+milestones:
+  - why: "A capsule signed by the test key, newer than the firmware, passes."
+    line: "capsule verified  path=\\EFI\\UpdateCapsule\\new.cap"
+  - why: "An older version is refused."
+    line: "reason=\"version is not newer than the running firmware\""
+  - why: "A byte changed after the signing breaks the signature."
+    line: "capsule refused  path=\\EFI\\UpdateCapsule\\corrupt.cap"
+  - why: "A key db does not hold cannot sign firmware."
+    line: "reason=\"not signed by a key in db\""
+  - why: "A file that is no capsule is refused."
+    line: "reason=\"not a capsule for this firmware\""

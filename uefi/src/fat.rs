@@ -636,3 +636,47 @@ pub fn read_file(handle: efi::Handle, path: &[u16]) -> Result<Vec<u8>, efi::Stat
     }
     Ok(data)
 }
+
+/// The names of the files (not directories) in the directory at `path` on
+/// the file system on `handle`.
+pub fn list_files(handle: efi::Handle, path: &[u16]) -> Result<Vec<Vec<u16>>, efi::Status> {
+    let sfs = proto::get(handle, &simple_file_system::PROTOCOL_GUID).ok_or(efi::Status::NOT_FOUND)?
+        as *mut simple_file_system::Protocol;
+    let mut root = core::ptr::null_mut();
+    let s = unsafe { ((*sfs).open_volume)(sfs, &mut root) };
+    if s.is_error() {
+        return Err(s);
+    }
+    let mut name: Vec<u16> = path.to_vec();
+    name.push(0);
+    let mut dir = core::ptr::null_mut();
+    let s = open(root, &mut dir, name.as_mut_ptr(), file::MODE_READ, 0);
+    close(root);
+    if s.is_error() {
+        return Err(s);
+    }
+    if this(dir).entry.attr & ATTR_DIR == 0 {
+        close(dir);
+        return Err(efi::Status::NOT_FOUND);
+    }
+    let mut names = Vec::new();
+    loop {
+        let mut buf = [0u8; 512];
+        let mut n = buf.len();
+        if read(dir, &mut n, buf.as_mut_ptr() as *mut c_void).is_error() || n == 0 {
+            break;
+        }
+        let header = core::mem::size_of::<file::Info>();
+        let info = unsafe { core::ptr::read_unaligned(buf.as_ptr() as *const file::Info) };
+        if info.attribute & ATTR_DIR as u64 == 0 {
+            let units = (n.saturating_sub(header)) / 2;
+            let name: Vec<u16> = (0..units)
+                .map(|i| u16::from_le_bytes([buf[header + 2 * i], buf[header + 2 * i + 1]]))
+                .take_while(|&c| c != 0)
+                .collect();
+            names.push(name);
+        }
+    }
+    close(dir);
+    Ok(names)
+}

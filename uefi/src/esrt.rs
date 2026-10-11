@@ -8,6 +8,7 @@ use core::ffi::c_void;
 use alloc::vec;
 use r_efi::efi;
 
+use crate::util::Global;
 use crate::{mem, tables, var};
 
 /// `EFI_SYSTEM_RESOURCE_TABLE_GUID`.
@@ -23,6 +24,11 @@ const FIRMWARE_TYPE_SYSTEM: u32 = 1;
 const TABLE_VERSION: u64 = 1;
 /// `LAST_ATTEMPT_STATUS_SUCCESS`.
 const SUCCESS: u32 = 0;
+pub const UNSUCCESSFUL: u32 = 1;
+pub const INSUFFICIENT_RESOURCES: u32 = 2;
+pub const INCORRECT_VERSION: u32 = 3;
+pub const INVALID_FORMAT: u32 = 4;
+pub const AUTH_ERROR: u32 = 5;
 
 /// The commit's time, in seconds: what orders one build after another.
 pub const VERSION: u32 = match u32::from_str_radix(env!("FIRMWARE_TIME"), 10) {
@@ -52,6 +58,20 @@ struct Table {
     entry: Entry,
 }
 
+static TABLE: Global<*mut Table> = Global::new(core::ptr::null_mut());
+
+/// Record the last capsule attempt for the OS: the version it carried and how
+/// it went.
+pub fn attempted(version: u32, status: u32) {
+    let table = *TABLE.get();
+    if !table.is_null() {
+        unsafe {
+            (*table).entry.last_attempt_version = version;
+            (*table).entry.last_attempt_status = status;
+        }
+    }
+}
+
 pub fn init() {
     let at = mem::alloc_pages(efi::BOOT_SERVICES_DATA, 1).expect("ESRT page") as *mut Table;
     unsafe {
@@ -70,6 +90,7 @@ pub fn init() {
             },
         })
     };
+    *TABLE.get() = at;
     tables::install_table(ESRT_GUID, at as *mut c_void);
     var::fixed("OsIndicationsSupported", var::GLOBAL, var::BS | var::RT, FILE_CAPSULE_DELIVERY.to_le_bytes().to_vec());
     var::seed("OsIndications", var::GLOBAL, var::NV | var::BS | var::RT, vec![0; 8]);

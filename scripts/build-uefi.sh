@@ -27,6 +27,8 @@
 #   out/runtime-variables.efi
 #                     uefi/test-apps/runtime: exit boot services and use the
 #                     variable services the OS is left with
+#   out/capsule-*.cap firmware update capsules the capsule scenario puts on the
+#                     card: new, old, corrupt, signed by a stranger, and junk
 #   out/systemd-bootaa64.efi, out/uki.efi
 #                     Debian's systemd-boot, and a unified kernel image of its
 #                     systemd-stub around hello.efi, signed with the test key
@@ -143,6 +145,15 @@ for name in x stranger; do
 done
 "$here/scripts/mkauth.py" "$keys/db.key" "$keys/db.crt" db "$keys/x.crt" "$out/db-x.auth"
 "$here/scripts/mkauth.py" "$keys/stranger.key" "$keys/stranger.crt" db "$keys/stranger.crt" "$out/db-bad.auth"
+
+# Firmware update capsules: a newer version, an older one, a newer one with a
+# byte changed after it was signed, one signed by a key db does not hold, and
+# a file that is not a capsule.
+"$here/scripts/mkcapsule.py" "$keys/db.key" "$keys/db.crt" 0x7fffffff "$out/capsule-new.cap"
+"$here/scripts/mkcapsule.py" "$keys/db.key" "$keys/db.crt" 1 "$out/capsule-old.cap"
+"$here/scripts/mkcapsule.py" "$keys/db.key" "$keys/db.crt" 0x7fffffff --corrupt "$out/capsule-corrupt.cap"
+"$here/scripts/mkcapsule.py" "$keys/stranger.key" "$keys/stranger.crt" 0x7fffffff "$out/capsule-stranger.cap"
+head -c 300 /dev/urandom >"$out/capsule-junk.cap"
 
 hello="$here/uefi/test-apps/hello"
 (cd "$hello" && rustup target add aarch64-unknown-uefi >/dev/null &&
