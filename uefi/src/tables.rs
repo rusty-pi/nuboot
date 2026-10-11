@@ -164,7 +164,10 @@ extern "efiapi" fn allocate_pool(ty: efi::MemoryType, size: usize, buffer: *mut 
             unsafe { *buffer = p as *mut c_void };
             efi::Status::SUCCESS
         }
-        Err(s) => s,
+        Err(s) => {
+            warn!("uefi", "AllocatePool failed"; kind = ty, bytes = size, status = Hex(s.as_usize()));
+            s
+        }
     }
 }
 
@@ -433,6 +436,7 @@ extern "efiapi" fn unload_image(handle: efi::Handle) -> efi::Status {
 
 extern "efiapi" fn exit_boot_services(_handle: efi::Handle, key: usize) -> efi::Status {
     if key != mem::map().key {
+        warn!("uefi", "ExitBootServices: the map key is stale"; asked = key, current = mem::map().key);
         return efi::Status::INVALID_PARAMETER;
     }
     for f in core::mem::take(BEFORE_EXIT.get()) {
@@ -442,6 +446,7 @@ extern "efiapi" fn exit_boot_services(_handle: efi::Handle, key: usize) -> efi::
     event::signal_group(&efi::EVENT_GROUP_EXIT_BOOT_SERVICES);
     // A notification function that allocated has changed the map.
     if key != mem::map().key {
+        warn!("uefi", "ExitBootServices: a notification changed the map"; asked = key, current = mem::map().key);
         return efi::Status::INVALID_PARAMETER;
     }
     for f in QUIESCE.get().iter() {

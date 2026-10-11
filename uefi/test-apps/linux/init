@@ -1,0 +1,27 @@
+#!/bin/busybox sh
+# The first process of the initramfs scripts/build-linux-test.sh makes: it asks
+# a running Linux what the firmware tells it, and says so on the kernel log.
+/bin/busybox --install -s /bin
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs dev /dev
+exec </dev/null >/dev/kmsg 2>&1
+
+say() { echo "linux test: $*"; }
+var() { hexdump -ve '1/1 "%02x"' "/sys/firmware/efi/efivars/$1-$2" 2>&1; }
+GLOBAL=8be4df61-93ca-11d2-aa0d-00e098032b8c
+
+say "kernel $(uname -r) is up"
+dmesg | grep -E "efi: EFI v|efi: RTPROP|Kernel is locked down|efivars: Registered|Loaded X.509 cert|esrt:|efi:" | grep -v "linux test" | while read -r line; do say "kernel log: ${line#*] }"; done
+insmod /efivarfs.ko
+mount -t efivarfs efivarfs /sys/firmware/efi/efivars && say "efivarfs mounted"
+say "SecureBoot $(var SecureBoot $GLOBAL)"
+say "SetupMode $(var SetupMode $GLOBAL)"
+say "OsIndicationsSupported $(var OsIndicationsSupported $GLOBAL)"
+for e in /sys/firmware/efi/esrt/entries/*; do
+    say "esrt $(cat $e/fw_class) type $(cat $e/fw_type) version $(cat $e/fw_version) status $(cat $e/last_attempt_status)"
+done
+printf '\007\000\000\000\001\002\003' > /sys/firmware/efi/efivars/LinuxTest-6b1c0a52-3a7e-4d1f-9a0b-112233445566 && say "variable written"
+say "variable reads $(var LinuxTest 6b1c0a52-3a7e-4d1f-9a0b-112233445566)"
+say "done"
+poweroff -f

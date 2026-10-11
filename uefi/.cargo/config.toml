@@ -8,3 +8,8 @@ rustc-wrapper = ""
 [unstable]
 build-std = ["alloc"]
 build-std-features = ["optimize_for_size"]
+
+# The runtime services run in the OS's context, and an OS keeps its own state
+# in x18 (arm64 Linux's shadow call stack) and checks it after every call.
+[target.aarch64-unknown-none]
+rustflags = ["-Zfixed-x18"]

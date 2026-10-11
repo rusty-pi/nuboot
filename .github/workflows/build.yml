@@ -123,6 +123,7 @@ jobs:
           scripts/build.sh
           scripts/build.sh --test-keys
           scripts/build-capsule-test.sh
+          scripts/build-linux-test.sh
           # The optional features have to keep building too.
           cargo build --release --features color
 
@@ -158,6 +159,8 @@ jobs:
             out/capsule-junk.cap
             out/runtime-variables.efi
             out/crypto.efi
+            out/persist.efi
+            out/linux-test.efi
             out/hello.efi
             out/watchdog-hang.efi
             out/watchdog-exit.efi
