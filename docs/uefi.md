@@ -41,7 +41,7 @@ from `start4.elf`'s:
 |---|---|
 | Memory | An identity map: RAM below `0xFC00_0000` and from 4 to 8 GiB normal write-back, the 2 MiB at `0x20_0000` non-cacheable for DMA, the rest device. The memory map is `/memory` from the device tree, less `/memreserve/`, `/reserved-memory`, the armstub's page at 0, the tree and the firmware itself |
 | Boot services | Memory, pools, events and timers (polled; there are no interrupts), protocol handlers, `LoadImage`/`StartImage`/`Exit` for PE32+ AArch64 images, `ExitBootServices` |
-| Runtime services | `GetVariable` and the rest while boot services last. After `ExitBootServices` every runtime service returns `EFI_UNSUPPORTED`, and the `EFI_RT_PROPERTIES_TABLE` says so; Linux resets through `bcm2835-wdt` |
+| Runtime services | `GetVariable`, `GetNextVariableName`, `SetVariable` and `QueryVariableInfo` after `ExitBootServices`, from a 128 KiB table in the firmware image, which is typed as runtime services code and data. The OS reads the variables the firmware holds with runtime access and creates or changes others; `PK`, `KEK`, `db`, `dbx` and the Secure Boot state refuse writes, and a write lasts until reset. The `EFI_RT_PROPERTIES_TABLE` lists only these four, so `SetVirtualAddressMap` is not offered and the OS maps the runtime regions where they are. Every other runtime service returns `EFI_UNSUPPORTED`; Linux resets through `bcm2835-wdt` |
 | Console | `SimpleTextOutput` and `SimpleTextInput` on the PL011 at `0xFE20_1000`, with VT100 keys |
 | Storage | The SD card on EMMC2 (`0xFE34_0000`), and USB drives (bulk-only mass storage) on the VL805's root ports or behind a hub. `BlockIo`, `DiskIo`, MBR and GPT partitions, and a read-only FAT12/16/32 `SimpleFileSystem` |
 | USB | The VL805's xHCI behind the PCIe root complex, which `start4.elf` has brought up and given its firmware |
@@ -133,7 +133,7 @@ reorder them: it has neither a signing key nor the seal key. Dropping the
 newest record of a variable returns it to its previous value. Where the flash
 does not answer, or no device private key is fused, the seal is missing and a
 variable other than `KEK`, `db` and `dbx` lasts until reset. Writing a whole new
-`pieeprom.bin` clears the store; [eeprom.md](eeprom.md#updating-from-the-os)
+`pieeprom.bin` clears the store; [issue 2](https://github.com/rusty-pi/pi4-server-firmware/issues/2)
 shows how to write the firmware alone.
 
 ### The test build

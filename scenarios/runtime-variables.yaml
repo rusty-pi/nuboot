@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "runtime-variables"
+description: "An EFI application exits boot services as an operating system loader does, then reads and writes variables through the runtime services the firmware leaves it."
+
+boot:
+  eeprom: "../out/pieeprom-test.bin"
+  sd:
+    files:
+      EFI/BOOT/BOOTAA64.EFI: "../out/runtime-variables.efi"
+  until: "runtime test: done"
+  wall_secs: 900
+
+milestones:
+  - why: "The firmware's own variables are read after ExitBootServices."
+    line: "runtime test: SecureBoot is read ok"
+  - why: "The keys and the Secure Boot state cannot be changed from the OS."
+    line: "runtime test: db is not writable ok"
+  - why: "A variable the OS creates reads back, appends and is replaced."
+    line: "runtime test: the replacement reads back ok"
+  - why: "The walk lists the firmware's variables and the new one."
+    line: "runtime test: the walk finds the new variable among the firmware's ok"
+  - why: "Rewriting a variable 200 times does not fill the table."
+    line: "runtime test: rewriting a variable reuses the table ok"
+  - why: "Every check ran."
+    line: "runtime test: done"

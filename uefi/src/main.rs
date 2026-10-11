@@ -32,6 +32,7 @@ mod proto;
 mod pkcs7;
 mod rng;
 mod rsa;
+mod rtvar;
 mod sd;
 mod secure;
 #[path = "../../src/sha256.rs"]
@@ -99,15 +100,17 @@ fn memory_map(tree: &fdt::Fdt, tree_addr: u64) {
     });
     unsafe extern "C" {
         static _image_start: u8;
+        static _rt_end: u8;
         static _end: u8;
     }
-    let (start, end) = (&raw const _image_start as u64, &raw const _end as u64);
+    let (start, runtime_end, end) = (&raw const _image_start as u64, &raw const _rt_end as u64, &raw const _end as u64);
     // The armstub's page: the spin table the secondary cores wait on, and the
     // watchdog word.
     map.mark(0, mem::PAGE, efi::RESERVED_MEMORY_TYPE);
     map.mark(DMA_ARENA.0, DMA_ARENA.1, efi::BOOT_SERVICES_DATA);
     map.mark(tree_addr, tree_addr + tree.size() as u64, efi::BOOT_SERVICES_DATA);
-    map.mark(start, end, efi::BOOT_SERVICES_CODE);
+    map.mark(start, runtime_end, efi::RUNTIME_SERVICES_CODE);
+    map.mark(runtime_end, end, efi::BOOT_SERVICES_CODE);
 }
 
 /// A handle for this firmware itself, the parent of what it loads.

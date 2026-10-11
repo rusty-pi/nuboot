@@ -10,7 +10,7 @@ use r_efi::efi;
 use r_efi::protocols::device_path;
 
 use crate::util::{Global, Hex};
-use crate::{event, image, info, mem, proto, var, warn};
+use crate::{event, image, info, mem, proto, rtvar, var, warn};
 
 static ST: Global<*mut efi::SystemTable> = Global::new(core::ptr::null_mut());
 static TPL: Global<efi::Tpl> = Global::new(efi::TPL_APPLICATION);
@@ -33,14 +33,17 @@ struct RuntimeData {
 const MAX_CONFIG: usize = 16;
 
 /// `EFI_RT_PROPERTIES_TABLE`: which runtime services work after
-/// `ExitBootServices`. None do, so the OS neither calls them nor
-/// `SetVirtualAddressMap`.
+/// `ExitBootServices`: the variable services, from [`crate::rtvar`]. The OS
+/// does not call `SetVirtualAddressMap`, so it maps the runtime regions where
+/// they are.
 #[repr(C)]
 struct RtProperties {
     version: u16,
     length: u16,
     supported: u32,
 }
+
+const RT_VARIABLE_SERVICES: u32 = 0x10 | 0x20 | 0x40 | 0x2000;
 
 const RT_PROPERTIES_GUID: efi::Guid =
     efi::Guid::from_fields(0xeb66918a, 0x7eef, 0x402a, 0x84, 0x2e, &[0x93, 0x1d, 0x21, 0xc3, 0x8a, 0xe9]);
@@ -447,6 +450,11 @@ extern "efiapi" fn exit_boot_services(_handle: efi::Handle, key: usize) -> efi::
         );
         all.fill(stub as usize);
     }
+    var::export_runtime();
+    d.rt.get_variable = rtvar::get_variable;
+    d.rt.get_next_variable_name = rtvar::get_next_variable_name;
+    d.rt.set_variable = rtvar::set_variable;
+    d.rt.query_variable_info = rtvar::query_variable_info;
     d.st.boot_services = core::ptr::null_mut();
     d.st.con_in = core::ptr::null_mut();
     d.st.console_in_handle = core::ptr::null_mut();
@@ -781,7 +789,7 @@ pub fn init(console: efi::Handle, con_in: *mut r_efi::protocols::simple_text_inp
     for (i, c) in "pi4-server-firmware".encode_utf16().enumerate() {
         d.vendor[i] = c;
     }
-    d.rt_properties = RtProperties { version: 1, length: 8, supported: 0 };
+    d.rt_properties = RtProperties { version: 1, length: 8, supported: RT_VARIABLE_SERVICES };
     d.rt = efi::RuntimeServices {
         hdr: header(efi::RUNTIME_SERVICES_SIGNATURE, core::mem::size_of::<efi::RuntimeServices>()),
         get_time,

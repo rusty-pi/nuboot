@@ -37,6 +37,9 @@ SECTIONS {
         . = ALIGN(16);
         _bss_end = .;
     } :data
+    /* The image up to here stays mapped for the OS's runtime services. */
+    . = ALIGN(4096);
+    _rt_end = .;
     /* The page tables: L0, L1, and an L2 each for the first gigabyte and the
      * fourth. */
     .page_tables (NOLOAD) : ALIGN(4096) {

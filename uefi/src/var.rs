@@ -71,6 +71,19 @@ pub fn bytes(name: &str, guid: &efi::Guid) -> Option<Vec<u8>> {
     find(&name, guid).map(|i| VARS.get()[i].data.clone())
 }
 
+/// Copy the variables the OS can read into the table its runtime services
+/// answer from ([`crate::rtvar`]). Those it may also change are the ones no
+/// signature guards.
+pub fn export_runtime() {
+    crate::rtvar::clear();
+    for v in VARS.get().iter().filter(|v| visible(v) && v.attributes & RT != 0) {
+        let writable = !v.fixed && !is_key(&v.name, &v.guid) && v.attributes & AUTH == 0;
+        if !crate::rtvar::add(&v.name, &v.guid, v.attributes, &v.data, writable) {
+            warn!("var", "variable not kept for the OS: runtime table full"; name = W(&v.name));
+        }
+    }
+}
+
 fn is(name: &[u16], text: &str) -> bool {
     name.iter().copied().eq(text.encode_utf16())
 }

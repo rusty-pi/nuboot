@@ -24,6 +24,9 @@
 #                     the same crate: ask for the boot key bound to PCR 4 or
 #                     to nothing (two images) and try to measure after it;
 #                     send the TPM on the VPU a series of commands
+#   out/runtime-variables.efi
+#                     uefi/test-apps/runtime: exit boot services and use the
+#                     variable services the OS is left with
 #   out/systemd-bootaa64.efi, out/uki.efi
 #                     Debian's systemd-boot, and a unified kernel image of its
 #                     systemd-stub around hello.efi, signed with the test key
@@ -161,6 +164,10 @@ sign "$mb/target/aarch64-unknown-uefi/release/boot-key.efi" "$out/boot-key.efi"
 sign "$mb/target/aarch64-unknown-uefi/release/boot-key-unbound.efi" "$out/boot-key-unbound.efi"
 sign "$mb/target/aarch64-unknown-uefi/release/boot-key-unbound-b.efi" "$out/boot-key-unbound-b.efi"
 sign "$mb/target/aarch64-unknown-uefi/release/tpm2-test.efi" "$out/tpm2-test.efi"
+
+rt="$here/uefi/test-apps/runtime"
+(cd "$rt" && cargo build --release --target aarch64-unknown-uefi)
+sign "$rt/target/aarch64-unknown-uefi/release/variables.efi" "$out/runtime-variables.efi"
 
 st="$here/uefi/test-apps/store"
 (cd "$st" && cargo build --release --target aarch64-unknown-uefi)
