@@ -71,6 +71,38 @@ fn load(image: Handle, buf: *mut u8, size: usize) -> (Status, Handle) {
     (s, handle)
 }
 
+const TEST_GUID: Guid = Guid::from_fields(0x5d0f3a58, 0x1c0e, 0x4d1b, 0x9a, 0x44, &[0x01, 0x23, 0x45, 0x67, 0x89, 0xab]);
+
+fn variable_name() -> [u16; 10] {
+    let mut name = [0u16; 10];
+    for (i, b) in "StoreTest".bytes().enumerate() {
+        name[i] = b as u16;
+    }
+    name
+}
+
+fn set_test_variable() -> Status {
+    let rt = unsafe { (*ST).runtime_services };
+    let mut name = variable_name();
+    let mut value = *b"kept in flash";
+    unsafe {
+        ((*rt).set_variable)(name.as_mut_ptr(), &TEST_GUID as *const _ as *mut _, 0x1 | 0x2 | 0x4, value.len(),
+            value.as_mut_ptr() as *mut c_void)
+    }
+}
+
+fn test_variable_kept() -> bool {
+    let rt = unsafe { (*ST).runtime_services };
+    let mut name = variable_name();
+    let mut value = [0u8; 32];
+    let mut size = value.len();
+    let s = unsafe {
+        ((*rt).get_variable)(name.as_mut_ptr(), &TEST_GUID as *const _ as *mut _, null_mut(), &mut size,
+            value.as_mut_ptr() as *mut c_void)
+    };
+    !s.is_error() && &value[..size] == b"kept in flash"
+}
+
 fn set_db(auth: *mut u8, size: usize) -> Status {
     let rt = unsafe { (*ST).runtime_services };
     let mut name = [b'd' as u16, b'b' as u16, 0];
@@ -89,6 +121,11 @@ pub extern "efiapi" fn efi_main(image: Handle, system_table: *mut SystemTable) -
     let (status, handle) = load(image, enrolled, enrolled_size);
     if !status.is_error() {
         say("store test: enrolled image loaded\r\n");
+        say(if test_variable_kept() {
+            "store test: variable kept\r\n"
+        } else {
+            "store test: variable LOST\r\n"
+        });
         let bs = unsafe { (*ST).boot_services };
         let mut exit = 0usize;
         unsafe { ((*bs).start_image)(handle, &mut exit, null_mut()) };
@@ -118,6 +155,7 @@ pub extern "efiapi" fn efi_main(image: Handle, system_table: *mut SystemTable) -
         say("store test: update refused\r\n");
         return s;
     }
+    set_test_variable();
     say("store test: update accepted, resetting\r\n");
     let rt = unsafe { (*system_table).runtime_services };
     unsafe { ((*rt).reset_system)(efi::RESET_COLD, Status::SUCCESS, 0, null_mut()) };

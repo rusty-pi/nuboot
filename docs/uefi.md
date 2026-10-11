@@ -49,7 +49,7 @@ from `start4.elf`'s:
 | `ResetSystem` | The power manager's watchdog (`PM_RSTC`/`PM_WDOG`), halt through `PM_RSTS` |
 | `SetWatchdogTimer`, `ExitBootServices` | Handed to `start4.elf`, which has the boot watchdog ([eeprom.md](eeprom.md#boot-watchdog)) |
 | Device tree | Passed on to the OS as the `EFI_DTB_TABLE` configuration table |
-| Variables | Held in RAM for the boot; `KEK`, `db` and `dbx` also in the flash store |
+| Variables | Held in RAM, with the non-volatile ones also in the flash store ([below](#the-variable-store)) |
 
 The SD card is tried before USB.
 
@@ -115,13 +115,25 @@ flash store.
 
 ### The variable store
 
-The flash store is a log of the accepted writes to `KEK`, `db` and `dbx` in the
-last 120 KiB of the EEPROM (two banks of 60 KiB from `0x62000`). Every boot
-starts from the built-in keys and checks each stored write again against the
-keys as they were when it was made, so a change made to the flash from the OS
-can drop a write but not add one. Dropping the newest write of a variable
-returns it to its previous value. Where the flash does not answer, a write
-lasts until reset. Writing a whole new `pieeprom.bin` clears the store.
+Non-volatile variables are kept in the last 96 KiB of the EEPROM, a log in two
+banks of 48 KiB from `0x68000`, and come back at the next boot.
+
+- `KEK`, `db` and `dbx` are stored as the signed writes that made them. Every
+  boot starts from the built-in keys and checks each stored write again against
+  the keys as they were when it was made.
+- Every other non-volatile variable (boot entries, shim's MOK list) is stored
+  with a seal, an HMAC-SHA256 under the key the VPU derives from the device
+  private key ([keystore.md](keystore.md#the-variable-store-key)), over its
+  attributes, name, value and a counter. A record whose seal does not match, or
+  whose counter is not above the one before it, is ignored. A variable is
+  at most 16 KiB.
+
+The OS can write the flash, but it can only drop records, never add or
+reorder them: it has neither a signing key nor the seal key. Dropping the
+newest record of a variable returns it to its previous value. Where the flash
+does not answer, or no device private key is fused, the seal is missing and a
+variable other than `KEK`, `db` and `dbx` lasts until reset. Writing a whole new
+`pieeprom.bin` clears the store.
 
 ### The test build
 
@@ -175,9 +187,7 @@ pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed b
 - The device tree is Raspberry Pi's for the Pi 4B whatever the board, with
   nothing filled in but `/memory@0`.
 - Nothing sets the ARM's clock.
-- Variables other than `KEK`, `db` and `dbx` are volatile, so boot entries and
-  the MOK list last only for the boot, and the boot is always the
-  removable-media path.
+- Nothing reads `BootOrder`: the boot is always the removable-media path.
 - `dbx` holds image hashes only; a certificate in it is ignored.
 - Storage is read-only to EFI applications.
 - No NVMe, no network boot, no USB keyboards.

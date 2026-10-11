@@ -13,6 +13,7 @@ const RESPONSE: u32 = 0x8000_0000;
 
 pub const TAG_GET_BOOT_KEY: u32 = 0x0003_00a0;
 pub const TAG_EXTEND_BOOT_MEASUREMENT: u32 = 0x0003_00a1;
+pub const TAG_GET_STORE_KEY: u32 = 0x0003_00a5;
 
 /// Ask for the boot key bound to `mask`, then extend a PCR and ask again: the
 /// key comes once, and a PCR can still be extended.
@@ -36,6 +37,10 @@ pub fn boot_key_test(system_table: *mut SystemTable, mask: u32) -> r_efi::efi::S
     match call(buf, TAG_EXTEND_BOOT_MEASUREMENT, &extend) {
         Some(_) => say(system_table, "boot key test: extend after the key answered\r\n"),
         None => say(system_table, "boot key test: extend after the key not answered\r\n"),
+    }
+    match call(buf, TAG_GET_STORE_KEY, &[0; 8]) {
+        Some(_) => say(system_table, "boot key test: variable store key answered\r\n"),
+        None => say(system_table, "boot key test: variable store key not answered\r\n"),
     }
     match call(buf, TAG_GET_BOOT_KEY, &[mask]) {
         Some(_) => say(system_table, "boot key test: second request answered\r\n"),

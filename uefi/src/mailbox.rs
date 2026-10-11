@@ -19,6 +19,7 @@ const RESPONSE: u32 = 0x8000_0000;
 const ANSWER_US: u64 = 200_000;
 
 const TAG_EXTEND_BOOT_MEASUREMENT: u32 = 0x0003_00a1;
+const TAG_GET_STORE_KEY: u32 = 0x0003_00a5;
 const TAG_TPM2_COMMAND: u32 = 0x0003_00a3;
 const TAG_GET_EARLY_EVENT: u32 = 0x0003_00a4;
 /// The largest TPM command or response (`src/tpm2.rs`).
@@ -160,6 +161,22 @@ pub fn early_event(index: u32) -> Option<EarlyEvent> {
         data.push((word(11 + n / 4) >> (8 * (n % 4))) as u8);
     }
     Some(EarlyEvent { pcr: word(0), kind: word(1), digest, data })
+}
+
+/// The key the VPU hands over once for sealing the variable store, if the
+/// board's private key is fused.
+pub fn store_key() -> Option<[u8; 32]> {
+    if !call(TAG_GET_STORE_KEY, &[0u32; 8]) {
+        return None;
+    }
+    let buf = BUFFER.0.get() as *const u32;
+    let mut key = [0u8; 32];
+    for (n, bytes) in key.chunks_exact_mut(4).enumerate() {
+        bytes.copy_from_slice(&unsafe { read_volatile(buf.add(5 + n)) }.to_le_bytes());
+    }
+    unsafe { core::ptr::write_bytes(BUFFER.0.get() as *mut u32, 0, 16) };
+    cache_flush(BUFFER.0.get() as u64, 64);
+    Some(key)
 }
 
 /// Extend a PCR on the VPU.

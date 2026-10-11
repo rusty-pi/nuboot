@@ -26,5 +26,7 @@ milestones:
     line: "boot key handed over  mask=0x10"
   - why: "A PCR can still be extended after the key."
     line: "boot key test: extend after the key answered"
+  - why: "UEFI took the variable store key at boot, so the application cannot have it."
+    line: "boot key test: variable store key not answered"
   - why: "The second request was refused."
     line: "boot key test: second request not answered"

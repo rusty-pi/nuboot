@@ -181,30 +181,101 @@ pub extern "efiapi" fn set_variable(
         warn!("var", "authenticated variables cannot be written"; name = W(name));
         return efi::Status::WRITE_PROTECTED;
     }
-    let delete = attributes & !APPEND == 0 || (size == 0 && attributes & APPEND == 0);
-    if delete {
-        return match existing {
-            Some(i) => {
-                VARS.get().remove(i);
-                efi::Status::SUCCESS
-            }
-            None => efi::Status::NOT_FOUND,
-        };
+    write_plain(name, guid, attributes, bytes, None)
+}
+
+/// The key the variable store is sealed with, until the OS has the board.
+static SEAL: Global<Option<[u8; 32]>> = Global::new(None);
+/// The sequence number the next sealed record gets: what stops an old record
+/// being put back after a newer one.
+static PLAIN_SEQ: Global<u64> = Global::new(0);
+/// The most a sealed record holds.
+const MAX_SEALED: usize = 16 * 1024;
+
+/// What a record is sealed over: everything but the seal.
+fn seal(r: &store::Record, key: &[u8; 32]) -> [u8; 32] {
+    let mut message = Vec::new();
+    message.extend_from_slice(&r.kind.to_le_bytes());
+    message.extend_from_slice(&r.attributes.to_le_bytes());
+    message.extend_from_slice(&r.guid);
+    message.extend_from_slice(&r.time);
+    for c in &r.name {
+        message.extend_from_slice(&c.to_le_bytes());
     }
-    if attributes & BS == 0 || size as u64 > MAX_VARIABLE {
+    message.extend_from_slice(&r.data);
+    crate::sha256::hmac(key, &message)
+}
+
+/// `SetVariable` for a variable no signature guards. `replayed` is the
+/// record the flash store held, when this puts it back.
+fn write_plain(
+    name: &[u16],
+    guid: efi::Guid,
+    attributes: u32,
+    bytes: &[u8],
+    replayed: Option<store::Record>,
+) -> efi::Status {
+    let existing = find(name, &guid);
+    let delete = attributes & !APPEND == 0 || (bytes.is_empty() && attributes & APPEND == 0);
+    if delete {
+        let Some(i) = existing else { return efi::Status::NOT_FOUND };
+        let v = &VARS.get()[i];
+        if replayed.is_none() && v.attributes & NV != 0 && !v.history.is_empty() {
+            let record = sealed(store::DELETE, v.attributes, &guid, name, &[]);
+            if !commit(i, &record, &[]) {
+                return efi::Status::DEVICE_ERROR;
+            }
+        }
+        VARS.get().remove(i);
+        return efi::Status::SUCCESS;
+    }
+    if attributes & BS == 0 || bytes.len() as u64 > MAX_VARIABLE {
         return efi::Status::INVALID_PARAMETER;
     }
     let append = attributes & APPEND != 0;
     let attributes = attributes & !APPEND;
+    let persistent = attributes & NV != 0 && SEAL.get().is_some();
+    if let Some(i) = existing {
+        if !append && VARS.get()[i].attributes != attributes {
+            return efi::Status::INVALID_PARAMETER;
+        }
+    }
+    if persistent && bytes.len() > MAX_SEALED {
+        return efi::Status::OUT_OF_RESOURCES;
+    }
+    let mut history = match existing {
+        Some(i) if append => VARS.get()[i].history.clone(),
+        _ => Vec::new(),
+    };
+    if persistent {
+        let order = *NEXT.get();
+        let record = match replayed {
+            Some(r) => r,
+            None => {
+                let kept = attributes | if append { APPEND } else { 0 };
+                let record = sealed(store::SET, kept, &guid, name, bytes);
+                let mut all = history.clone();
+                all.push((order, record.clone()));
+                if !commit(existing.unwrap_or(usize::MAX), &record, &all) {
+                    return efi::Status::DEVICE_ERROR;
+                }
+                record
+            }
+        };
+        history.push((order, record));
+        *NEXT.get() += 1;
+    } else if attributes & NV != 0 && SEAL.get().is_none() {
+        debug!("var", "no device key, a non-volatile variable lasts until reset"; name = W(name));
+    }
     match existing {
-        Some(i) if append || VARS.get()[i].attributes == attributes => {
+        Some(i) => {
             let v = &mut VARS.get()[i];
             if !append {
                 v.data.clear();
             }
             v.data.extend_from_slice(bytes);
+            v.history = history;
         }
-        Some(_) => return efi::Status::INVALID_PARAMETER,
         None => VARS.get().push(Var {
             name: name.to_vec(),
             guid,
@@ -212,11 +283,32 @@ pub extern "efiapi" fn set_variable(
             data: bytes.to_vec(),
             fixed: false,
             time: [0; 16],
-            history: Vec::new(),
+            history,
         }),
     }
-    debug!("var", "variable set"; name = W(name), bytes = size);
+    debug!("var", "variable set"; name = W(name), bytes = bytes.len());
     efi::Status::SUCCESS
+}
+
+/// A new record for the store, sealed with the key.
+fn sealed(kind: u32, attributes: u32, guid: &efi::Guid, name: &[u16], data: &[u8]) -> store::Record {
+    let seq = *PLAIN_SEQ.get();
+    *PLAIN_SEQ.get() += 1;
+    let mut time = [0u8; 16];
+    time[..8].copy_from_slice(&seq.to_le_bytes());
+    let mut record = store::Record {
+        kind,
+        attributes,
+        guid: *guid.as_bytes(),
+        time,
+        name: name.to_vec(),
+        data: data.to_vec(),
+        auth: Vec::new(),
+    };
+    if let Some(key) = SEAL.get() {
+        record.auth = seal(&record, key).to_vec();
+    }
+    record
 }
 
 /// The parts of an `EFI_VARIABLE_AUTHENTICATION_2` descriptor and what
@@ -346,14 +438,28 @@ fn commit(index: usize, record: &store::Record, history: &[(u64, store::Record)]
     })
 }
 
-/// Apply the writes the flash store holds to the built-in keys, each checked
-/// as it was when it was made.
+/// Zero the key the store is sealed with: from here on the OS has the board.
+fn lock() {
+    if let Some(key) = SEAL.get().as_mut() {
+        crate::util::zero(key);
+    }
+    *SEAL.get() = None;
+}
+
+/// Apply what the flash store holds to the built-in keys and the variables:
+/// each write to `KEK`, `db` and `dbx` checked as it was when it was made,
+/// each of the others checked against its seal.
 pub fn load_store() {
+    *SEAL.get() = crate::mailbox::store_key();
+    crate::tables::on_exit_boot_services(lock);
+    if SEAL.get().is_none() {
+        warn!("var", "no device key is fused: variables other than KEK, db and dbx stay in memory");
+    }
     for r in store::load() {
         let name = r.name.clone();
         let guid = efi::Guid::from_bytes(&r.guid);
         if !is_key(&name, &guid) {
-            warn!("var", "stored record is for no key variable, ignored"; name = W(&name));
+            replay_plain(r);
             continue;
         }
         let mut buf = r.time.to_vec();
@@ -363,6 +469,33 @@ pub fn load_store() {
         if status != efi::Status::SUCCESS {
             warn!("var", "stored write refused"; name = W(&name), status = status.as_usize());
         }
+    }
+}
+
+fn replay_plain(r: store::Record) {
+    let Some(key) = *SEAL.get() else {
+        warn!("var", "stored variable ignored: no device key is fused"; name = W(&r.name));
+        return;
+    };
+    let seq = u64::from_le_bytes(r.time[..8].try_into().unwrap());
+    if r.auth.as_slice() != seal(&r, &key) {
+        warn!("var", "stored variable ignored: its seal does not match"; name = W(&r.name));
+        return;
+    }
+    if seq < *PLAIN_SEQ.get() {
+        warn!("var", "stored variable ignored: older than one before it"; name = W(&r.name), seq = seq);
+        return;
+    }
+    *PLAIN_SEQ.get() = seq + 1;
+    let guid = efi::Guid::from_bytes(&r.guid);
+    let (name, attributes, data) = (r.name.clone(), r.attributes, r.data.clone());
+    let status = if r.kind == store::DELETE {
+        write_plain(&name, guid, 0, &[], Some(r))
+    } else {
+        write_plain(&name, guid, attributes, &data, Some(r))
+    };
+    if status != efi::Status::SUCCESS {
+        warn!("var", "stored variable not restored"; name = W(&name), status = status.as_usize());
     }
 }
 

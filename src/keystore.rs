@@ -31,11 +31,13 @@ use crate::{cache, critical, otp, sha256};
 const FIRST_ROW: u32 = 56;
 const ROWS: usize = 8;
 const LABEL: &[u8] = b"pi4-server-firmware boot key v1";
+const STORE_LABEL: &[u8] = b"pi4-server-firmware variable store key v1";
 pub const PCRS: usize = 24;
 
 static mut PCR: [[u8; 32]; PCRS] = [[0; 32]; PCRS];
 static mut COUNT: u32 = 0;
 static mut TAKEN: bool = false;
+static mut STORE_TAKEN: bool = false;
 
 pub enum Refused {
     NoSuchRegister,
@@ -90,8 +92,29 @@ pub fn take(mask: u32) -> Option<[u8; 32]> {
     key
 }
 
+/// The key UEFI seals its variable store with, once, if the board's private
+/// key is fused: it depends on nothing else, so it is the same at every boot.
+/// UEFI takes it before the OS runs and the OS is never given it.
+pub fn take_store_key() -> Option<[u8; 32]> {
+    if unsafe { read_volatile(&raw const STORE_TAKEN) } {
+        return None;
+    }
+    unsafe { write_volatile(&raw mut STORE_TAKEN, true) };
+    let _section = critical::enter();
+    let key = derive_store();
+    scrub();
+    key
+}
+
 #[inline(never)]
-fn derive(mask: u32) -> Option<[u8; 32]> {
+fn derive_store() -> Option<[u8; 32]> {
+    let mut private = private_key()?;
+    let key = sha256::hmac(&private, STORE_LABEL);
+    zero(&mut private);
+    Some(key)
+}
+
+fn private_key() -> Option<[u8; ROWS * 4]> {
     let mut private = [0u8; ROWS * 4];
     let mut fused = 0;
     for (i, chunk) in private.chunks_exact_mut(4).enumerate() {
@@ -99,9 +122,12 @@ fn derive(mask: u32) -> Option<[u8; 32]> {
         fused |= row;
         chunk.copy_from_slice(&row.to_le_bytes());
     }
-    if fused == 0 {
-        return None;
-    }
+    (fused != 0).then_some(private)
+}
+
+#[inline(never)]
+fn derive(mask: u32) -> Option<[u8; 32]> {
+    let mut private = private_key()?;
     let mut message = [0u8; LABEL.len() + 4 + 32 * PCRS];
     message[..LABEL.len()].copy_from_slice(LABEL);
     message[LABEL.len()..LABEL.len() + 4].copy_from_slice(&mask.to_le_bytes());

@@ -46,6 +46,9 @@ const TAG_EXTEND_BOOT_MEASUREMENT: u32 = 0x0003_00a1;
 /// is. Linux's firmware interface cannot set the tag's length word, so it is
 /// not what says.
 const TAG_TPM2_COMMAND: u32 = 0x0003_00a3;
+/// The key UEFI seals the variables it keeps in the flash with: 32 bytes out,
+/// once ([`keystore::take_store_key`]).
+const TAG_GET_STORE_KEY: u32 = 0x0003_00a5;
 /// Event `n` of what the VPU measured before the ARM started, for the log
 /// UEFI keeps: the index in, then the PCR, the event type, the digest, the
 /// length of the data and the data.
@@ -123,6 +126,17 @@ fn answer(bus: u32) {
                     None => warn!("keystore", "no boot key to hand over"; mask = format_args!("{mask:#x}")),
                 }
             }
+            TAG_GET_STORE_KEY if room >= 32 => match keystore::take_store_key() {
+                Some(mut key) => {
+                    for (n, bytes) in key.chunks_exact(4).enumerate() {
+                        set(value + n as u32, u32::from_le_bytes(bytes.try_into().unwrap()));
+                    }
+                    keystore::zero(&mut key);
+                    info!("keystore", "variable store key handed over");
+                    set(i + 2, RESPONSE | 32);
+                }
+                None => warn!("keystore", "no variable store key to hand over"),
+            },
             TAG_EXTEND_BOOT_MEASUREMENT if room >= 36 => {
                 let pcr = word(value);
                 let mut digest = [0u8; 32];
