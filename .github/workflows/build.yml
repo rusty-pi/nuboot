@@ -151,6 +151,7 @@ jobs:
             out/watchdog-stuck.efi
             out/watchdog-fault.efi
             out/xhci-reset.efi
+            out/reboot-flags.efi
             out/boot-key.efi
             out/boot-key-unbound.efi
             out/boot-key-unbound-b.efi

@@ -95,6 +95,7 @@ pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed b
 pimu boot --scenario scenarios/rev14-hello.yaml  # an EFI application on a 4B rev 1.4
 pimu boot --scenario scenarios/usb-hello.yaml    # an EFI application off a USB drive
 pimu boot --scenario scenarios/xhci-reset.yaml   # NOTIFY_XHCI_RESET over the property mailbox
+pimu boot --scenario scenarios/reboot-flags.yaml  # the tryboot request over the property mailbox
 pimu boot --scenario scenarios/boot-key.yaml     # the boot key bound to PCR 4, once
 pimu boot --scenario scenarios/boot-key-unbound.yaml    # bound to PCR 7
 pimu boot --scenario scenarios/tpm2-commands.yaml  # TPM 2.0 commands on the VPU
@@ -113,7 +114,7 @@ they are signed with ([uefi.md](uefi.md#secure-boot)).
 
 - Nothing of this has run on a board: the tests are in pimu, which models the
   bootloader, including its signed boot.
-- The property mailbox answers `NOTIFY_XHCI_RESET` (reload the VL805's
+- The property mailbox answers `GET_REBOOT_FLAGS` and `SET_REBOOT_FLAGS` (bit 0 is the one-shot tryboot request in `PM_RSTS`, which Linux's `reboot '0 tryboot'` sets), `NOTIFY_XHCI_RESET` (reload the VL805's
   firmware after the OS has reset the PCIe link), the TPM 2.0 on the VPU (tag
   `0x000300a3` carries a command, `0x000300a1` extends a PCR) and the
   one-time boot key (tag `0x000300a0`) and variable store key (`0x000300a5`),

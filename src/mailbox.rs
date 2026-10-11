@@ -12,7 +12,7 @@
 //! firmware does not know is left as it came, and the buffer is marked
 //! answered either way, which is what the stock firmware does.
 
-use crate::{debug, error, idle, info, keystore, measure, mmio, tpm2, vl805, warn};
+use crate::{debug, error, idle, info, keystore, measure, mmio, tpm2, vl805, warn, watchdog};
 
 const VPU_VIEW: u32 = 0x7e00_b980;
 /// Mailbox 0, which the ARM reads.
@@ -33,6 +33,12 @@ const MAX_BUFFER: u32 = 0x1_0000;
 /// Linux's `RPI_FIRMWARE_NOTIFY_XHCI_RESET`: it has reset the PCIe link, and
 /// with it a VL805 that keeps no firmware of its own.
 const TAG_NOTIFY_XHCI_RESET: u32 = 0x0003_0058;
+
+/// Linux's `RPI_FIRMWARE_GET_REBOOT_FLAGS` and `SET_REBOOT_FLAGS`, which
+/// `reboot '0 tryboot'` sets: bit 0 asks the bootloader to boot the next time
+/// from `tryboot.img` and `tryboot.sig` in place of `boot.img` and `boot.sig`.
+const TAG_GET_REBOOT_FLAGS: u32 = 0x0003_0064;
+const TAG_SET_REBOOT_FLAGS: u32 = 0x0003_8064;
 
 /// The boot key, once: the mask of the PCRs it is bound to in, 32 bytes out,
 /// then not answered again ([`keystore`]).
@@ -110,6 +116,16 @@ fn answer(bus: u32) {
                 } else {
                     error!("usb", "VL805 firmware reload failed"; device = format_args!("{device:#x}"));
                 }
+                set(i + 2, RESPONSE | 4);
+            }
+            TAG_GET_REBOOT_FLAGS if room >= 4 => {
+                set(value, u32::from(watchdog::tryboot_requested()));
+                set(i + 2, RESPONSE | 4);
+            }
+            TAG_SET_REBOOT_FLAGS if room >= 4 => {
+                let flags = word(value);
+                watchdog::request_tryboot(flags & 1 != 0);
+                info!("mailbox", "reboot flags set"; flags = format_args!("{flags:#x}"));
                 set(i + 2, RESPONSE | 4);
             }
             TAG_GET_BOOT_KEY if room >= 32 => {

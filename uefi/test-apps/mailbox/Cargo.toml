@@ -23,6 +23,10 @@ name = "boot-key-unbound-b"
 path = "src/boot_key_unbound_b.rs"
 
 [[bin]]
+name = "reboot-flags"
+path = "src/reboot_flags.rs"
+
+[[bin]]
 name = "tpm2-test"
 path = "src/tpm2_test.rs"
 

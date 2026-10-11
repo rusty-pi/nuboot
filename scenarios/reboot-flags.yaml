@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "reboot-flags"
+description: "Linux's reboot '0 tryboot' sets the reboot flags over the property mailbox: SET_REBOOT_FLAGS with bit 0 asks the bootloader for a tryboot at the next boot, GET_REBOOT_FLAGS reads the request back."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  sd:
+    files:
+      start4.elf: "../out/start4-test.elf"
+      EFI/BOOT/BOOTAA64.EFI: "../out/reboot-flags.efi"
+  until: "reboot flags test: done"
+  wall_secs: 600
+
+milestones:
+  - why: "No reboot flag is set at power-on."
+    line: "reboot flags test: none set at first"
+  - why: "SET_REBOOT_FLAGS with bit 0 asks for a tryboot, and GET_REBOOT_FLAGS reads it back."
+    line: "reboot flags test: tryboot requested"
+  - why: "Setting the flags to zero takes the request back."
+    line: "reboot flags test: request taken back"

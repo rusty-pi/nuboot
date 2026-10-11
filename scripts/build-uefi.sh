@@ -29,6 +29,9 @@
 #                     variable services the OS is left with
 #   out/capsule-*.cap firmware update capsules the capsule scenario puts on the
 #                     card: new, old, corrupt, signed by a stranger, and junk
+#   out/reboot-flags.efi
+#                     the same crate: set and read the reboot flags, as Linux's
+#                     reboot '0 tryboot' does
 #   out/systemd-bootaa64.efi, out/uki.efi
 #                     Debian's systemd-boot, and a unified kernel image of its
 #                     systemd-stub around hello.efi, signed with the test key
@@ -175,6 +178,7 @@ sign "$mb/target/aarch64-unknown-uefi/release/boot-key.efi" "$out/boot-key.efi"
 sign "$mb/target/aarch64-unknown-uefi/release/boot-key-unbound.efi" "$out/boot-key-unbound.efi"
 sign "$mb/target/aarch64-unknown-uefi/release/boot-key-unbound-b.efi" "$out/boot-key-unbound-b.efi"
 sign "$mb/target/aarch64-unknown-uefi/release/tpm2-test.efi" "$out/tpm2-test.efi"
+sign "$mb/target/aarch64-unknown-uefi/release/reboot-flags.efi" "$out/reboot-flags.efi"
 
 rt="$here/uefi/test-apps/runtime"
 (cd "$rt" && cargo build --release --target aarch64-unknown-uefi)
