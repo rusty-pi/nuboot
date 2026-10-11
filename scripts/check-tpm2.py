@@ -229,9 +229,81 @@ def check_objects(r):
     tag, rc, body = header(r["getcap-transient"])
     if rc != 0 or struct.unpack(">I", body[5:9])[0] != 2:
         fail(f"two objects are loaded: {body.hex()}")
+    check_signing(r)
     expect_rc(r, "flush-item", 0)
     expect_rc(r, "flush-primary", 0)
     expect_rc(r, "flush-again", 0x8B | 0x40 | 0x100)
+
+
+def check_signing(r):
+    """A signing key's signature and quote, checked with an independent ECDSA."""
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives.asymmetric.utils import Prehashed, encode_dss_signature
+
+    tag, rc, body = header(r["create-signing"])
+    if rc != 0:
+        fail(f"Create (signing): {rc:#x}")
+    _, at = tpm2b(body, 4)
+    public, _ = tpm2b(body, at)
+    if public[:4] != struct.pack(">HH", 0x23, 0xB) or len(public) != 88:
+        fail(f"signing key's public area: {public.hex()}")
+    x, y = public[-66:-34], public[-32:]
+    key = ec.EllipticCurvePublicNumbers(int.from_bytes(x, "big"), int.from_bytes(y, "big"), ec.SECP256R1()).public_key()
+
+    def signature_of(body, at):
+        alg, hash_alg = struct.unpack(">HH", body[at : at + 4])
+        if (alg, hash_alg) != (0x18, 0xB):
+            fail(f"signature algorithm {alg:#x} {hash_alg:#x}")
+        rr, at = tpm2b(body, at + 4)
+        ss, at = tpm2b(body, at)
+        return encode_dss_signature(int.from_bytes(rr, "big"), int.from_bytes(ss, "big")), at
+
+    tag, rc, body = header(r["sign"])
+    if rc != 0:
+        fail(f"Sign: {rc:#x}")
+    der, _ = signature_of(body, 4)
+    digest = b"\x11" * 32
+    try:
+        key.verify(der, digest, ec.ECDSA(Prehashed(hashes.SHA256())))
+    except InvalidSignature:
+        fail("Sign: the signature does not verify against the key's public area")
+    expect_rc(r, "sign-short-digest", 0x95 | 0x40 | 0x100)
+    expect_rc(r, "sign-storage-key", 0x9C | 0x100)
+    tag, rc, body = header(r["verify-signature"])
+    if rc != 0 or struct.unpack(">H", body[:2])[0] != 0x8022:
+        fail(f"VerifySignature: {rc:#x} {body.hex()}")
+    expect_rc(r, "verify-forged", 0x9B | 0x40 | 0x200)
+
+    tag, rc, body = header(r["quote"])
+    if rc != 0:
+        fail(f"Quote: {rc:#x}")
+    attest, at = tpm2b(body, 4)
+    der, _ = signature_of(body, at)
+    try:
+        key.verify(der, hashlib.sha256(attest).digest(), ec.ECDSA(Prehashed(hashes.SHA256())))
+    except InvalidSignature:
+        fail("Quote: the signature does not verify the attestation")
+    magic, kind = struct.unpack(">IH", attest[:6])
+    if magic != 0xFF544347 or kind != 0x8018:
+        fail(f"Quote: {attest[:6].hex()}")
+    signer, at = tpm2b(attest, 6)
+    extra, at = tpm2b(attest, at)
+    if extra != b"\x01\x02\x03\x04":
+        fail(f"Quote: qualifying data {extra.hex()}")
+    at += 8 + 4 + 4 + 1 + 8
+    selection = attest[at : at + 4 + 2 + 1 + 3]
+    if selection != struct.pack(">IHB", 1, 0xB, 3) + bytes([1, 0, 0]):
+        fail(f"Quote: selection {selection.hex()}")
+    pcr_digest, at = tpm2b(attest, at + 10)
+    _, pcrs = pcr_read(r["pcr-read-all"])
+    if pcr_digest != sha256(pcrs[0]) or at != len(attest):
+        fail("Quote: the PCR digest is not that of PCR 0")
+    tag, rc, body = header(r["hash-ticket"])
+    if rc != 0 or body[2:34] != sha256(b"abc") or body[34:36] != b"\x80\x24" or body[36:40] != struct.pack(">I", 0x40000001):
+        fail(f"Hash with the owner hierarchy: {body.hex()}")
+    expect_rc(r, "flush-signing", 0)
 
 
 if __name__ == "__main__":

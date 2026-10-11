@@ -10,8 +10,9 @@
 //! One bank, SHA-256, of 24 PCRs, all extendable from locality 0 as the PC
 //! Client profile has it except 17-22 (DRTM, which nothing here does), and
 //! PCRs 16 and 23 resettable. The hierarchies, the primary keys under them and
-//! the data sealed under those are in [`object`]; sessions and policies in
-//! [`session`]; what lets a tool keep them between commands in [`context`].
+//! the data and signing keys created under those are in [`object`]; sessions
+//! and policies in [`session`]; signatures and quotes in [`sign`]; what lets a
+//! tool keep them between commands in [`context`].
 
 use crate::keystore::{self, PCRS};
 use crate::{rng, sha256, stc};
@@ -22,6 +23,8 @@ mod context;
 mod object;
 #[path = "tpm2/session.rs"]
 mod session;
+#[path = "tpm2/sign.rs"]
+mod sign;
 
 pub const MAX_COMMAND: usize = 2048;
 
@@ -67,6 +70,8 @@ const RC_SYMMETRIC: u32 = 0x096;
 const RC_POLICY_FAIL: u32 = 0x09d;
 const RC_INTEGRITY: u32 = 0x09f;
 const RC_BAD_AUTH: u32 = 0x0a2;
+const RC_SIGNATURE: u32 = 0x09b;
+const RC_TICKET: u32 = 0x0a0;
 const RC_POLICY_CC: u32 = 0x0a4;
 const RC_CURVE: u32 = 0x0a6;
 const RC_ECC_POINT: u32 = 0x0a7;
@@ -94,7 +99,7 @@ const CC_STIR_RANDOM: u32 = 0x146;
 /// Commands in numeric order, for `TPM_CAP_COMMANDS`: the number of handles in
 /// the command (bits 25-27 of `TPMA_CC`), and 8 more when the response has a
 /// handle (bit 28).
-const COMMANDS: [(u32, u32); 31] = [
+const COMMANDS: [(u32, u32); 35] = [
     (object::CC_CREATE_PRIMARY, 1 | 8),
     (CC_PCR_RESET, 1),
     (CC_INCREMENTAL_SELF_TEST, 0),
@@ -103,8 +108,11 @@ const COMMANDS: [(u32, u32); 31] = [
     (CC_SHUTDOWN, 0),
     (CC_STIR_RANDOM, 0),
     (CC_PCR_EVENT, 1),
+    (session::CC_POLICY_SECRET, 2),
     (object::CC_CREATE, 1),
     (object::CC_LOAD, 1 | 8),
+    (sign::CC_QUOTE, 1),
+    (sign::CC_SIGN, 1),
     (object::CC_UNSEAL, 1),
     (object::CC_CONTEXT_LOAD, 8),
     (object::CC_CONTEXT_SAVE, 1),
@@ -114,6 +122,7 @@ const COMMANDS: [(u32, u32); 31] = [
     (session::CC_POLICY_OR, 1),
     (object::CC_READ_PUBLIC, 1),
     (session::CC_START_AUTH_SESSION, 2 | 8),
+    (sign::CC_VERIFY_SIGNATURE, 1),
     (CC_GET_CAPABILITY, 0),
     (CC_GET_RANDOM, 0),
     (CC_GET_TEST_RESULT, 0),
@@ -136,11 +145,15 @@ struct Spec {
     authorized: usize,
 }
 
-const OBJECT_COMMANDS: [Spec; 17] = [
+const OBJECT_COMMANDS: [Spec; 21] = [
     Spec { code: object::CC_CREATE_PRIMARY, handles: 1, authorized: 1 },
     Spec { code: object::CC_CREATE, handles: 1, authorized: 1 },
     Spec { code: object::CC_LOAD, handles: 1, authorized: 1 },
     Spec { code: object::CC_UNSEAL, handles: 1, authorized: 1 },
+    Spec { code: sign::CC_SIGN, handles: 1, authorized: 1 },
+    Spec { code: sign::CC_QUOTE, handles: 1, authorized: 1 },
+    Spec { code: sign::CC_VERIFY_SIGNATURE, handles: 1, authorized: 0 },
+    Spec { code: session::CC_POLICY_SECRET, handles: 2, authorized: 1 },
     Spec { code: object::CC_READ_PUBLIC, handles: 1, authorized: 0 },
     Spec { code: object::CC_FLUSH_CONTEXT, handles: 0, authorized: 0 },
     Spec { code: object::CC_CONTEXT_SAVE, handles: 1, authorized: 0 },
@@ -401,6 +414,10 @@ fn dispatch(code: u32, handles: &[u32; 3], params: &mut In, a: &mut session::Aut
         object::CC_CREATE => object::create(&mut command),
         object::CC_LOAD => object::load(&mut command),
         object::CC_UNSEAL => object::unseal(&mut command),
+        sign::CC_SIGN => sign::sign(&mut command),
+        sign::CC_QUOTE => sign::quote(&mut command),
+        sign::CC_VERIFY_SIGNATURE => sign::verify(&mut command),
+        session::CC_POLICY_SECRET => session::policy_secret(handles[0], handles[1], params, a),
         object::CC_READ_PUBLIC => object::read_public_command(&mut command),
         object::CC_TEST_PARMS => object::test_parms(&mut command),
         object::CC_FLUSH_CONTEXT => context::flush(params),
@@ -720,15 +737,12 @@ fn hash(input: &mut In, out: &mut Out) -> Result<(), u32> {
     if alg != ALG_SHA256 {
         return Err(RC_HASH | RC_P | 2 * RC_1);
     }
-    // A ticket needs a hierarchy's proof value, which only a keyed hierarchy
-    // has: asking for one is asking for something this TPM cannot do.
-    if hierarchy != 0x4000_0007 {
+    if !matches!(hierarchy, object::RH_NULL | object::RH_OWNER | object::RH_ENDORSEMENT | object::RH_PLATFORM) {
         return Err(RC_VALUE | RC_P | 3 * RC_1);
     }
+    let digest = sha256::digest(data);
     out.u16(32);
-    out.put(&sha256::digest(data));
-    out.u16(0x8024);
-    out.u32(0x4000_0007);
-    out.u16(0);
+    out.put(&digest);
+    sign::hash_ticket(out, hierarchy, data, &digest);
     Ok(())
 }

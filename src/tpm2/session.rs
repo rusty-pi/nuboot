@@ -26,6 +26,7 @@ pub const CC_POLICY_RESTART: u32 = 0x180;
 pub const CC_POLICY_OR: u32 = 0x171;
 pub const CC_POLICY_AUTH_VALUE: u32 = 0x16b;
 pub const CC_POLICY_PASSWORD: u32 = 0x18c;
+pub const CC_POLICY_SECRET: u32 = 0x151;
 pub const CC_POLICY_COMMAND_CODE: u32 = 0x16c;
 
 const ATTR_CONTINUE: u8 = 0x01;
@@ -675,6 +676,45 @@ fn salt_of(handle: u32, salt: &[u8]) -> Result<[u8; 32], u32> {
     kdf::kdfe(&z, b"SECRET", &peer.x, &public.unique[..32], 256, &mut secret);
     keystore::zero(&mut z);
     Ok(secret)
+}
+
+/// `TPM2_PolicySecret`: the policy is met by whoever can authorize the entity
+/// the command names, which its own authorization has just shown.
+pub fn policy_secret(entity: u32, handle: u32, params: &mut In, a: &mut Authorization) -> Result<(), u32> {
+    let session = session_of(handle).ok_or(RC_HANDLE | RC_2)?;
+    if session.kind == KIND_HMAC {
+        return Err(RC_ATTRIBUTES | RC_2);
+    }
+    let nonce = params.sized().ok_or(RC_COMMAND_SIZE)?;
+    let command_hash = params.sized().ok_or(RC_COMMAND_SIZE)?;
+    let reference = params.sized().ok_or(RC_COMMAND_SIZE)?;
+    let _expiration = params.u32().ok_or(RC_COMMAND_SIZE)?;
+    if params.rest() != 0 {
+        return Err(RC_COMMAND_SIZE);
+    }
+    if !nonce.is_empty() && !constant_eq(nonce, &session.nonce_tpm) {
+        return Err(RC_VALUE | RC_P | RC_1);
+    }
+    if !command_hash.is_empty() {
+        return Err(RC_VALUE | RC_P | 2 * RC_1);
+    }
+    if reference.len() > 32 {
+        return Err(RC_SIZE | RC_P | 3 * RC_1);
+    }
+    let (name, len) = super::name_for(entity);
+    let mut update = sha256::Sha256::new();
+    update.update(&session.digest);
+    update.update(&CC_POLICY_SECRET.to_be_bytes());
+    update.update(&name[..len]);
+    let mut update_reference = sha256::Sha256::new();
+    update_reference.update(&update.finish());
+    update_reference.update(reference);
+    session.digest = update_reference.finish();
+    let mut response = [0u8; 10];
+    response[2..4].copy_from_slice(&0x8023u16.to_be_bytes());
+    response[4..8].copy_from_slice(&RH_NULL.to_be_bytes());
+    a.response_params(&response);
+    Ok(())
 }
 
 /// The policy commands: `handle` is the session, `params` what follows.

@@ -40,7 +40,7 @@ const FIXED_TPM: u32 = 1 << 1;
 const FIXED_PARENT: u32 = 1 << 4;
 const SENSITIVE_DATA_ORIGIN: u32 = 1 << 5;
 pub const USER_WITH_AUTH: u32 = 1 << 6;
-const RESTRICTED: u32 = 1 << 16;
+pub const RESTRICTED: u32 = 1 << 16;
 const DECRYPT: u32 = 1 << 17;
 const SIGN_ENCRYPT: u32 = 1 << 18;
 /// What a template may set: the others are reserved.
@@ -189,8 +189,19 @@ impl Public {
                     if self.scheme != ALG_NULL {
                         return Err(RC_SCHEME);
                     }
-                } else if self.sym_alg != ALG_NULL {
-                    return Err(RC_SYMMETRIC);
+                } else {
+                    if self.sym_alg != ALG_NULL {
+                        return Err(RC_SYMMETRIC);
+                    }
+                    match self.scheme {
+                        ALG_NULL => {}
+                        ALG_ECDSA | ALG_ECDH if self.scheme_hash == ALG_SHA256 => {}
+                        ALG_ECDSA | ALG_ECDH => return Err(super::RC_HASH),
+                        _ => return Err(RC_SCHEME),
+                    }
+                    if self.attributes & RESTRICTED != 0 && self.scheme != ALG_ECDSA {
+                        return Err(RC_SCHEME);
+                    }
                 }
             }
             _ => return Err(RC_TYPE),
@@ -200,6 +211,15 @@ impl Public {
 
     pub fn is_storage(&self) -> bool {
         self.kind == ALG_ECC && self.attributes & (RESTRICTED | DECRYPT) == RESTRICTED | DECRYPT
+    }
+
+    /// A key that signs: ECDSA, restricted to what the TPM itself attests or not.
+    pub fn is_signing(&self) -> bool {
+        self.kind == ALG_ECC && self.attributes & SIGN_ENCRYPT != 0 && !self.is_storage() && self.scheme != ALG_ECDH
+    }
+
+    pub fn is_restricted(&self) -> bool {
+        self.attributes & RESTRICTED != 0
     }
 
     /// A sealed data object: a keyed hash that signs and decrypts nothing.
@@ -260,6 +280,18 @@ pub fn name_of(public: &[u8]) -> [u8; 34] {
     name[..2].copy_from_slice(&ALG_SHA256.to_be_bytes());
     name[2..].copy_from_slice(&sha256::digest(public));
     name
+}
+
+/// The name that qualifies `name` under a parent whose qualified name is
+/// `parent`.
+pub fn qualify(parent: &[u8], name: &[u8; 34]) -> [u8; 34] {
+    let mut hash = sha256::Sha256::new();
+    hash.update(parent);
+    hash.update(name);
+    let mut qualified = [0u8; 34];
+    qualified[..2].copy_from_slice(&ALG_SHA256.to_be_bytes());
+    qualified[2..].copy_from_slice(&hash.finish());
+    qualified
 }
 
 /// What a primary is made from, which is also all there is to keep of it.
@@ -328,6 +360,9 @@ pub struct Slot {
     pub name: [u8; 34],
     pub origin: Origin,
     pub is_primary: bool,
+    /// The name of the object qualified by its parents': what says which
+    /// hierarchy and chain of keys it came from.
+    pub qualified: [u8; 34],
     /// A primary's authorization value (a child's is in its blob).
     pub auth: [u8; 32],
     pub auth_len: usize,
@@ -342,6 +377,7 @@ const EMPTY: Slot = Slot {
     name: [0; 34],
     origin: Origin { hierarchy: 0, template: [0; 32] },
     is_primary: false,
+    qualified: [0; 34],
     auth: [0; 32],
     auth_len: 0,
     private: [0; MAX_PRIVATE],
@@ -652,6 +688,7 @@ pub fn create_primary(c: &mut Command) -> Result<(), u32> {
     slot.name = name;
     slot.origin = origin;
     slot.is_primary = true;
+    slot.qualified = qualify(&hierarchy.to_be_bytes(), &name);
     slot.auth[..create.auth.len()].copy_from_slice(create.auth);
     slot.auth_len = create.auth.len();
 
@@ -714,8 +751,22 @@ pub fn create(c: &mut Command) -> Result<(), u32> {
             template.unique_len = 32;
         }
         _ => {
-            sensitive.wipe();
-            return Err(RC_TYPE | RC_P | 2 * RC_1);
+            if !template.is_signing() {
+                sensitive.wipe();
+                return Err(RC_TYPE | RC_P | 2 * RC_1);
+            }
+            if template.attributes & SENSITIVE_DATA_ORIGIN == 0 || !create.data.is_empty() {
+                sensitive.wipe();
+                return Err(RC_ATTRIBUTES | RC_P | 2 * RC_1);
+            }
+            let Some(point) = new_scalar(&mut sensitive.value).and_then(|d| p256::public_key(&d)) else {
+                sensitive.wipe();
+                return Err(RC_RANGE);
+            };
+            sensitive.value_len = 32;
+            template.unique[..32].copy_from_slice(&point.x);
+            template.unique[32..].copy_from_slice(&point.y);
+            template.unique_len = 64;
         }
     }
     let (bytes, len) = template.bytes();
@@ -735,6 +786,21 @@ pub fn create(c: &mut Command) -> Result<(), u32> {
     let raw = parameters.buf;
     c.auth.response_params(&raw[..n]);
     Ok(())
+}
+
+/// Draw a private scalar into the start of `value`.
+fn new_scalar(value: &mut [u8; 128]) -> Option<[u8; 32]> {
+    let mut d = [0u8; 32];
+    for _ in 0..8 {
+        if !rng::fill(&mut d) {
+            return None;
+        }
+        if p256::valid_scalar(&d) {
+            value[..32].copy_from_slice(&d);
+            return Some(d);
+        }
+    }
+    None
 }
 
 /// `TPM2_Load`: put a created object in the TPM's memory.
@@ -761,7 +827,7 @@ pub fn load(c: &mut Command) -> Result<(), u32> {
         }
         _ => {
             let mut d = [0u8; 32];
-            d.copy_from_slice(&sensitive.value[..32.min(sensitive.value_len).max(32)]);
+            d.copy_from_slice(&sensitive.value[..32]);
             let ok = sensitive.kind == ALG_ECC
                 && sensitive.value_len == 32
                 && p256::public_key(&d).is_some_and(|q| public.unique_len == 64 && public.unique[..32] == q.x && public.unique[32..] == q.y);
@@ -774,6 +840,7 @@ pub fn load(c: &mut Command) -> Result<(), u32> {
         return Err(RC_INTEGRITY | RC_P | 2 * RC_1);
     }
     let origin = parent.origin;
+    let parent_qualified = parent.qualified;
     let slot_index = free_slot()?;
     let slot = &mut table()[slot_index];
     *slot = EMPTY;
@@ -782,6 +849,7 @@ pub fn load(c: &mut Command) -> Result<(), u32> {
     slot.public_len = public_bytes.len();
     slot.name = name;
     slot.origin = origin;
+    slot.qualified = qualify(&parent_qualified, &name);
     slot.private[..blob.len()].copy_from_slice(blob);
     slot.private_len = blob.len();
 
@@ -801,6 +869,44 @@ pub fn open(slot: &Slot) -> Result<(Public, [u8; 32], usize, [u8; 128], usize), 
     let result = (slot.public(), sensitive.auth, sensitive.auth_len, sensitive.value, sensitive.value_len);
     sensitive.wipe();
     Ok(result)
+}
+
+/// An ECDSA signature of `digest` by the key in `slot`. The per-signature
+/// secret mixes the private key and the digest with fresh random bytes, so a
+/// weak draw does not give the key away.
+pub fn ecdsa_sign(slot: &Slot, digest: &[u8; 32]) -> Result<([u8; 32], [u8; 32]), u32> {
+    let mut d = if slot.is_primary {
+        slot.origin.private()
+    } else {
+        let (_, _, _, mut value, value_len) = open(slot)?;
+        let mut d = [0u8; 32];
+        d.copy_from_slice(&value[..32]);
+        keystore::zero(&mut value);
+        if value_len != 32 {
+            keystore::zero(&mut d);
+            return Err(RC_KEY);
+        }
+        d
+    };
+    let mut result = Err(RC_RANGE);
+    for attempt in 0..8u8 {
+        let mut message = [0u8; 32 + 32 + 1];
+        message[32..64].copy_from_slice(digest);
+        message[64] = attempt;
+        if !rng::fill((&mut message[..32]).try_into().unwrap()) {
+            break;
+        }
+        let mut k = sha256::hmac(&d, &message);
+        keystore::zero(&mut message);
+        let signature = p256::sign(&d, digest, &k);
+        keystore::zero(&mut k);
+        if let Some(signature) = signature {
+            result = Ok(signature);
+            break;
+        }
+    }
+    keystore::zero(&mut d);
+    result
 }
 
 /// `TPM2_Unseal`.
@@ -836,14 +942,8 @@ pub fn read_public_command(c: &mut Command) -> Result<(), u32> {
     parameters.put(&slot.public[..slot.public_len]);
     parameters.u16(34);
     parameters.put(&slot.name);
-    let mut qualified = sha256::Sha256::new();
-    qualified.update(&slot.origin.hierarchy.to_be_bytes());
-    qualified.update(&slot.name);
-    let mut qname = [0u8; 34];
-    qname[..2].copy_from_slice(&ALG_SHA256.to_be_bytes());
-    qname[2..].copy_from_slice(&qualified.finish());
     parameters.u16(34);
-    parameters.put(&qname);
+    parameters.put(&slot.qualified);
     let n = parameters.at;
     let raw = parameters.buf;
     c.auth.response_params(&raw[..n]);

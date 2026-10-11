@@ -95,6 +95,44 @@ check "load the object sealed through the session" tool tpm2_load -C prim.ctx -u
 check "unseal it" tool tpm2_unseal -c hseal.ctx -o hout.txt
 check "the secret is what went in" cmp secret.txt hout.txt
 
+# A signing key under the primary: what it signs checks out with the TPM and
+# with OpenSSL.
+echo "a message to sign" >msg.txt
+check "create a signing key" tool tpm2_create -C prim.ctx -G ecc256:ecdsa-sha256 -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|sign" -u sk.pub -r sk.priv
+check "load it" tool tpm2_load -C prim.ctx -u sk.pub -r sk.priv -c sk.ctx
+check "sign with it" tool tpm2_sign -c sk.ctx -g sha256 -s ecdsa -o sig.bin msg.txt
+check "the TPM verifies the signature" tool tpm2_verifysignature -c sk.ctx -g sha256 -s sig.bin -m msg.txt
+tool tpm2_readpublic -c sk.ctx -f pem -o sk.pem >/dev/null 2>&1
+tool tpm2_sign -c sk.ctx -g sha256 -s ecdsa -f tss -o sig.tss msg.txt >/dev/null 2>&1
+python3 - <<'PY' >/dev/null 2>&1
+from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+b = open("sig.tss", "rb").read()
+r_len = int.from_bytes(b[4:6], "big")
+r = int.from_bytes(b[6:6 + r_len], "big")
+s_len = int.from_bytes(b[6 + r_len:8 + r_len], "big")
+s = int.from_bytes(b[8 + r_len:8 + r_len + s_len], "big")
+open("sig.der", "wb").write(encode_dss_signature(r, s))
+PY
+check "OpenSSL verifies the signature" openssl dgst -sha256 -verify sk.pem -signature sig.der msg.txt
+echo "another message" >other.txt
+refused "the signature does not verify another message" tool tpm2_verifysignature -c sk.ctx -g sha256 -s sig.bin -m other.txt
+
+# An attestation key under an endorsement key, which a policy on the
+# endorsement hierarchy opens, and a quote of the PCRs it signs.
+check "create the endorsement key" tool tpm2_createek -c ek.ctx -G ecc -u ek.pub
+check "create the attestation key" tool tpm2_createak -C ek.ctx -c ak.ctx -G ecc -g sha256 -s ecdsa -u ak.pub -n ak.name
+check "quote the PCRs" tool tpm2_quote -c ak.ctx -l sha256:0,7 -q 0011223344 -m quote.msg -s quote.sig -o quote.pcrs -g sha256
+check "the quote checks out" tool tpm2_checkquote -u ak.pub -m quote.msg -s quote.sig -f quote.pcrs -g sha256 -q 0011223344
+refused "the quote of another nonce" tool tpm2_checkquote -u ak.pub -m quote.msg -s quote.sig -f quote.pcrs -g sha256 -q 0011223355
+tool tpm2_pcrextend 0:sha256=0000000000000000000000000000000000000000000000000000000000000002 >/dev/null 2>&1
+tool tpm2_quote -c ak.ctx -l sha256:0,7 -q 0011223344 -m quote2.msg -s quote2.sig -o quote2.pcrs -g sha256 >/dev/null 2>&1
+refused "the new quote against the old PCRs" tool tpm2_checkquote -u ak.pub -m quote2.msg -s quote2.sig -f quote.pcrs -g sha256 -q 0011223344
+
+# A restricted key signs only a digest the TPM ticketed.
+check "hash with a ticket" tool tpm2_hash -C e -g sha256 -o digest.bin -t ticket.bin msg.txt
+check "sign the ticketed digest" tool tpm2_sign -c ak.ctx -g sha256 -s ecdsa -d -t ticket.bin -o aksig.bin digest.bin
+refused "sign a digest without the ticket" tool tpm2_sign -c ak.ctx -g sha256 -s ecdsa -d -o aksig2.bin digest.bin
+
 if [ "$failures" -ne 0 ]; then
   echo "$failures check(s) failed"
   exit 1

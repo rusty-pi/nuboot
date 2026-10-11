@@ -40,18 +40,24 @@ One bank, SHA-256, of 24 PCRs. Every PCR can be extended from locality 0 but
 | `TPM2_GetCapability` | algorithms, handles, commands, PCRs, ECC curves and the TPM properties; the other capabilities are empty lists |
 | `TPM2_GetRandom` | from the SoC's RNG200, up to 32 bytes |
 | `TPM2_PCR_Read`, `PCR_Extend`, `PCR_Event`, `PCR_Reset` | with a password session with an empty password; no other session |
-| `TPM2_Hash` | SHA-256, with the null hierarchy |
+| `TPM2_Hash` | SHA-256, with the null, owner, endorsement or platform hierarchy for the ticket |
 | `TPM2_ReadClock`, `TestParms` | |
 | `TPM2_CreatePrimary` | an ECC P-256 storage key under the owner, endorsement, platform or null hierarchy |
-| `TPM2_Create`, `Load`, `ReadPublic`, `Unseal` | sealed data under a primary storage key |
+| `TPM2_Create`, `Load`, `ReadPublic`, `Unseal` | sealed data and ECDSA signing keys under a primary storage key |
+| `TPM2_Sign`, `Quote`, `VerifySignature` | ECDSA over P-256 and SHA-256, with a key that signs; a restricted key (an attestation key) signs only what the TPM attested or a digest that `Hash` ticketed |
 | `TPM2_ContextSave`, `ContextLoad`, `FlushContext` | objects and sessions |
 | `TPM2_StartAuthSession` | HMAC, policy and trial sessions, unsalted or salted to a primary key with ECDH, bound to nothing or to an object, with AES-128-CFB for parameter encryption or none |
-| `TPM2_PolicyPCR`, `PolicyOR`, `PolicyAuthValue`, `PolicyPassword`, `PolicyCommandCode`, `PolicyGetDigest`, `PolicyRestart` | |
+| `TPM2_PolicyPCR`, `PolicyOR`, `PolicyAuthValue`, `PolicyPassword`, `PolicySecret`, `PolicyCommandCode`, `PolicyGetDigest`, `PolicyRestart` | |
 
-Anything else gets `TPM_RC_COMMAND_CODE`. There is no RSA, no signing key and so no
-`Sign`, `Quote` or `PolicyAuthorize`, no NV storage, no persistent handles
-(`EvictControl`) and no `HierarchyChangeAuth`: the hierarchies' authorization
-values are empty.
+Anything else gets `TPM_RC_COMMAND_CODE`. There is no RSA, no `PolicyAuthorize`,
+no NV storage, no persistent handles (`EvictControl`) and no
+`HierarchyChangeAuth`: the hierarchies' authorization values are empty.
+
+An endorsement key (`tpm2_createek`, the TCG template with a `PolicySecret` on
+the endorsement hierarchy) is a primary like any other, so its public key is the
+same at every boot on a board with the device key fused, and `tpm2_createak`
+makes an attestation key under it. `tpm2_quote` signs the PCRs with that key and
+`tpm2_checkquote` checks the result without the TPM.
 
 ## Keys
 
@@ -109,4 +115,6 @@ AES-CFB, `KDFa` and `KDFe` with vectors from Python's `cryptography`
 the TPM over the TPM simulator's socket protocol and drives it with the real
 tools (`tools/tpm-sim/tpm2-tools-test.sh`): the primary key, sealing and
 unsealing, a PCR policy built by a trial session and refused once a PCR has
-changed, and a salted HMAC session that also encrypts the secret on its way in.
+changed, a salted HMAC session that also encrypts the secret on its way in, a
+signing key whose signature OpenSSL accepts, and an endorsement key, an
+attestation key and a quote that `tpm2_checkquote` accepts.

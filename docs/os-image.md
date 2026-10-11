@@ -64,6 +64,8 @@ key to a PCR policy, and `systemd-cryptsetup` unseals it, the same way. On a
 board with the device private key fused the key survives reboots and firmware
 updates; on one without, it is gone at the next boot.
 
-A key that signs (`tpm2_sign`, a quote), a policy signed by a key
+Keys that sign work too: `tpm2_create` makes an ECDSA key, `tpm2_sign` and
+`tpm2_verifysignature` use it, and `tpm2_createek`, `tpm2_createak`, `tpm2_quote`
+and `tpm2_checkquote` attest the PCRs. A policy signed by a key
 (`PolicyAuthorize`, which `systemd-measure` and signed PCR 11 policies use) and
 RSA keys get `TPM_RC_COMMAND_CODE`.

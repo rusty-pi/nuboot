@@ -179,6 +179,44 @@ pub extern "efiapi" fn efi_main(_image: Handle, system_table: *mut SystemTable) 
     run("unseal-wrong-password", Command::new(0x8002, 0x15e).u32(item).password_of(b"no").done());
     run("read-public", Command::new(0x8001, 0x173).u32(item).done());
     run("getcap-transient", Command::new(0x8001, 0x17a).u32(1).u32(0x8000_0000).u32(8).done());
+
+    // An ECDSA signing key under the primary, a signature and a quote by it.
+    let signing: &[u8] = &[
+        0x00, 0x23, 0x00, 0x0b, 0x00, 0x04, 0x00, 0x72, 0x00, 0x00, 0x00, 0x10, 0x00, 0x18, 0x00, 0x0b, 0x00, 0x03, 0x00, 0x10, 0x00, 0x00,
+        0x00, 0x00,
+    ];
+    let (r, _) = run(
+        "create-signing",
+        Command::new(0x8002, 0x153).u32(primary).password().u16(4).u16(0).u16(0).u16(signing.len() as u16).put(signing).u16(0).u32(0).done(),
+    );
+    let private_len = u16::from_be_bytes(r[14..16].try_into().unwrap()) as usize;
+    let public_at = 14 + 2 + private_len;
+    let public_len = u16::from_be_bytes(r[public_at..public_at + 2].try_into().unwrap()) as usize;
+    let mut load = Command::new(0x8002, 0x157);
+    load.u32(primary).password().put(&r[14..16 + private_len]).put(&r[public_at..public_at + 2 + public_len]);
+    let (r, _) = run("load-signing", load.done());
+    let key = u32::from_be_bytes(r[10..14].try_into().unwrap());
+    let (r, _) = run(
+        "sign",
+        Command::new(0x8002, 0x15d).u32(key).password().u16(32).put(&digest).u16(0x10).u16(0x8024).u32(0x4000_0007).u16(0).done(),
+    );
+    run("sign-short-digest", Command::new(0x8002, 0x15d).u32(key).password().u16(31).put(&digest[..31]).u16(0x10).u16(0x8024).u32(0x4000_0007).u16(0).done());
+    run("sign-storage-key", Command::new(0x8002, 0x15d).u32(primary).password().u16(32).put(&digest).u16(0x10).u16(0x8024).u32(0x4000_0007).u16(0).done());
+    let mut verify = Command::new(0x8001, 0x177);
+    verify.u32(key).u16(32).put(&digest).put(&r[14..14 + 72]);
+    run("verify-signature", verify.done());
+    let mut forged = [0u8; 72];
+    forged.copy_from_slice(&r[14..14 + 72]);
+    forged[40] ^= 1;
+    let mut verify = Command::new(0x8001, 0x177);
+    verify.u32(key).u16(32).put(&digest).put(&forged);
+    run("verify-forged", verify.done());
+    run(
+        "quote",
+        Command::new(0x8002, 0x158).u32(key).password().u16(4).put(&[1, 2, 3, 4]).u16(0x10).u32(1).u16(0xb).put(&[3, 0x01, 0, 0]).done(),
+    );
+    run("hash-ticket", Command::new(0x8001, 0x17d).u16(3).put(b"abc").u16(0xb).u32(0x4000_0001).done());
+    run("flush-signing", Command::new(0x8001, 0x165).u32(key).done());
     run("flush-item", Command::new(0x8001, 0x165).u32(item).done());
     run("flush-primary", Command::new(0x8001, 0x165).u32(primary).done());
     run("flush-again", Command::new(0x8001, 0x165).u32(primary).done());
