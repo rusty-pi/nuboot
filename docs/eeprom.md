@@ -90,6 +90,10 @@ they are signed with ([uefi.md](uefi.md#secure-boot)).
 
 ## Known limitations
 
+- A board whose secure boot is programmed (OTP boot mode row `0x0000C8B0`:
+  bit 14 set and the development key revoked) accepts only a bootcode with an
+  RSA signature from a key in its boot ROM, which only Raspberry Pi holds.
+  This image carries an HMAC instead, so such a board does not boot it.
 - The bootcode's HMAC is left zero, so a board's boot ROM refuses the image:
   it runs in pimu only.
 - The property mailbox answers `NOTIFY_XHCI_RESET` (reload the VL805's
