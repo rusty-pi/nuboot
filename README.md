@@ -72,6 +72,7 @@ From the boot ROM to the threads that run for as long as the board is up:
 |---|---|---|---|---|
 | `start4.elf` started by the stock EEPROM bootloader from SD | ✅ | ➖ | ➖ | ➖ |
 | `start4.elf` started from a USB drive | ✅ | ➖ | ➖ | ➖ |
+| Signed boot: `start4.elf` out of a `boot.img` the EEPROM's key signed, one signed by another key refused | ✅ | ➖ | ➖ | ➖ |
 | Console log, board identity, threads | ✅ | ➖ | ➖ | ➖ |
 | Boot watchdog: a hang in UEFI resets the board, `ExitBootServices` hands it to the OS | ✅ | ➖ | ➖ | ➖ |
 | Pi 4B rev 1.4 (`d03114`) and rev 1.2 (`c03112`) | ✅ | ➖ | ➖ | ➖ |
@@ -109,6 +110,8 @@ also trusts that key:
 
 ```bash
 pimu boot --scenario scenarios/sd-boot.yaml
+pimu boot --scenario scenarios/signed-boot.yaml
+pimu boot --scenario scenarios/signed-boot-refused.yaml
 pimu boot --scenario scenarios/uefi-hello.yaml
 pimu boot --scenario scenarios/shim-grub.yaml
 pimu boot --scenario scenarios/secure-boot-refused.yaml
@@ -148,6 +151,7 @@ pimu boot --eeprom out/stock-pieeprom.bin --sd boot/
 | `src/pcie.rs`, `src/vl805.rs`, `src/usb.rs`, `src/lzss.rs` | The PCIe link, and the VL805 and its firmware |
 | `src/mailbox.rs` | The property mailbox |
 | `src/arm.rs`, `src/fdt.rs` | Starting the ARM, and the device tree it gets |
+| `scripts/mkbootimg.py` | Puts `start4.elf` in a signed `boot.img` and `boot.sig` |
 | `uefi/` | The UEFI firmware, its Secure Boot keys, and the armstub and decompressor the ARM starts in |
 
 ## Licence

@@ -23,6 +23,23 @@ firmware and the board's device tree inside it.
    puts the controller's registers in the outbound window at `0x6_0200_0000`.
 5. It starts the ARM in UEFI ([uefi.md](uefi.md)).
 
+## Signed boot
+
+On a board with signed boot, the bootloader runs `start4.elf` only out of
+`boot.img`, a FAT image on the boot medium, after checking `boot.sig` against
+the RSA-2048 public key in the EEPROM's `pubkey.bin`, whose hash is fused in
+the OTP. `boot.sig` holds the image's SHA-256, a timestamp and an RSA signature
+over the image. `scripts/mkbootimg.py` writes both:
+
+```bash
+scripts/mkbootimg.py customer-private.pem out/start4.elf out
+```
+
+gives `out/boot.img` and `out/boot.sig`. With `--pubkey file` it also writes the
+key as `pubkey.bin` has it, for `rpi-eeprom-config --pubkey` or, in pimu,
+`eeprom_pubkey`. Signing the EEPROM's own configuration and programming the OTP
+are Raspberry Pi's procedure ([secure-boot-recovery](https://github.com/raspberrypi/usbboot/tree/master/secure-boot-recovery)).
+
 ## What the EEPROM holds besides the bootloader
 
 | from | what |
@@ -70,6 +87,8 @@ before it fires, which is rare.
 
 ```bash
 pimu boot --scenario scenarios/sd-boot.yaml      # start4.elf alone, under the stock bootloader
+pimu boot --scenario scenarios/signed-boot.yaml  # start4.elf out of a signed boot.img
+pimu boot --scenario scenarios/signed-boot-refused.yaml  # boot.img signed by another key
 pimu boot --scenario scenarios/uefi-hello.yaml   # a signed EFI application
 pimu boot --scenario scenarios/shim-grub.yaml    # Ubuntu's signed shim and GRUB
 pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed by a key in db

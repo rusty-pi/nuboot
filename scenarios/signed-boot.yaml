@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "signed-boot"
+description: "A board with signed boot: the stock bootloader checks boot.sig, an RSA-2048 signature over boot.img, against the public key in its EEPROM, and runs start4.elf out of the ramdisk."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  eeprom_pubkey: "../out/boot-test-pubkey.bin"
+  boot_order: "0x1"
+  bootconf:
+    - "SIGNED_BOOT=1"
+  sd:
+    files:
+      boot.img: "../out/boot-test.img"
+      boot.sig: "../out/boot-test.sig"
+  until: "stack high-water mark  thread=1"
+  wall_secs: 600
+
+milestones:
+  - why: "The bootloader verified boot.img and started start4.elf out of it."
+    line: "medium=ramdisk"
+  - why: "It started the ARM in the UEFI firmware it carries."
+    line: "ARM started in UEFI"

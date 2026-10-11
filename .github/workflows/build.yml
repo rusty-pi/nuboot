@@ -51,13 +51,14 @@ jobs:
           fi
           rm vc4-elf-*.deb
 
-      # scripts/mkstore.py makes the tamper scenario's EEPROM image, and
-      # scripts/build-uefi.sh signs the test applications with sbsign.
+      # scripts/mkstore.py makes the tamper scenario's EEPROM image,
+      # scripts/mkbootimg.py the signed boot.img (with mtools and dosfstools),
+      # and scripts/build-uefi.sh signs the test applications with sbsign.
       - name: Install Python and sbsigntool
         run: |
-          command -v python3 >/dev/null && command -v sbsign >/dev/null && exit 0
+          command -v python3 >/dev/null && command -v sbsign >/dev/null && command -v mcopy >/dev/null && exit 0
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3 sbsigntool openssl
+          sudo apt-get install -y --no-install-recommends python3 sbsigntool openssl mtools dosfstools
 
       # The action brings rustup itself, which a self-hosted runner has only
       # once something has installed it; the toolchain built with is the one
@@ -132,6 +133,11 @@ jobs:
             out/store-tamper.efi
             out/start4.elf
             out/start4-test.elf
+            out/boot-test.img
+            out/boot-test.sig
+            out/boot-test-pubkey.bin
+            out/boot-stranger.img
+            out/boot-stranger.sig
             out/capsule-new.cap
             out/capsule-old.cap
             out/capsule-corrupt.cap

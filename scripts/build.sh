@@ -40,7 +40,16 @@ mkdir -p out
 # relocations the bootloader needs to place it lower for a USB boot.
 toolchain/bin/vc4-elf-objcopy --strip-debug target/vc4-none-elf/release/start4 "out/start4$suffix.elf"
 toolchain/bin/vc4-elf-size "out/start4$suffix.elf"
-# The tamper scenario's image: a variable store with damage in it.
+# The test build's extras: the tamper scenario's EEPROM image, a variable store
+# with damage in it, and start4-test.elf as the signed boot.img of a board with
+# signed boot, once with a key the EEPROM trusts (out/boot-test-pubkey.bin) and
+# once with one it does not.
 if [ -n "$suffix" ]; then
   scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-tamper.bin
+  mkdir -p out/test-keys
+  for name in boot boot-stranger; do
+    [ -f "out/test-keys/$name.key" ] || openssl genrsa -out "out/test-keys/$name.key" 2048 2>/dev/null
+  done
+  scripts/mkbootimg.py out/test-keys/boot.key out/start4-test.elf out --prefix boot-test --pubkey out/boot-test-pubkey.bin
+  scripts/mkbootimg.py out/test-keys/boot-stranger.key out/start4-test.elf out --prefix boot-stranger
 fi
