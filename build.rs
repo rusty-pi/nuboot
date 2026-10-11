@@ -26,6 +26,10 @@ fn arm_files(dir: &str) {
     ] {
         println!("cargo:rerun-if-changed={dir}/{input}");
     }
+    println!("cargo:rerun-if-changed={dir}/keys");
+    for var in ["PI4_PK_CERT", "PI4_KEK_CERT", "PI4_DB_CERT"] {
+        println!("cargo:rerun-if-env-changed={var}");
+    }
     let test = std::env::var_os("CARGO_FEATURE_TEST_KEYS").is_some();
     build_uefi(dir, test);
     let image = if test { "pi4-uefi-test.bin" } else { "pi4-uefi.bin" };

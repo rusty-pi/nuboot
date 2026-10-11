@@ -57,6 +57,15 @@ for arg in "$@"; do
 done
 mkdir -p "$out"
 
+# The built-in keys: PI4_PK_CERT, PI4_KEK_CERT and PI4_DB_CERT name DER
+# certificates, which is all a build needs; without them keys/ is generated.
+if [[ -z "${PI4_PK_CERT:-}" || -z "${PI4_KEK_CERT:-}" || -z "${PI4_DB_CERT:-}" ]]; then
+  "$here/scripts/genkeys.sh"
+  PI4_PK_CERT="$here/keys/pk.der"
+  PI4_KEK_CERT="$here/keys/kek.der"
+  PI4_DB_CERT="$here/keys/db.der"
+fi
+
 # The test key: a self-signed certificate the test build puts in db.
 keys="$out/test-keys"
 test_key() {
@@ -96,6 +105,7 @@ symbol() {
 (cd "$here/uefi" &&
   FIRMWARE_COMMIT="$(git -C "$here" rev-parse --short=7 HEAD 2>/dev/null || echo 0000000)" \
   PI4_UEFI_TEST_CERT="$test_cert" \
+  PI4_PK_CERT="$PI4_PK_CERT" PI4_KEK_CERT="$PI4_KEK_CERT" PI4_DB_CERT="$PI4_DB_CERT" \
     cargo build --release "${cargo_args[@]}")
 elf="$here/uefi/target/aarch64-unknown-none/release/pi4-uefi"
 llvm objcopy -O binary "$elf" "$out/pi4-uefi$suffix-payload.bin"

@@ -1,10 +1,10 @@
 //! Secure Boot, always on: an image runs only when an Authenticode signature
 //! on it chains to a certificate in `db` and its hash is not in `dbx`.
 //!
-//! The keys are built in. `db` holds Microsoft's UEFI CAs, which sign shim
-//! for the distributions, and `dbx` the AArch64 image hashes Microsoft
-//! revokes. There is no `PK` to enrol others with: `SetupMode` is 0 and the
-//! variables cannot be written.
+//! The keys are built in. `PK` and `KEK` are this firmware's own, and `db`
+//! holds its signing key beside Microsoft's UEFI CAs, which sign shim for the
+//! distributions. `dbx` holds the AArch64 image hashes Microsoft revokes.
+//! `SetupMode` is 0 and the variables cannot be written.
 
 use alloc::vec::Vec;
 use core::fmt::Display;
@@ -24,6 +24,9 @@ const DB: [&[u8]; 2] = [
 /// The test build's own certificate (`scripts/build-uefi.sh --test-keys`),
 /// empty in a real one.
 const TEST_DB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/test-db.der"));
+const PK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/pk.der"));
+const KEK: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/kek.der"));
+const DB_OWN: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/db.der"));
 const DBX: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/dbx.bin"));
 
 /// `EFI_CERT_X509_GUID`.
@@ -36,20 +39,24 @@ const CERT_SHA256: efi::Guid =
 const MICROSOFT: efi::Guid =
     efi::Guid::from_fields(0x77fa9abd, 0x0359, 0x4d32, 0xbd, 0x60, &[0x28, 0xf4, 0xe7, 0x8f, 0x78, 0x4b]);
 
+/// The owner this firmware's own `PK`, `KEK` and `db` entries have.
+const OWNER: efi::Guid =
+    efi::Guid::from_fields(0x284518fd, 0x2e62, 0x4bc2, 0xbd, 0x62, &[0xdd, 0xff, 0x8f, 0xa8, 0xbd, 0x70]);
+
 const WIN_CERT_PKCS_SIGNED_DATA: u16 = 0x0002;
 const TIME_AUTH: u32 = efi::VARIABLE_TIME_BASED_AUTHENTICATED_WRITE_ACCESS;
 
 static TRUSTED: Global<Vec<Cert<'static>>> = Global::new(Vec::new());
 
 /// An `EFI_SIGNATURE_LIST` of `entries`, each `size` bytes after its owner.
-fn signature_list(out: &mut Vec<u8>, ty: efi::Guid, size: usize, entries: &[&[u8]]) {
+fn signature_list(out: &mut Vec<u8>, owner: efi::Guid, ty: efi::Guid, size: usize, entries: &[&[u8]]) {
     let sig = 16 + size;
     out.extend_from_slice(ty.as_bytes());
     out.extend_from_slice(&((28 + sig * entries.len()) as u32).to_le_bytes());
     out.extend_from_slice(&0u32.to_le_bytes());
     out.extend_from_slice(&(sig as u32).to_le_bytes());
     for e in entries {
-        out.extend_from_slice(MICROSOFT.as_bytes());
+        out.extend_from_slice(owner.as_bytes());
         out.extend_from_slice(e);
     }
 }
@@ -57,11 +64,18 @@ fn signature_list(out: &mut Vec<u8>, ty: efi::Guid, size: usize, entries: &[&[u8
 /// Parse the keys and publish them, and the Secure Boot state, as the
 /// variables an OS loader reads.
 pub fn init() {
+    let mut pk = Vec::new();
+    signature_list(&mut pk, OWNER, CERT_X509, PK.len(), &[PK]);
+    let mut kek = Vec::new();
+    signature_list(&mut kek, OWNER, CERT_X509, KEK.len(), &[KEK]);
     let mut db = Vec::new();
-    for der in DB.into_iter().chain((!TEST_DB.is_empty()).then_some(TEST_DB)) {
+    let certs = DB.into_iter().map(|der| (MICROSOFT, der));
+    let own = core::iter::once((OWNER, DB_OWN));
+    let test = (!TEST_DB.is_empty()).then_some((OWNER, TEST_DB));
+    for (owner, der) in certs.chain(own).chain(test) {
         match Cert::parse(der) {
             Some(c) => {
-                signature_list(&mut db, CERT_X509, der.len(), &[der]);
+                signature_list(&mut db, owner, CERT_X509, der.len(), &[der]);
                 TRUSTED.get().push(c);
             }
             None => warn!("secboot", "built-in certificate not understood, left out of db"; bytes = der.len()),
@@ -73,18 +87,20 @@ pub fn init() {
     }
     let mut dbx = Vec::new();
     let hashes: Vec<&[u8]> = DBX.chunks_exact(32).collect();
-    signature_list(&mut dbx, CERT_SHA256, 32, &hashes);
+    signature_list(&mut dbx, MICROSOFT, CERT_SHA256, 32, &hashes);
 
     let state = BS | RT;
     var::fixed("SecureBoot", var::GLOBAL, state, alloc::vec![1]);
     var::fixed("SetupMode", var::GLOBAL, state, alloc::vec![0]);
     var::fixed("AuditMode", var::GLOBAL, state, alloc::vec![0]);
     var::fixed("DeployedMode", var::GLOBAL, state, alloc::vec![1]);
+    var::fixed("PK", var::GLOBAL, NV | BS | RT | TIME_AUTH, pk.clone());
+    var::fixed("KEK", var::GLOBAL, NV | BS | RT | TIME_AUTH, kek.clone());
     var::fixed("db", var::SECURITY_DB, NV | BS | RT | TIME_AUTH, db.clone());
     var::fixed("dbx", var::SECURITY_DB, NV | BS | RT | TIME_AUTH, dbx.clone());
     crate::tcg2::measure_variable("SecureBoot", &var::GLOBAL, &[1]);
-    crate::tcg2::measure_variable("PK", &var::GLOBAL, &[]);
-    crate::tcg2::measure_variable("KEK", &var::GLOBAL, &[]);
+    crate::tcg2::measure_variable("PK", &var::GLOBAL, &pk);
+    crate::tcg2::measure_variable("KEK", &var::GLOBAL, &kek);
     crate::tcg2::measure_variable("db", &var::SECURITY_DB, &db);
     crate::tcg2::measure_variable("dbx", &var::SECURITY_DB, &dbx);
     info!("secboot", "Secure Boot enforced"; db = TRUSTED.get().len(), dbx = hashes.len());
@@ -152,7 +168,8 @@ pub fn authenticode_hash(image: &[u8]) -> Option<[u8; 32]> {
 /// The `EFI_SIGNATURE_DATA` `db` holds for a certificate: its owner, then the
 /// certificate.
 fn signature_entry(der: &[u8]) -> Vec<u8> {
-    let mut out = MICROSOFT.as_bytes().to_vec();
+    let owner = if der == DB_OWN || der == TEST_DB { OWNER } else { MICROSOFT };
+    let mut out = owner.as_bytes().to_vec();
     out.extend_from_slice(der);
     out
 }

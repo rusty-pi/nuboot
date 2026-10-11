@@ -27,7 +27,7 @@ from `start4.elf`'s:
 ```text
    0.559890 INFO  uefi     UEFI firmware started  commit=1a2b3c4 tree=0xf00000
    0.567376 INFO  mem      memory map ready  ram_mib=8108 free_mib=8104 regions=10
-   0.574586 INFO  secboot  Secure Boot enforced  db=2 dbx=26
+   0.574586 INFO  secboot  Secure Boot enforced  db=3 dbx=26
    0.961838 INFO  sd       card ready  mib=258 kind=SDHC/SDXC
    0.961845 INFO  disk     disk found  name=sd mib=258 partitions=1 path=VenHw/SD(0)
    1.661885 INFO  usb      USB ready  devices=1 registers=0x602000000
@@ -64,11 +64,13 @@ why:
    1.661962 WARN  secboot  image refused  reason="not signed by a key in db" path=VenHw/SD(0)/HD(1)\EFI\BOOT\BOOTAA64.EFI
 ```
 
-The keys are built in from `uefi/keys/`:
+The keys are built in, from `uefi/keys/` and `keys/` ([Keys](#keys)):
 
 | variable | holds |
 |---|---|
-| `db` | Microsoft Corporation UEFI CA 2011 and Microsoft UEFI CA 2023, which sign shim for the distributions |
+| `PK` | The platform key, `keys/pk` |
+| `KEK` | `keys/kek` |
+| `db` | This firmware's signing key, `keys/db`, and Microsoft Corporation UEFI CA 2011 and Microsoft UEFI CA 2023, which sign shim for the distributions |
 | `dbx` | The AArch64 image hashes in Microsoft's revocation list (`dbx-aarch64.txt`, from [microsoft/secureboot_objects](https://github.com/microsoft/secureboot_objects)) |
 | `SecureBoot`, `SetupMode`, `AuditMode`, `DeployedMode` | 1, 0, 0, 1 |
 
@@ -83,6 +85,17 @@ certificate that verified it go to the PCRs of the TPM on the VPU
 
 Signatures are checked with SHA-256 and RSA keys up to 4096 bits, as the UEFI
 CAs and the distributions' signers use.
+
+### Keys
+
+`scripts/genkeys.sh` generates `keys/pk`, `keys/kek` and `keys/db` (a `.key`,
+a `.crt` and the `.der` the firmware embeds) for any that is missing, and
+`scripts/build-uefi.sh` runs it. `keys/` is never committed. The platform key
+is built in and cannot be replaced, so it is valid for 50 years. A build
+that has the certificates but not the keys, such as CI, names them in
+`PI4_PK_CERT`, `PI4_KEK_CERT` and `PI4_DB_CERT` (DER files) instead. Sign
+what the firmware boots with `keys/db.key` and `keys/db.crt`, for example
+`sbsign --key keys/db.key --cert keys/db.crt`.
 
 ### The test build
 
@@ -139,8 +152,8 @@ pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed b
 - Variables are volatile: there is no variable store, so boot entries and the
   MOK list last only for the boot, and the boot is always the removable-media
   path.
-- The Secure Boot keys are built in; there is no `PK` or `KEK`, and an owner
-  cannot enrol keys of their own.
+- The Secure Boot keys are built in, and `KEK`, `db` and `dbx` cannot be
+  changed at run time.
 - `dbx` holds image hashes only, no certificates.
 - Storage is read-only to EFI applications.
 - No NVMe, no network boot, no USB keyboards.

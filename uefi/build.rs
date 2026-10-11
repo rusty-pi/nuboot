@@ -27,4 +27,13 @@ fn main() {
         _ => Vec::new(),
     };
     std::fs::write(format!("{out}/test-db.der"), test).unwrap();
+
+    // The platform key, the KEK and the db key scripts/genkeys.sh makes.
+    for (var, file) in [("PI4_PK_CERT", "pk.der"), ("PI4_KEK_CERT", "kek.der"), ("PI4_DB_CERT", "db.der")] {
+        println!("cargo:rerun-if-env-changed={var}");
+        let path = std::env::var(var).unwrap_or_else(|_| panic!("{var} is not set: build with scripts/build-uefi.sh"));
+        println!("cargo:rerun-if-changed={path}");
+        let der = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        std::fs::write(format!("{out}/{file}"), der).unwrap();
+    }
 }

@@ -95,6 +95,23 @@ jobs:
           key: ${{ steps.key.outputs.key }}
           path: ~/src/rustc_codegen_gcc/target/release/librustc_codegen_gcc.so
 
+      # The firmware's own PK, KEK and db certificates, base64 DER, from the
+      # repository's secrets. Without them the build makes keys of its own,
+      # which sign nothing a board will trust.
+      - name: Secure Boot certificates
+        env:
+          PK: ${{ secrets.PI4_PK_CERT }}
+          KEK: ${{ secrets.PI4_KEK_CERT }}
+          DB: ${{ secrets.PI4_DB_CERT }}
+        run: |
+          [ -n "$PK" ] && [ -n "$KEK" ] && [ -n "$DB" ] || exit 0
+          mkdir -p "$RUNNER_TEMP/certs"
+          for name in PK KEK DB; do
+            eval "value=\$$name"
+            echo "$value" | base64 -d >"$RUNNER_TEMP/certs/$name.der"
+            echo "PI4_${name}_CERT=$RUNNER_TEMP/certs/$name.der" >> "$GITHUB_ENV"
+          done
+
       - name: Build
         run: |
           scripts/setup-toolchain.sh

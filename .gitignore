@@ -14,3 +14,4 @@
 /tools/tpm-vpu/.*.cmd
 /tools/tpm-vpu/Module.symvers
 /tools/tpm-vpu/modules.order
+/keys

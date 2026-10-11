@@ -15,8 +15,8 @@ boot:
 milestones:
   - why: "start4.elf started the ARM."
     line: "ARM started in UEFI"
-  - why: "The firmware enforces Secure Boot with Microsoft's two UEFI CAs in db."
-    line: "Secure Boot enforced  db=2"
+  - why: "The firmware enforces Secure Boot with this firmware's key and Microsoft's two UEFI CAs in db."
+    line: "Secure Boot enforced  db=3"
   - why: "shim's signature chains to the Microsoft UEFI CA 2011."
     line: "image verified  signer=\"Microsoft Windows UEFI Driver Publisher\" db=\"Microsoft Corporation UEFI CA 2011\""
   - why: "GRUB started under shim, found its prefix on the card and read grub.cfg."
