@@ -17,8 +17,6 @@ const N_N0: u32 = 0xee00bc4f;
 const N_R2: Limbs = [0xbe79eea2, 0x83244c95, 0x49bd6fa6, 0x4699799c, 0x2b6bec59, 0x2845b239, 0xf3d95620, 0x66e12d94];
 const N_R: Limbs = [0x039cdaaf, 0x0c46353d, 0x58e8617b, 0x43190552, 0x00000000, 0x00000000, 0xffffffff, 0x00000000];
 const B_MONT: Limbs = [0x29c4bddf, 0xd89cdf62, 0x78843090, 0xacf005cd, 0xf7212ed6, 0xe5a220ab, 0x04874834, 0xdc30061d];
-const GX_MONT: Limbs = [0x18a9143c, 0x79e730d4, 0x5fedb601, 0x75ba95fc, 0x77622510, 0x79fb732b, 0xa53755c6, 0x18905f76];
-const GY_MONT: Limbs = [0xce95560a, 0xddf25357, 0xba19e45c, 0x8b4ab8e4, 0xdd21f325, 0xd2e88688, 0x25885d85, 0x8571ff18];
 
 /// A prime and what Montgomery multiplication modulo it needs.
 struct Modulus {
@@ -164,6 +162,65 @@ fn mont_mul(a: &Limbs, b: &Limbs, mo: &Modulus) -> Limbs {
     out
 }
 
+/// Montgomery square `a * a / 2^256 mod m`: the 28 products of different limbs
+/// once and doubled, the 8 squares, and then the reduction.
+fn mont_sqr(a: &Limbs, mo: &Modulus) -> Limbs {
+    let mut t = [0u32; 16];
+    for i in 0..7 {
+        let mut carry = 0u32;
+        for j in i + 1..8 {
+            let (s, c) = mul_add(t[i + j], a[i], a[j], carry);
+            t[i + j] = s;
+            carry = c;
+        }
+        t[i + 8] = carry;
+    }
+    let mut carry = 0u32;
+    for word in t.iter_mut() {
+        let next = *word >> 31;
+        *word = *word << 1 | carry;
+        carry = next;
+    }
+    let mut carry = 0u32;
+    for i in 0..8 {
+        let (lo, hi) = mul_wide(a[i], a[i]);
+        let (s, c1) = t[2 * i].overflowing_add(lo);
+        let (s, c2) = s.overflowing_add(carry);
+        t[2 * i] = s;
+        let (s, c3) = t[2 * i + 1].overflowing_add(hi);
+        let (s, c4) = s.overflowing_add(c1 as u32 + c2 as u32);
+        t[2 * i + 1] = s;
+        carry = c3 as u32 + c4 as u32;
+    }
+    let mut top = 0u32;
+    for i in 0..8 {
+        let q = t[i].wrapping_mul(mo.n0);
+        let mut carry = 0u32;
+        for j in 0..8 {
+            let (s, c) = mul_add(t[i + j], q, mo.m[j], carry);
+            t[i + j] = s;
+            carry = c;
+        }
+        let mut k = i + 8;
+        while carry != 0 {
+            if k == 16 {
+                top += carry;
+                break;
+            }
+            let (s, c) = t[k].overflowing_add(carry);
+            t[k] = s;
+            carry = c as u32;
+            k += 1;
+        }
+    }
+    let mut out = [0u32; 8];
+    out.copy_from_slice(&t[8..]);
+    if top != 0 || geq(&out, &mo.m) {
+        out = sub_raw(&out, &mo.m).0;
+    }
+    out
+}
+
 fn to_mont(a: &Limbs, mo: &Modulus) -> Limbs {
     mont_mul(a, &mo.r2, mo)
 }
@@ -178,7 +235,7 @@ fn from_mont(a: &Limbs, mo: &Modulus) -> Limbs {
 fn pow(a: &Limbs, e: &Limbs, mo: &Modulus) -> Limbs {
     let mut result = mo.one;
     for i in (0..256).rev() {
-        result = mont_mul(&result, &result, mo);
+        result = mont_sqr(&result, mo);
         if e[i / 32] >> (i % 32) & 1 != 0 {
             result = mont_mul(&result, a, mo);
         }
@@ -207,6 +264,9 @@ const INFINITY: Jacobian = Jacobian { x: [0; 8], y: [0; 8], z: [0; 8] };
 fn fmul(a: &Limbs, b: &Limbs) -> Limbs {
     mont_mul(a, b, &FIELD)
 }
+fn fsqr(a: &Limbs) -> Limbs {
+    mont_sqr(a, &FIELD)
+}
 fn fadd(a: &Limbs, b: &Limbs) -> Limbs {
     add_mod(a, b, &FIELD)
 }
@@ -218,16 +278,16 @@ fn double(p: &Jacobian) -> Jacobian {
     if is_zero(&p.z) || is_zero(&p.y) {
         return INFINITY;
     }
-    let delta = fmul(&p.z, &p.z);
-    let gamma = fmul(&p.y, &p.y);
+    let delta = fsqr(&p.z);
+    let gamma = fsqr(&p.y);
     let beta = fmul(&p.x, &gamma);
     let t = fmul(&fsub(&p.x, &delta), &fadd(&p.x, &delta));
     let alpha = fadd(&fadd(&t, &t), &t);
     let beta4 = fadd(&fadd(&beta, &beta), &fadd(&beta, &beta));
-    let x3 = fsub(&fmul(&alpha, &alpha), &fadd(&beta4, &beta4));
+    let x3 = fsub(&fsqr(&alpha), &fadd(&beta4, &beta4));
     let yz = fadd(&p.y, &p.z);
-    let z3 = fsub(&fsub(&fmul(&yz, &yz), &gamma), &delta);
-    let gamma2 = fmul(&gamma, &gamma);
+    let z3 = fsub(&fsub(&fsqr(&yz), &gamma), &delta);
+    let gamma2 = fsqr(&gamma);
     let gamma8 = {
         let g2 = fadd(&gamma2, &gamma2);
         let g4 = fadd(&g2, &g2);
@@ -244,8 +304,8 @@ fn add(p: &Jacobian, q: &Jacobian) -> Jacobian {
     if is_zero(&q.z) {
         return *p;
     }
-    let z1z1 = fmul(&p.z, &p.z);
-    let z2z2 = fmul(&q.z, &q.z);
+    let z1z1 = fsqr(&p.z);
+    let z2z2 = fsqr(&q.z);
     let u1 = fmul(&p.x, &z2z2);
     let u2 = fmul(&q.x, &z1z1);
     let s1 = fmul(&fmul(&p.y, &q.z), &z2z2);
@@ -255,18 +315,18 @@ fn add(p: &Jacobian, q: &Jacobian) -> Jacobian {
     }
     let h = fsub(&u2, &u1);
     let h2 = fadd(&h, &h);
-    let i = fmul(&h2, &h2);
+    let i = fsqr(&h2);
     let j = fmul(&h, &i);
     let r = {
         let d = fsub(&s2, &s1);
         fadd(&d, &d)
     };
     let v = fmul(&u1, &i);
-    let x3 = fsub(&fsub(&fmul(&r, &r), &j), &fadd(&v, &v));
+    let x3 = fsub(&fsub(&fsqr(&r), &j), &fadd(&v, &v));
     let s1j = fmul(&s1, &j);
     let y3 = fsub(&fmul(&r, &fsub(&v, &x3)), &fadd(&s1j, &s1j));
     let zz = fadd(&p.z, &q.z);
-    let z3 = fmul(&fsub(&fsub(&fmul(&zz, &zz), &z1z1), &z2z2), &h);
+    let z3 = fmul(&fsub(&fsub(&fsqr(&zz), &z1z1), &z2z2), &h);
     Jacobian { x: x3, y: y3, z: z3 }
 }
 
@@ -274,31 +334,89 @@ fn affine(p: &Point) -> Jacobian {
     Jacobian { x: to_mont(&from_bytes(&p.x), &FIELD), y: to_mont(&from_bytes(&p.y), &FIELD), z: FIELD.one }
 }
 
-/// `k * point`, `k` a scalar of at most 256 bits.
+/// `p + q` for an affine `q` (`z` of one, never the point at infinity).
+fn add_affine(p: &Jacobian, q: &[Limbs; 2]) -> Jacobian {
+    if is_zero(&p.z) {
+        return Jacobian { x: q[0], y: q[1], z: FIELD.one };
+    }
+    let z1z1 = fsqr(&p.z);
+    let u2 = fmul(&q[0], &z1z1);
+    let s2 = fmul(&fmul(&q[1], &p.z), &z1z1);
+    let h = fsub(&u2, &p.x);
+    let d = fsub(&s2, &p.y);
+    if is_zero(&h) {
+        return if is_zero(&d) { double(p) } else { INFINITY };
+    }
+    let hh = fsqr(&h);
+    let i = fadd(&fadd(&hh, &hh), &fadd(&hh, &hh));
+    let j = fmul(&h, &i);
+    let r = fadd(&d, &d);
+    let v = fmul(&p.x, &i);
+    let x3 = fsub(&fsub(&fsqr(&r), &j), &fadd(&v, &v));
+    let yj = fmul(&p.y, &j);
+    let y3 = fsub(&fmul(&r, &fsub(&v, &x3)), &fadd(&yj, &yj));
+    let zh = fadd(&p.z, &h);
+    let z3 = fsub(&fsub(&fsqr(&zh), &z1z1), &hh);
+    Jacobian { x: x3, y: y3, z: z3 }
+}
+
+/// The four bits of `k` from bit `4 * window`.
+fn nibble(k: &Limbs, window: usize) -> usize {
+    (k[window / 8] >> (4 * (window % 8)) & 0xf) as usize
+}
+
+/// `k * point`, `k` a scalar of at most 256 bits, in windows of four bits.
 fn multiply(point: &Jacobian, k: &Limbs) -> Jacobian {
+    let mut table = [INFINITY; 16];
+    table[1] = *point;
+    table[2] = double(point);
+    for j in 3..16 {
+        table[j] = add(&table[j - 1], point);
+    }
     let mut result = INFINITY;
-    for i in (0..256).rev() {
-        result = double(&result);
-        if k[i / 32] >> (i % 32) & 1 != 0 {
-            result = add(&result, point);
+    for window in (0..64).rev() {
+        for _ in 0..4 {
+            result = double(&result);
+        }
+        let n = nibble(k, window);
+        if n != 0 {
+            result = add(&result, &table[n]);
         }
     }
     result
 }
+
+/// `k * G` from the tables: the low and the high half of `k` share their
+/// doublings.
+fn multiply_generator(k: &Limbs) -> Jacobian {
+    let mut result = INFINITY;
+    for window in (0..32).rev() {
+        for _ in 0..4 {
+            result = double(&result);
+        }
+        let low = nibble(k, window);
+        if low != 0 {
+            result = add_affine(&result, &LOW[low - 1]);
+        }
+        let high = nibble(k, window + 32);
+        if high != 0 {
+            result = add_affine(&result, &HIGH[high - 1]);
+        }
+    }
+    result
+}
+
+include!("p256_tables.rs");
 
 fn to_affine(p: &Jacobian) -> Option<Point> {
     if is_zero(&p.z) {
         return None;
     }
     let zi = invert(&p.z, &FIELD);
-    let zi2 = fmul(&zi, &zi);
+    let zi2 = fsqr(&zi);
     let x = fmul(&p.x, &zi2);
     let y = fmul(&fmul(&p.y, &zi2), &zi);
     Some(Point { x: to_bytes(&from_mont(&x, &FIELD)), y: to_bytes(&from_mont(&y, &FIELD)) })
-}
-
-fn generator() -> Jacobian {
-    Jacobian { x: GX_MONT, y: GY_MONT, z: FIELD.one }
 }
 
 /// Whether `d` is a private key: from 1 to the group order less one.
@@ -315,10 +433,10 @@ pub fn on_curve(p: &Point) -> bool {
     }
     let x = to_mont(&x, &FIELD);
     let y = to_mont(&y, &FIELD);
-    let x3 = fmul(&fmul(&x, &x), &x);
+    let x3 = fmul(&fsqr(&x), &x);
     let three_x = fadd(&fadd(&x, &x), &x);
     let rhs = fadd(&fsub(&x3, &three_x), &B_MONT);
-    fmul(&y, &y) == rhs
+    fsqr(&y) == rhs
 }
 
 /// The public key of private key `d`.
@@ -326,7 +444,7 @@ pub fn public_key(d: &[u8; 32]) -> Option<Point> {
     if !valid_scalar(d) {
         return None;
     }
-    to_affine(&multiply(&generator(), &from_bytes(d)))
+    to_affine(&multiply_generator(&from_bytes(d)))
 }
 
 /// The x coordinate of `d` times `peer`, which has to be on the curve.
@@ -354,7 +472,7 @@ pub fn sign(d: &[u8; 32], digest: &[u8; 32], k: &[u8; 32]) -> Option<([u8; 32], 
     if !valid_scalar(d) || !valid_scalar(k) {
         return None;
     }
-    let point = to_affine(&multiply(&generator(), &from_bytes(k)))?;
+    let point = to_affine(&multiply_generator(&from_bytes(k)))?;
     let r = from_bytes(&reduce_order(&point.x));
     if is_zero(&r) {
         return None;
@@ -383,7 +501,7 @@ pub fn verify(q: &Point, digest: &[u8; 32], r: &[u8; 32], s: &[u8; 32]) -> bool 
     let w = invert(&to_mont(&sl, &ORDER), &ORDER);
     let u1 = from_mont(&order_mul(&to_mont(&z, &ORDER), &w), &ORDER);
     let u2 = from_mont(&order_mul(&to_mont(&rl, &ORDER), &w), &ORDER);
-    let sum = add(&multiply(&generator(), &u1), &multiply(&affine(q), &u2));
+    let sum = add(&multiply_generator(&u1), &multiply(&affine(q), &u2));
     let Some(point) = to_affine(&sum) else { return false };
     from_bytes(&reduce_order(&point.x)) == rl
 }

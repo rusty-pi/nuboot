@@ -142,3 +142,10 @@ for exponent in (65537, 65537, 3):
     other = bytes([digest[0] ^ 1]) + digest[1:]
     print(f"    (&{arr(modulus)}, {exponent}, {arr(other)}, &{arr(signature)}, false),")
 print("];")
+print()
+print("/// `(d, x of d * G)` for scalars at the edges of the generator tables' windows and halves.")
+print("pub const EDGE_KEYS: &[([u8; 32], [u8; 32])] = &[")
+for d in (1, 2, 15, 16, 255, 1 << 127, 1 << 128, (1 << 128) + 1, (0xF << 128) | 0xF, (1 << 252) | 1, N - 1, N - 2):
+    k, x, y = pub(d)
+    print(f"    ({arr(be(d))}, {arr(be(x))}),")
+print("];")

@@ -92,3 +92,22 @@ fn rsa_pkcs1_signatures() {
         assert_eq!(rsa::verify_sha256(modulus, *exponent, digest, signature), *valid);
     }
 }
+
+/// Scalars that line up with the generator tables' windows and halves.
+#[test]
+fn public_keys_of_awkward_scalars() {
+    // (d, x of d*G): 1, 2, 15, 16, 2^128, 2^128 + 1, n - 1, as Python's arithmetic has them.
+    for (d, x) in EDGE_KEYS {
+        assert_eq!(&p256::public_key(d).unwrap().x, x);
+    }
+}
+
+#[test]
+fn sign_and_verify_round_trip() {
+    for k in KEYS {
+        let q = p256::public_key(&k.d).unwrap();
+        let (r, s) = p256::sign(&k.d, &[0x5a; 32], &[0x77; 32]).unwrap();
+        assert!(p256::verify(&q, &[0x5a; 32], &r, &s));
+        assert!(!p256::verify(&q, &[0x5b; 32], &r, &s));
+    }
+}
