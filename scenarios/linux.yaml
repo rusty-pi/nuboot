@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "linux"
-description: "Debian's arm64 kernel, in a unified kernel image signed with the test key, boots under the firmware with Secure Boot on, and its first process looks at what the firmware gave it: the kernel's own log of the EFI tables, the Secure Boot variables through efivarfs, the ESRT, and a variable it writes."
+description: "Debian's arm64 kernel, in a unified kernel image signed with the test key, boots under the firmware with Secure Boot on, and its first process looks at what the firmware gave it: the kernel's own log of the EFI tables, the Secure Boot variables through efivarfs, the ESRT, the TPM on the VPU through the module in tools/tpm-vpu, and a variable it writes."
 
 boot:
   eeprom: "../out/stock-pieeprom.bin"
@@ -25,5 +25,17 @@ milestones:
     line: "linux test: SetupMode 0600000000"
   - why: "The ESRT has the firmware and the EEPROM bootloader."
     line: "linux test: esrt 3f8a0c5e-91d2-4b7a-a6c3-5d1e08f2b947 type 2"
+  - why: "The kernel, in lockdown, loads tools/tpm-vpu signed with a key in db, and registers the TPM on the VPU as a TPM 2.0 chip."
+    line: "linux test: tpm devices /dev/tpm0 /dev/tpmrm0"
+  - why: "The firmware is in PCR 0."
+    line: "linux test: pcr 0 extended"
+  - why: "The board is in PCR 1."
+    line: "linux test: pcr 1 extended"
+  - why: "The initrd is in PCR 9."
+    line: "linux test: pcr 9 extended"
+  - why: "The unified kernel image is in PCR 11."
+    line: "linux test: pcr 11 extended"
+  - why: "The kernel reads the firmware's event log through the TPM it registered."
+    line: "linux test: event log present"
   - why: "The OS can write a variable."
     line: "linux test: variable written"

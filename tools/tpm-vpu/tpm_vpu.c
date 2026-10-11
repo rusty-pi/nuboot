@@ -14,6 +14,7 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/tpm.h>
+#include <linux/version.h>
 #include <soc/bcm2835/raspberrypi-firmware.h>
 
 /* Exported by the TPM core, and declared in drivers/char/tpm/tpm.h. */
@@ -32,7 +33,11 @@ struct vpu_tpm {
 	bool ready;
 };
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
 static int vpu_tpm_send(struct tpm_chip *chip, u8 *buf, size_t bufsiz, size_t cmd_len)
+#else
+static int vpu_tpm_send(struct tpm_chip *chip, u8 *buf, size_t cmd_len)
+#endif
 {
 	struct vpu_tpm *vt = dev_get_drvdata(&chip->dev);
 	u8 *message;
@@ -106,10 +111,11 @@ static int vpu_tpm_probe(struct platform_device *pdev)
 	struct device_node *firmware;
 	struct tpm_chip *chip;
 	struct vpu_tpm *vt;
-	u8 probe[TPM_MAX] = {
+	static const u8 get_capability[] = {
 		0x80, 0x01, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, 0x01, 0x7a,
 		0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x01,
 	};
+	u8 *probe;
 	int ret;
 
 	vt = devm_kzalloc(&pdev->dev, sizeof(*vt), GFP_KERNEL);
@@ -125,8 +131,14 @@ static int vpu_tpm_probe(struct platform_device *pdev)
 		return -EPROBE_DEFER;
 
 	/* The node is there whatever the firmware: ask it for a property. */
+	probe = kzalloc(TPM_MAX, GFP_KERNEL);
+	if (!probe)
+		return -ENOMEM;
+	memcpy(probe, get_capability, sizeof(get_capability));
 	ret = rpi_firmware_property(vt->fw, RPI_FIRMWARE_TPM2_COMMAND, probe, TPM_MAX);
-	if (ret || get_unaligned_be32(probe + 6) != 0) {
+	ret = ret ? ret : get_unaligned_be32(probe + 6);
+	kfree(probe);
+	if (ret) {
 		dev_info(&pdev->dev, "the firmware has no TPM\n");
 		return -ENODEV;
 	}

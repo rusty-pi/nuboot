@@ -12,6 +12,20 @@ BUSYBOX_URL="${BUSYBOX_URL:-https://deb.debian.org/debian/pool/main/b/busybox/bu
 BUSYBOX_SHA256="${BUSYBOX_SHA256:-c833be48abfa16bc19c4966ec93e289ff1ce5d2f1476cad3a57bd105378cd15c}"
 STUB_URL="${STUB_URL:-https://deb.debian.org/debian/pool/main/s/systemd/systemd-boot-efi_257.13-1~deb13u1_arm64.deb}"
 STUB_SHA256="${STUB_SHA256:-0e4529d9a72b35c31f34151ef8a0df20f322cfef679f4f5439394e60505b91a2}"
+HEADERS_URL="${HEADERS_URL:-https://deb.debian.org/debian/pool/main/l/linux/linux-headers-6.12.107+deb13-arm64_6.12.107-1_arm64.deb}"
+HEADERS_SHA256="${HEADERS_SHA256:-20cc55bde5ceae6411b7554d5fffc937f2df022bf47b6df9cad32b51cb1219f3}"
+COMMON_URL="${COMMON_URL:-https://deb.debian.org/debian/pool/main/l/linux/linux-headers-6.12.107+deb13-common_6.12.107-1_all.deb}"
+COMMON_SHA256="${COMMON_SHA256:-12dc292d7c238928fbcb7eebbe79208758fe263a4e2ea0e9b6734e6df12020a5}"
+case "$(uname -m)" in
+  aarch64)
+    CROSS=""
+    KBUILD_URL="${KBUILD_URL:-https://deb.debian.org/debian/pool/main/l/linux/linux-kbuild-6.12.107+deb13_6.12.107-1_arm64.deb}"
+    KBUILD_SHA256="${KBUILD_SHA256:-939949f1c1525dc7c4d4414b9fad095a4a3291d727ddb1c7dc56e4ac371ca0a7}" ;;
+  *)
+    CROSS="aarch64-linux-gnu-"
+    KBUILD_URL="${KBUILD_URL:-https://deb.debian.org/debian/pool/main/l/linux/linux-kbuild-6.12.107+deb13_6.12.107-1_amd64.deb}"
+    KBUILD_SHA256="${KBUILD_SHA256:-0a88527eb05bca1ce75e7d39ec27539d385a24cf90b2b28917cc4903a4f710d3}" ;;
+esac
 
 here="$(cd "$(dirname "$0")/.." && pwd)"
 out="$here/out"
@@ -24,16 +38,28 @@ deb() {
   mkdir -p "$tmp/$1"
   curl -sSfL -o "$tmp/$1/p.deb" "$2"
   echo "$3  $tmp/$1/p.deb" | sha256sum -c --quiet
-  (cd "$tmp/$1" && ar x p.deb && tar xf data.tar.*)
+  (cd "$tmp/$1" && ar x p.deb && tar xf data.tar.* && rm -f p.deb data.tar.* control.tar.* debian-binary)
 }
 deb kernel "$KERNEL_URL" "$KERNEL_SHA256"
 deb busybox "$BUSYBOX_URL" "$BUSYBOX_SHA256"
 deb stub "$STUB_URL" "$STUB_SHA256"
+deb headers "$HEADERS_URL" "$HEADERS_SHA256"
+deb headers "$COMMON_URL" "$COMMON_SHA256"
+deb headers "$KBUILD_URL" "$KBUILD_SHA256"
+
+src="$tmp/headers/usr/src"
+kdir="$src/linux-headers-6.12.107+deb13-arm64"
+sed -i "s|/usr/src/|$src/|" "$kdir/Makefile"
+cp -r "$here/tools/tpm-vpu" "$tmp/tpm-vpu"
+make -C "$tmp/tpm-vpu" KDIR="$kdir" CC="${CROSS}gcc" CONFIG_DEBUG_INFO_BTF_MODULES= >/dev/null
+"${CROSS}strip" --strip-debug "$tmp/tpm-vpu/tpm_vpu.ko"
+"$tmp"/headers/usr/lib/linux-kbuild-*/scripts/sign-file sha256 "$keys/db.key" "$keys/db.crt" "$tmp/tpm-vpu/tpm_vpu.ko"
 
 root="$tmp/initramfs"
 mkdir -p "$root/bin" "$root/proc" "$root/sys"
 cp "$tmp/busybox/usr/bin/busybox" "$root/bin/busybox"
 xz -dc "$tmp"/kernel/usr/lib/modules/*/kernel/fs/efivarfs/efivarfs.ko.xz >"$root/efivarfs.ko"
+cp "$tmp/tpm-vpu/tpm_vpu.ko" "$root/tpm_vpu.ko"
 cp "$here/uefi/test-apps/linux/init" "$root/init"
 chmod +x "$root/init"
 "$here/scripts/mkinitramfs.py" "$root" "$tmp/initrd.gz"

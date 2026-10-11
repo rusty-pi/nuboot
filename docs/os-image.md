@@ -8,8 +8,9 @@ the event log UEFI kept. Nothing needs configuring: the node's `compatible`
 string loads the module when it is installed for the running kernel.
 
 The module uses the kernel's `rpi_firmware` interface, which both upstream and
-Raspberry Pi's kernels have. It is `GPL-2.0` and builds out of tree against
-the headers of the kernel it is for:
+Raspberry Pi's kernels have, and the TPM core's `send` operation of Linux 6.12
+and of 6.13 and later. It is `GPL-2.0` and builds out of tree against the
+headers of the kernel it is for:
 
 ```bash
 make -C tools/tpm-vpu KDIR=/lib/modules/$(uname -r)/build
@@ -47,6 +48,12 @@ With Secure Boot on, a kernel in lockdown loads only signed modules. DKMS
 signs what it builds with the key in `/etc/dkms/framework.conf` (`mok_signing_key`
 and `mok_certificate`), and the kernel has to trust that certificate: enrol it
 as a MOK, or sign with a key the image's kernel already trusts.
+
+`scenarios/linux.yaml` boots Debian's 6.12 arm64 kernel under Secure Boot with
+the module built by `scripts/build-linux-test.sh` and signed with a key in `db`:
+the kernel, in lockdown, loads it, registers `/dev/tpm0` and `/dev/tpmrm0`, and
+shows the PCRs the firmware, the board, the initrd and the unified kernel image
+were measured into, and the event log.
 
 ## What works
 

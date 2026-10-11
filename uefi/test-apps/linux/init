@@ -21,6 +21,17 @@ say "OsIndicationsSupported $(var OsIndicationsSupported $GLOBAL)"
 for e in /sys/firmware/efi/esrt/entries/*; do
     say "esrt $(cat $e/fw_class) type $(cat $e/fw_type) version $(cat $e/fw_version) status $(cat $e/last_attempt_status)"
 done
+insmod /tpm_vpu.ko && say "tpm_vpu loaded"
+mount -t securityfs securityfs /sys/kernel/security
+say "tpm major $(cat /sys/class/tpm/tpm0/tpm_version_major 2>&1)"
+say "tpm devices $(ls /dev/tpm0 /dev/tpmrm0 2>&1 | tr '\n' ' ')"
+ZERO=0000000000000000000000000000000000000000000000000000000000000000
+for i in 0 1 5 9 11 12; do
+    pcr=$(cat /sys/class/tpm/tpm0/pcr-sha256/$i 2>&1)
+    if [ "$pcr" = "$ZERO" ]; then say "pcr $i empty"; else say "pcr $i extended"; fi
+done
+log=$(wc -c < /sys/kernel/security/tpm0/binary_bios_measurements 2>&1)
+say "event log $([ "$log" -gt 0 ] 2>/dev/null && echo present || echo "unreadable: $log")"
 printf '\007\000\000\000\001\002\003' > /sys/firmware/efi/efivars/LinuxTest-6b1c0a52-3a7e-4d1f-9a0b-112233445566 && say "variable written"
 say "variable reads $(var LinuxTest 6b1c0a52-3a7e-4d1f-9a0b-112233445566)"
 say "done"
