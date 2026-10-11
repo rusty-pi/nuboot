@@ -5,15 +5,20 @@ description: "An EFI application asks for ten minutes of watchdog, then masks in
 boot:
   eeprom: "../out/stock-pieeprom.bin"
   boot_order: "0x1"
+  otp_row:
+    - "56=0xc0de2001"
+    - "57=0xc0de3112"
+    - "58=0xc0de4223"
+    - "59=0xc0de5334"
+    - "60=0xc0de6445"
+    - "61=0xc0de7556"
+    - "62=0xc0de8667"
+    - "63=0xc0de9778"
   sd:
     files:
       start4.elf: "../out/start4-test.elf"
       EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-stuck.efi"
-  input:
-    # Only so `until` waits for the boot after the reset.
-    - after: "watchdog test: masking interrupts"
-      text: "\r"
-  until: "boot watchdog armed"
+  until: "watchdog test: the board reset and booted again"
   wall_secs: 900
 
 milestones:
@@ -23,3 +28,5 @@ milestones:
     line: "watchdog test: masking interrupts"
   - why: "The board reset and start4.elf armed the watchdog again."
     line: "boot watchdog armed  budget_s=30"
+  - why: "The board reset and the application ran again: what it left in the flash store was still there."
+    line: "watchdog test: the board reset and booted again"

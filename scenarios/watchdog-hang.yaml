@@ -5,15 +5,20 @@ description: "An EFI application asks for a one-second watchdog and hangs in boo
 boot:
   eeprom: "../out/stock-pieeprom.bin"
   boot_order: "0x1"
+  otp_row:
+    - "56=0xc0de2001"
+    - "57=0xc0de3112"
+    - "58=0xc0de4223"
+    - "59=0xc0de5334"
+    - "60=0xc0de6445"
+    - "61=0xc0de7556"
+    - "62=0xc0de8667"
+    - "63=0xc0de9778"
   sd:
     files:
       start4.elf: "../out/start4-test.elf"
       EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-hang.efi"
-  input:
-    # Only so `until` waits for the boot after the reset.
-    - after: "the boot did not finish in time"
-      text: "\r"
-  until: "boot watchdog armed"
+  until: "watchdog test: the board reset and booted again"
   wall_secs: 900
 
 milestones:
@@ -27,3 +32,5 @@ milestones:
     line: "UEFI set the boot watchdog  asked_s=1 span_s=1"
   - why: "The span ran out with the boot still in UEFI, and the timer stopped beating the dog."
     line: "the boot did not finish in time, letting the board reset"
+  - why: "The board reset and the application ran again: what it left in the flash store was still there."
+    line: "watchdog test: the board reset and booted again"

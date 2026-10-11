@@ -10,7 +10,7 @@ use core::mem::size_of;
 use core::ptr::write_volatile;
 
 use r_efi::efi::{Handle, MemoryDescriptor, Status, SystemTable};
-use watchdog_efi::{hang, say};
+use watchdog_efi::{after_reset, hang, say};
 
 static mut MAP: [u8; 16384] = [0; 16384];
 
@@ -27,6 +27,7 @@ fn counter() -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "efiapi" fn efi_main(image: Handle, system_table: *mut SystemTable) -> Status {
+    after_reset(system_table);
     say(system_table, "watchdog test: taking the watchdog over\r\n");
     let bs = unsafe { (*system_table).boot_services };
     for _ in 0..4 {
