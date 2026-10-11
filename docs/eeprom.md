@@ -14,8 +14,8 @@ on an 8-byte boundary, as the boot ROM and the stock tools expect.
 | bootcode (`0x55aaf00f`) | `src/bin/bootcode.rs` | 45 KB |
 | `memsys00.bin` .. `memsys08.bin`, `mcb.bin` (`0x55aaf44f`) | the stock image, unchanged | 103 KB |
 | `vl805hub.bin`, `vl805mcu.bin` (`0x55aaf33f`) | the stock image, unchanged | 67 KB |
-| `start4.elf` (`0x55aaf44f`) | `src/bin/start4.rs`, with `pi4-uefi.bin` and the device tree in it, as an LZ4 frame | 173 KB |
-| free | | 70 KB |
+| `start4.elf` (`0x55aaf44f`) | `src/bin/start4.rs`, with `pi4-uefi.bin` and the device tree in it, as an LZ4 frame | 188 KB |
+| free | | 55 KB |
 | variable store | the UEFI variable log, two banks of 32 KiB from `0x70000` ([uefi.md](uefi.md#the-variable-store)) | 64 KiB |
 
 `memsys00.bin` to `memsys08.bin` are the nine passes of the LPDDR4 training
