@@ -55,6 +55,30 @@ the kernel, in lockdown, loads it, registers `/dev/tpm0` and `/dev/tpmrm0`, and
 shows the PCRs the firmware, the board, the initrd and the unified kernel image
 were measured into, and the event log.
 
+## Unlocking the root volume
+
+With the module in the initrd, a LUKS2 volume's key is sealed to the TPM
+with `systemd-cryptenroll`, as on a PC. Sealing it to PCR 7 binds it to the
+Secure Boot state: the keys in `db` and `dbx` and the certificate that
+verified each image.
+
+```bash
+systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs=7 /dev/disk/by-partlabel/root
+```
+
+A key that survives a kernel update is bound to a policy the image's builder
+signs instead: `ukify build` signs the PCR 11 values the unified kernel image
+will measure, and `--tpm2-public-key` seals to that key.
+
+```bash
+systemd-cryptenroll --tpm2-device=auto --tpm2-public-key=pcr-public.pem \
+    --tpm2-public-key-pcrs=11 /dev/disk/by-partlabel/root
+```
+
+The key is derived from the board's device private key, so it unseals again
+after a reboot and a firmware update on a board that has the key fused
+([tpm2.md](tpm2.md#keys)).
+
 ## What works
 
 The TPM answers what `docs/tpm2.md` lists: PCR reads, extends and events,
