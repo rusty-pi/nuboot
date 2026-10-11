@@ -39,9 +39,10 @@ From the boot ROM to the threads that run for as long as the board is up:
    the serial console with no setting anywhere.
 3. Logs the firmware's commit, the board's model and revision code, the boot
    medium, the RAM size and the bootloader's version.
-4. Takes over the boot watchdog the first stage armed and carries it
-   through UEFI until the operating system's driver takes it over, so a hang
-   anywhere in the boot resets the board ([docs/eeprom.md](docs/eeprom.md#boot-watchdog)).
+4. Beats the boot watchdog the first stage armed, hands it to the ARM when it
+   starts, and takes it back at `ExitBootServices` until the operating
+   system's driver has it, so a hang anywhere in the boot, or an ARM that
+   stops, resets the board ([docs/eeprom.md](docs/eeprom.md#boot-watchdog)).
 5. Starts the ARM in the UEFI firmware it carries, with the board's device
    tree ([docs/uefi.md](docs/uefi.md)), once it has brought up the PCIe link
    and given the VL805 USB controller its firmware. UEFI finds the SD card and
@@ -129,6 +130,8 @@ pimu boot --scenario scenarios/tpm2-commands.yaml
 pimu boot --scenario scenarios/systemd-boot.yaml
 pimu boot --scenario scenarios/watchdog-hang.yaml
 pimu boot --scenario scenarios/watchdog-exit.yaml
+pimu boot --scenario scenarios/watchdog-stuck.yaml
+pimu boot --scenario scenarios/watchdog-fault.yaml
 ```
 
 To run it by hand, boot the image with a directory as the SD card:

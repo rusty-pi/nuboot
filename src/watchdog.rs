@@ -2,7 +2,8 @@
 //! whole boot (a stock bootloader only when `bootconf.txt` carries
 //! `BOOT_WATCHDOG_TIMEOUT`), so a board that hangs anywhere between the
 //! bootcode and the operating system's own watchdog driver resets instead of
-//! sitting there. [`carry_start`] and [`carry_poll`] take it through UEFI.
+//! sitting there. [`hand_over`] gives it to the ARM, which beats it from UEFI;
+//! [`carry_poll`] takes it back for the operating system to start its driver.
 //!
 //! Only the bootcode arms it, and it arms it once: `PM_RSTC`'s
 //! `WRCFG` asks for a full reset, and everything after that is a bare
@@ -28,7 +29,7 @@
 //! [`crate::idle::heartbeat_on`]. Nothing that does the work — no
 //! decompressor, digest, ELF loader or driver — knows the dog exists.
 
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use crate::{mmio, stc};
 
@@ -175,20 +176,21 @@ pub fn quiesce() {
     }
 }
 
-/// How long the ARM gets in UEFI before the dog is let go, unless UEFI asks
-/// for another span with `SetWatchdogTimer`: the five minutes the UEFI
-/// specification gives a boot option.
-pub const UEFI_WINDOW_S: u32 = 300;
 /// How long the dog is beaten for after `ExitBootServices`: the time the
 /// operating system has to start its own driver for the dog, which finds it
-/// running and keeps it fed (Linux's `bcm2835_wdt`).
+/// running and keeps it fed (Linux's `bcm2835_wdt`, a module on most
+/// distributions).
 pub const OS_WINDOW_S: u32 = 120;
 
-/// The end of the span the dog is carried over while the ARM boots, in two
-/// halves, and the last UEFI request seen. 0: not carrying.
+/// The end of the span the dog is carried over after `ExitBootServices`, in two
+/// halves. 0: not carrying.
 static CARRY_LO: AtomicU32 = AtomicU32::new(0);
 static CARRY_HI: AtomicU32 = AtomicU32::new(0);
+/// The last UEFI request seen.
 static CARRY_SEEN: AtomicU32 = AtomicU32::new(0);
+/// The dog is the ARM's: UEFI reloads it, and the VPU only waits for
+/// `ExitBootServices`.
+static ARM_OWNS: AtomicBool = AtomicBool::new(false);
 
 fn carry_until(end_at: u64) {
     CARRY_HI.store((end_at >> 32) as u32, Ordering::Relaxed);
@@ -199,11 +201,12 @@ fn carry_end() -> u64 {
     (CARRY_HI.load(Ordering::Relaxed) as u64) << 32 | CARRY_LO.load(Ordering::Relaxed) as u64
 }
 
-/// Carry the dog through the ARM's boot from here: [`UEFI_WINDOW_S`] for UEFI
-/// to start the operating system in. The dog has to be armed already.
-pub fn carry_start() {
+/// Give the dog to the ARM, with a full reload to start it from: UEFI beats it
+/// from its first moments, so a stuck ARM is one that stops, and the board
+/// resets up to 16 s later. The dog has to be armed already.
+pub fn hand_over() {
     CARRY_SEEN.store(crate::arm::watchdog_request().0, Ordering::Relaxed);
-    carry_until(stc::now() + UEFI_WINDOW_S as u64 * 1_000_000);
+    ARM_OWNS.store(true, Ordering::Relaxed);
     reload_full();
 }
 
@@ -215,46 +218,30 @@ fn reload_full() {
     mmio::write(PM_WDOG, PASSWD | WDOG_MAX);
 }
 
-/// One beat of the carried dog, at least once a second from a thread: take
-/// UEFI's latest request, and reload the dog while the span lasts. Once it is
-/// over the dog is left to run out, and resets the board up to 16 s later
-/// unless the operating system has taken it on.
+/// One beat of the thread that watches the dog, at least once a second. While
+/// the ARM has the dog it looks for `ExitBootServices`, and takes the dog back
+/// for [`OS_WINDOW_S`]. Once the window is over the dog is left to run out, and
+/// resets the board up to 16 s later unless the operating system has taken it
+/// on.
 pub fn carry_poll() {
+    if ARM_OWNS.load(Ordering::Relaxed) {
+        let (seq, what, _) = crate::arm::watchdog_request();
+        if seq != CARRY_SEEN.load(Ordering::Relaxed) && what == crate::arm::WATCHDOG_EXIT {
+            CARRY_SEEN.store(seq, Ordering::Relaxed);
+            ARM_OWNS.store(false, Ordering::Relaxed);
+            crate::info!("watchdog", "UEFI started the OS, the boot watchdog is its to take over";
+                span_s = OS_WINDOW_S);
+            carry_until(stc::now() + OS_WINDOW_S as u64 * 1_000_000);
+            reload_full();
+        }
+        return;
+    }
     let end_at = carry_end();
     if end_at == 0 {
         return;
     }
-    let (seq, what, seconds) = crate::arm::watchdog_request();
-    if seq != CARRY_SEEN.load(Ordering::Relaxed) {
-        CARRY_SEEN.store(seq, Ordering::Relaxed);
-        let span = match what {
-            crate::arm::WATCHDOG_SET => {
-                // A loader that turns the watchdog off (GRUB does) gets the
-                // default span again: a board nobody is at must not stay in a
-                // boot menu for good.
-                let span = if seconds == 0 { UEFI_WINDOW_S } else { seconds };
-                crate::info!("watchdog", "UEFI set the boot watchdog"; asked_s = seconds, span_s = span);
-                span
-            }
-            crate::arm::WATCHDOG_EXIT => {
-                crate::info!("watchdog", "UEFI started the OS, the boot watchdog is its to take over";
-                    span_s = OS_WINDOW_S);
-                OS_WINDOW_S
-            }
-            crate::arm::WATCHDOG_RESET => {
-                crate::info!("watchdog", "UEFI is resetting the board, the boot watchdog is left to run out");
-                carry_until(0);
-                return;
-            }
-            _ => 0,
-        };
-        if span != 0 {
-            carry_until(stc::now() + span as u64 * 1_000_000);
-        }
-    }
-    let end_at = carry_end();
     if stc::now() >= end_at {
-        crate::warn!("watchdog", "the boot did not finish in time, letting the board reset";
+        crate::warn!("watchdog", "the OS did not take the watchdog in time, letting the board reset";
             left_ms = remaining_us() / 1000);
         carry_until(0);
         return;

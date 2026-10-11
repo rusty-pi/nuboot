@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "watchdog-exit"
-description: "An EFI application exits boot services as an operating system loader does. start4.elf gives the operating system its span to take the boot watchdog over."
+description: "An EFI application exits boot services as an operating system loader does. start4.elf takes the boot watchdog back and gives the operating system its span to take it over."
 
 boot:
   eeprom: "../out/pieeprom-test.bin"
@@ -11,8 +11,8 @@ boot:
   wall_secs: 900
 
 milestones:
-  - why: "start4.elf carried the boot watchdog into UEFI."
-    line: "boot watchdog carried into UEFI  span_s=300"
+  - why: "start4.elf handed the boot watchdog to the ARM."
+    line: "boot watchdog handed to the ARM"
   - why: "The application is running."
     line: "watchdog test: exiting boot services"
   - why: "The UEFI firmware told start4.elf that boot services are over."

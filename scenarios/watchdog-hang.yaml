@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "watchdog-hang"
-description: "An EFI application asks for a one-second watchdog and hangs in boot services. start4.elf stops beating the boot watchdog when the second is up, and the board resets and boots again."
+description: "An EFI application asks for a one-second watchdog and hangs in boot services. UEFI stops beating the boot watchdog when the second is up, and the board resets and boots again."
 
 boot:
   eeprom: "../out/pieeprom-test.bin"
@@ -17,11 +17,11 @@ boot:
 milestones:
   - why: "The first stage armed the boot watchdog."
     line: "boot watchdog armed  budget_s=30"
-  - why: "start4.elf carried it on past the ARM's start."
-    line: "boot watchdog carried into UEFI  span_s=300"
+  - why: "start4.elf handed it to the ARM."
+    line: "boot watchdog handed to the ARM"
   - why: "The application is running."
     line: "watchdog test: hanging in boot services"
-  - why: "The UEFI firmware handed SetWatchdogTimer to start4.elf."
+  - why: "The application's SetWatchdogTimer set the span."
     line: "UEFI set the boot watchdog  asked_s=1 span_s=1"
-  - why: "The span ran out with the boot still in UEFI."
+  - why: "The span ran out with the boot still in UEFI, and the timer stopped beating the dog."
     line: "the boot did not finish in time, letting the board reset"

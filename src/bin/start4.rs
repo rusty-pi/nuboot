@@ -115,14 +115,14 @@ fn firmware_main() -> ! {
         }
     };
     // The heartbeat's stop masks interrupts, so it goes before the threads
-    // take them on; the monitor thread beats the dog from here, through the
-    // ARM's boot. With no ARM to wait for, nothing beats it, and the board
-    // resets.
+    // take them on. The dog goes to the ARM, which beats it from UEFI; the
+    // monitor thread only waits for `ExitBootServices`. With no ARM to take it,
+    // nothing beats it, and the board resets.
     if watchdog {
         watchdog::set_deadline(0);
         if started {
-            watchdog::carry_start();
-            info!("watchdog", "boot watchdog carried into UEFI"; span_s = watchdog::UEFI_WINDOW_S);
+            watchdog::hand_over();
+            info!("watchdog", "boot watchdog handed to the ARM");
         }
     }
 

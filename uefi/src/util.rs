@@ -46,9 +46,13 @@ impl<T: fmt::LowerHex> fmt::Display for Hex<T> {
     }
 }
 
+/// Stop for good, with interrupts masked and the timer that beats the
+/// watchdog stopped: nothing reloads it, and the board resets. A timer left on
+/// would keep `wfi` from sleeping.
 pub fn halt() -> ! {
+    unsafe { core::arch::asm!("msr daifset, #2", "msr CNTHP_CTL_EL2, xzr", "isb") };
     loop {
-        unsafe { core::arch::asm!("wfe") };
+        unsafe { core::arch::asm!("wfi") };
     }
 }
 

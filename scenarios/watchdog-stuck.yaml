@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "watchdog-stuck"
+description: "An EFI application asks for ten minutes of watchdog, then masks interrupts and spins. Nothing beats the dog, and the board resets within 16 s whatever span was asked for."
+
+boot:
+  eeprom: "../out/pieeprom-test.bin"
+  sd:
+    files:
+      EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-stuck.efi"
+  input:
+    # Only so `until` waits for the boot after the reset.
+    - after: "watchdog test: masking interrupts"
+      text: "\r"
+  until: "boot watchdog armed"
+  wall_secs: 900
+
+milestones:
+  - why: "start4.elf handed the boot watchdog to the ARM."
+    line: "boot watchdog handed to the ARM"
+  - why: "The application is running."
+    line: "watchdog test: masking interrupts"
+  - why: "The board reset and the first stage armed the watchdog again."
+    line: "boot watchdog armed  budget_s=30"

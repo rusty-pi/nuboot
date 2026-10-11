@@ -57,17 +57,21 @@ it over. A hang anywhere before that resets the board.
 
 | from | until | span |
 |---|---|---|
-| the first stage's start | the ARM is started | 30 s |
-| the ARM is started | `ExitBootServices` | 300 s; a `SetWatchdogTimer` call starts a new span of the seconds it asks for, or of 300 s when it asks for none |
-| `ExitBootServices` | the operating system's driver beats the dog | 120 s |
+| the first stage's start | the ARM is started | 30 s, beaten by the VPU |
+| the ARM is started | `ExitBootServices` | 300 s, beaten by UEFI; a `SetWatchdogTimer` call starts a new span of the seconds it asks for, or of 300 s when it asks for none |
+| `ExitBootServices` | the operating system's driver beats the dog | 120 s, beaten by the VPU |
 
-The dog itself counts at most 16 s, so `start4.elf` reloads it once a second
-from its monitor thread while a span lasts. When the span is over it stops,
-and the board resets up to 16 s later unless the operating system is beating
-the dog by then. UEFI tells `start4.elf` about `SetWatchdogTimer` and
-`ExitBootServices` through the word at ARM physical `0xfc`, in the
-armstub's page, and about `ResetSystem` the same way: `start4.elf` stops
-reloading the dog, which the reset then runs out.
+The dog itself counts at most 16 s. When the ARM starts, `start4.elf` gives the
+dog to it with a full reload, and UEFI reloads it from then on from the
+hypervisor timer's interrupt every half second, while the span lasts. An
+ARM that has stopped (a fault, a hang with interrupts masked, a core that never
+ran) stops beating, and the board resets up to 16 s later whatever span was
+asked for; one that is running but never returns from a payload is reset when
+the span ends. At `ExitBootServices` UEFI stops the interrupt and tells
+`start4.elf`, through the word at ARM physical `0xfc` in the armstub's page,
+which takes the dog back and beats it for 120 s, the time a kernel has to load
+`bcm2835_wdt`, a module in most distributions' kernels, and have it find the
+dog running.
 
 ## Running it in pimu
 

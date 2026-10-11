@@ -47,7 +47,7 @@ from `start4.elf`'s:
 | USB | The VL805's xHCI behind the PCIe root complex, which `start4.elf` has brought up and given its firmware |
 | `EFI_RNG_PROTOCOL` | RNG200's FIFO, raw |
 | `ResetSystem` | The power manager's watchdog (`PM_RSTC`/`PM_WDOG`), halt through `PM_RSTS` |
-| `SetWatchdogTimer`, `ExitBootServices` | Handed to `start4.elf`, which has the boot watchdog ([eeprom.md](eeprom.md#boot-watchdog)) |
+| `SetWatchdogTimer`, `ExitBootServices` | UEFI beats the board's watchdog from the hypervisor timer's interrupt and hands it back to `start4.elf` at `ExitBootServices` ([eeprom.md](eeprom.md#boot-watchdog)) |
 | Device tree | Passed on to the OS as the `EFI_DTB_TABLE` configuration table |
 | Variables | Held in RAM, with the non-volatile ones also in the flash store ([below](#the-variable-store)) |
 

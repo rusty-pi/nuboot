@@ -150,6 +150,8 @@ wd="$here/uefi/test-apps/watchdog"
 (cd "$wd" && cargo build --release --target aarch64-unknown-uefi)
 sign "$wd/target/aarch64-unknown-uefi/release/hang.efi" "$out/watchdog-hang.efi"
 sign "$wd/target/aarch64-unknown-uefi/release/exit.efi" "$out/watchdog-exit.efi"
+sign "$wd/target/aarch64-unknown-uefi/release/stuck.efi" "$out/watchdog-stuck.efi"
+sign "$wd/target/aarch64-unknown-uefi/release/fault.efi" "$out/watchdog-fault.efi"
 
 mb="$here/uefi/test-apps/mailbox"
 (cd "$mb" && cargo build --release --target aarch64-unknown-uefi)

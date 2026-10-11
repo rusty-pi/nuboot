@@ -169,6 +169,65 @@ _start:
     b exception
 .endm
 
+// An interrupt at EL2 on SP_EL2, which is where the firmware and everything it
+// starts run: keep what the code it interrupted can have in registers (the
+// caller-saved ones, which `pi4_irq` may use), call it, and go back.
+.macro irq_vector
+    .balign 0x80
+    sub sp, sp, #(16 * 10 + 16 * 24)
+    stp x0, x1, [sp, #0]
+    stp x2, x3, [sp, #16]
+    stp x4, x5, [sp, #32]
+    stp x6, x7, [sp, #48]
+    stp x8, x9, [sp, #64]
+    stp x10, x11, [sp, #80]
+    stp x12, x13, [sp, #96]
+    stp x14, x15, [sp, #112]
+    stp x16, x17, [sp, #128]
+    stp x18, x30, [sp, #144]
+    b irq_save_vectors
+.endm
+
+.section .text.irq, "ax"
+irq_save_vectors:
+    stp q0, q1, [sp, #160]
+    stp q2, q3, [sp, #192]
+    stp q4, q5, [sp, #224]
+    stp q6, q7, [sp, #256]
+    stp q16, q17, [sp, #288]
+    stp q18, q19, [sp, #320]
+    stp q20, q21, [sp, #352]
+    stp q22, q23, [sp, #384]
+    stp q24, q25, [sp, #416]
+    stp q26, q27, [sp, #448]
+    stp q28, q29, [sp, #480]
+    stp q30, q31, [sp, #512]
+    bl pi4_irq
+    ldp q0, q1, [sp, #160]
+    ldp q2, q3, [sp, #192]
+    ldp q4, q5, [sp, #224]
+    ldp q6, q7, [sp, #256]
+    ldp q16, q17, [sp, #288]
+    ldp q18, q19, [sp, #320]
+    ldp q20, q21, [sp, #352]
+    ldp q22, q23, [sp, #384]
+    ldp q24, q25, [sp, #416]
+    ldp q26, q27, [sp, #448]
+    ldp q28, q29, [sp, #480]
+    ldp q30, q31, [sp, #512]
+    ldp x0, x1, [sp, #0]
+    ldp x2, x3, [sp, #16]
+    ldp x4, x5, [sp, #32]
+    ldp x6, x7, [sp, #48]
+    ldp x8, x9, [sp, #64]
+    ldp x10, x11, [sp, #80]
+    ldp x12, x13, [sp, #96]
+    ldp x14, x15, [sp, #112]
+    ldp x16, x17, [sp, #128]
+    ldp x18, x30, [sp, #144]
+    add sp, sp, #(16 * 10 + 16 * 24)
+    eret
+
 .section .vectors, "ax"
 .balign 2048
 .global exception_vectors
@@ -178,7 +237,7 @@ exception_vectors:
     vector 2
     vector 3
     vector 4
-    vector 5
+    irq_vector
     vector 6
     vector 7
     vector 8
@@ -192,7 +251,8 @@ exception_vectors:
 "#
 );
 
-/// Every exception at EL2 is a fault here: nothing takes interrupts.
+/// Every exception at EL2 but the timer interrupt ([`crate::watchdog`]) is a
+/// fault here.
 #[unsafe(no_mangle)]
 extern "C" fn exception(entry: u64, _saved: *const u64) -> ! {
     let (esr, elr, far): (u64, u64, u64);
