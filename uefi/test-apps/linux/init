@@ -11,6 +11,9 @@ say() { echo "linux test: $*"; }
 var() { hexdump -ve '1/1 "%02x"' "/sys/firmware/efi/efivars/$1-$2" 2>&1; }
 GLOBAL=8be4df61-93ca-11d2-aa0d-00e098032b8c
 
+LOADER=4a67b082-0a4c-41cf-b6c7-440b29bb8c4f
+loader() { tail -c +5 "/sys/firmware/efi/efivars/$1-$LOADER" 2>&1 | tr -d '\000'; }
+
 say "kernel $(uname -r) is up"
 dmesg | grep -E "efi: EFI v|efi: RTPROP|Kernel is locked down|efivars: Registered|Loaded X.509 cert|esrt:|efi:" | grep -v "linux test" | while read -r line; do say "kernel log: ${line#*] }"; done
 insmod /efivarfs.ko
@@ -18,6 +21,9 @@ mount -t efivarfs efivarfs /sys/firmware/efi/efivars && say "efivarfs mounted"
 say "SecureBoot $(var SecureBoot $GLOBAL)"
 say "SetupMode $(var SetupMode $GLOBAL)"
 say "OsIndicationsSupported $(var OsIndicationsSupported $GLOBAL)"
+say "LoaderInfo $(loader LoaderInfo)"
+say "StubInfo $(loader StubInfo)"
+say "LoaderEntrySelected $(loader LoaderEntrySelected)"
 for e in /sys/firmware/efi/esrt/entries/*; do
     say "esrt $(cat $e/fw_class) type $(cat $e/fw_type) version $(cat $e/fw_version) status $(cat $e/last_attempt_status)"
 done

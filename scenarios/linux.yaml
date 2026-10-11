@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "linux"
-description: "Debian's arm64 kernel, in a unified kernel image signed with the test key, boots under the firmware with Secure Boot on, and its first process looks at what the firmware gave it: the kernel's own log of the EFI tables, the Secure Boot variables through efivarfs, the ESRT, the TPM on the VPU through the module in tools/tpm-vpu, and a variable it writes."
+description: "Debian's arm64 kernel, in a unified kernel image that Debian's systemd-boot starts, boots under the firmware with Secure Boot on, and its first process looks at what the firmware gave it: the kernel's own log of the EFI tables, the Secure Boot variables through efivarfs, the ESRT, the TPM on the VPU through the module in tools/tpm-vpu, and a variable it writes."
 
 boot:
   eeprom: "../out/stock-pieeprom.bin"
@@ -8,7 +8,9 @@ boot:
   sd:
     files:
       start4.elf: "../out/start4-test.elf"
-      EFI/BOOT/BOOTAA64.EFI: "../out/linux-test.efi"
+      EFI/BOOT/BOOTAA64.EFI: "../out/systemd-bootaa64.efi"
+      EFI/Linux/linux-test.efi: "../out/linux-test.efi"
+      loader/loader.conf: { inline: "timeout 0\nconsole-mode keep\n" }
   until: "linux test: done"
   wall_secs: 3000
 
@@ -31,11 +33,19 @@ milestones:
     line: "linux test: pcr 0 extended"
   - why: "The board is in PCR 1."
     line: "linux test: pcr 1 extended"
+  - why: "systemd-boot's configuration is in PCR 5."
+    line: "linux test: pcr 5 extended"
   - why: "The initrd is in PCR 9."
     line: "linux test: pcr 9 extended"
   - why: "The unified kernel image is in PCR 11."
     line: "linux test: pcr 11 extended"
   - why: "The kernel reads the firmware's event log through the TPM it registered."
     line: "linux test: event log present"
+  - why: "systemd-boot told the OS it is the loader."
+    line: "linux test: LoaderInfo systemd-boot"
+  - why: "systemd-stub told the OS it is the stub, and which entry was started."
+    line: "linux test: StubInfo systemd-stub"
+  - why: "The entry systemd-boot started is the unified kernel image."
+    line: "linux test: LoaderEntrySelected linux-test.efi"
   - why: "The OS can write a variable."
     line: "linux test: variable written"
