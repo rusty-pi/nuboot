@@ -15,8 +15,8 @@ on an 8-byte boundary, as the boot ROM and the stock tools expect.
 | `memsys00.bin` .. `memsys08.bin`, `mcb.bin` (`0x55aaf44f`) | the stock image, unchanged | 103 KB |
 | `vl805hub.bin`, `vl805mcu.bin` (`0x55aaf33f`) | the stock image, unchanged | 67 KB |
 | `start4.elf` (`0x55aaf11f`) | `src/bin/start4.rs`, with `pi4-uefi.bin` and the device tree in it | 156 KB |
-| free | | 20 KB |
-| variable store | the UEFI variable log, two banks of 48 KiB from `0x68000` ([uefi.md](uefi.md#the-variable-store)) | 96 KiB |
+| free | | 52 KB |
+| variable store | the UEFI variable log, two banks of 32 KiB from `0x70000` ([uefi.md](uefi.md#the-variable-store)) | 64 KiB |
 
 `memsys00.bin` to `memsys08.bin` are the nine passes of the LPDDR4 training
 firmware and `mcb.bin` the table of SDRAM parts and their timings.
@@ -95,7 +95,7 @@ A flash layout with the image's two regions writes the firmware and leaves the
 variable store as it is:
 
 ```bash
-printf '000000:067fff firmware\n068000:07ffff store\n' > layout.txt
+printf '000000:06ffff firmware\n070000:07ffff store\n' > layout.txt
 flashrom -p linux_spi:dev=/dev/spidev0.0,spispeed=16000 -l layout.txt -i firmware -w pieeprom.bin
 ```
 

@@ -115,8 +115,8 @@ flash store.
 
 ### The variable store
 
-Non-volatile variables are kept in the last 96 KiB of the EEPROM, a log in two
-banks of 48 KiB from `0x68000`, and come back at the next boot.
+Non-volatile variables are kept in the last 64 KiB of the EEPROM, a log in two
+banks of 32 KiB from `0x70000`, and come back at the next boot.
 
 - `KEK`, `db` and `dbx` are stored as the signed writes that made them. Every
   boot starts from the built-in keys and checks each stored write again against

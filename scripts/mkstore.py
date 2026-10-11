@@ -16,7 +16,7 @@ import struct
 import sys
 import uuid
 
-BASE = 0x68000
+BASE = 0x70000
 BANK_MAGIC = 0x56344950
 RECORD_MAGIC = 0x52454331
 SET = 1
