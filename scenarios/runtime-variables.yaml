@@ -13,6 +13,10 @@ boot:
 milestones:
   - why: "The firmware's own variables are read after ExitBootServices."
     line: "runtime test: SecureBoot is read ok"
+  - why: "The ESRT names this firmware as the one system firmware resource."
+    line: "runtime test: the ESRT has one system firmware resource ok"
+  - why: "fwupd can stage a capsule on the ESP and set OsIndications."
+    line: "runtime test: OsIndications reads back ok"
   - why: "The keys and the Secure Boot state cannot be changed from the OS."
     line: "runtime test: db is not writable ok"
   - why: "A variable the OS creates reads back, appends and is replaced."

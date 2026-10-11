@@ -5,6 +5,18 @@ fn main() {
     println!("cargo:rustc-link-arg=-T{dir}/link.ld");
     println!("cargo:rustc-link-arg=-no-pie");
 
+    // What orders one build after another: the commit's time.
+    println!("cargo:rerun-if-env-changed=FIRMWARE_COMMIT");
+    let time = std::process::Command::new("git")
+        .args(["log", "-1", "--format=%ct"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|t| t.trim().to_string())
+        .filter(|t| t.parse::<u32>().is_ok())
+        .unwrap_or_else(|| "0".to_string());
+    println!("cargo:rustc-env=FIRMWARE_TIME={time}");
+
     // keys/dbx-aarch64.txt as the 32-byte hashes one after the other.
     println!("cargo:rerun-if-changed=keys");
     let text = std::fs::read_to_string(format!("{dir}/keys/dbx-aarch64.txt")).unwrap();

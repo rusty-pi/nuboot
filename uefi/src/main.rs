@@ -22,6 +22,7 @@ mod critical;
 mod devpath;
 mod dma;
 mod entry;
+mod esrt;
 mod event;
 mod fat;
 mod fdt;
@@ -174,6 +175,7 @@ extern "C" fn pi4_main(tree_addr: u64) -> ! {
     tables::install_table(tables::DTB_GUID, tree_addr as *mut c_void);
     rng::install();
     tcg2::init();
+    esrt::init();
     secure::init();
     let parent = firmware_handle();
 

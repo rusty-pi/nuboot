@@ -48,6 +48,7 @@ from `start4.elf`'s:
 | `EFI_RNG_PROTOCOL` | RNG200's FIFO, raw |
 | `ResetSystem` | The power manager's watchdog (`PM_RSTC`/`PM_WDOG`), halt through `PM_RSTS` |
 | `SetWatchdogTimer`, `ExitBootServices` | UEFI beats the board's watchdog from the hypervisor timer's interrupt and hands it back to `start4.elf` at `ExitBootServices` ([eeprom.md](eeprom.md#boot-watchdog)) |
+| ESRT | One system firmware resource, the firmware itself, in the `EFI_SYSTEM_RESOURCE_TABLE`, with the commit's time as its version. `OsIndicationsSupported` offers file capsule delivery, and `OsIndications` takes the OS's write |
 | Device tree | Passed on to the OS as the `EFI_DTB_TABLE` configuration table |
 | Variables | Held in RAM, with the non-volatile ones also in the flash store ([below](#the-variable-store)) |
 

@@ -33,14 +33,36 @@ fn get(rt: *mut RuntimeServices, var: &str, guid: &Guid, out: &mut [u8]) -> (Sta
     (status, size, attributes)
 }
 
+const ESRT: Guid = Guid::from_fields(0xb122a263, 0x3661, 0x4f68, 0x99, 0x29, &[0x78, 0xf8, 0xb0, 0xd6, 0x21, 0x80]);
+
+fn check_esrt(system_table: *mut SystemTable) {
+    let tables = unsafe { core::slice::from_raw_parts((*system_table).configuration_table, (*system_table).number_of_table_entries) };
+    let Some(table) = tables.iter().find(|t| t.vendor_guid == ESRT) else {
+        check("the ESRT is installed", false);
+        return;
+    };
+    let words = table.vendor_table as *const u32;
+    let word = |i: usize| unsafe { *words.add(i) };
+    let (count, version) = (word(0), word(2));
+    let (kind, firmware_version, status) = (word(8), word(9), word(13));
+    check("the ESRT has one system firmware resource", count == 1 && version == 1 && kind == 1);
+    check("the ESRT carries a version and no failed attempt", firmware_version > 0 && status == 0);
+}
+
 #[unsafe(no_mangle)]
 pub extern "efiapi" fn efi_main(image: Handle, system_table: *mut SystemTable) -> Status {
     let rt = exit_boot_services(image, system_table);
     runtime_efi::settle();
+    check_esrt(system_table);
     let mut out = [0u8; 4096];
 
     let (status, size, attributes) = get(rt, "SecureBoot", &GLOBAL, &mut out);
     check("SecureBoot is read", status == Status::SUCCESS && size == 1 && out[0] == 1 && attributes & BS_RT == BS_RT);
+    let (status, size, _) = get(rt, "OsIndicationsSupported", &GLOBAL, &mut out);
+    check("file capsule delivery is supported", status == Status::SUCCESS && size == 8 && out[0] & 4 != 0);
+    check("OsIndications is set", set(rt, "OsIndications", &GLOBAL, BS_RT | NV, &[4, 0, 0, 0, 0, 0, 0, 0]) == Status::SUCCESS);
+    let (status, size, _) = get(rt, "OsIndications", &GLOBAL, &mut out);
+    check("OsIndications reads back", status == Status::SUCCESS && out[..size] == [4, 0, 0, 0, 0, 0, 0, 0]);
     check("SecureBoot is not writable", set(rt, "SecureBoot", &GLOBAL, BS_RT, &[0]) == Status::WRITE_PROTECTED);
     check("PK is not writable", set(rt, "PK", &GLOBAL, BS_RT | NV, &[0]) == Status::WRITE_PROTECTED);
     check("PK is not deleted", set(rt, "PK", &GLOBAL, 0, &[]) == Status::WRITE_PROTECTED);
