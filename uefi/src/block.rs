@@ -19,6 +19,10 @@ pub trait Disk {
     /// Read whole blocks from `lba` into `buf`, whose length is a multiple of
     /// the block size.
     fn read(&mut self, lba: u64, buf: &mut [u8]) -> Result<(), ()>;
+    /// Write whole blocks to `lba`, and have them on the medium when it
+    /// returns. For the firmware's own files: nothing an EFI application calls
+    /// reaches it.
+    fn write(&mut self, lba: u64, buf: &[u8]) -> Result<(), ()>;
     fn block_size(&self) -> u32;
     fn blocks(&self) -> u64;
 }
@@ -60,6 +64,44 @@ impl Volume {
             return Ok(());
         }
         self.disk().read(self.first + lba, buf)
+    }
+
+    /// Write whole blocks of the volume.
+    pub fn write_blocks(&self, lba: u64, buf: &[u8]) -> Result<(), ()> {
+        let bs = self.block_size() as u64;
+        if buf.len() as u64 % bs != 0 || lba + buf.len() as u64 / bs > self.blocks() {
+            return Err(());
+        }
+        if buf.is_empty() {
+            return Ok(());
+        }
+        self.disk().write(self.first + lba, buf)
+    }
+
+    /// Write any bytes of the volume: the blocks they share with other bytes
+    /// are read, changed and written back.
+    pub fn write_bytes(&self, offset: u64, data: &[u8]) -> Result<(), ()> {
+        let bs = self.block_size() as u64;
+        let mut done = 0usize;
+        while done < data.len() {
+            let at = offset + done as u64;
+            let lba = at / bs;
+            let skip = (at % bs) as usize;
+            let left = data.len() - done;
+            if skip == 0 && left as u64 >= bs {
+                let whole = left - left % bs as usize;
+                self.write_blocks(lba, &data[done..done + whole])?;
+                done += whole;
+            } else {
+                let mut block = vec![0u8; bs as usize];
+                self.read_blocks(lba, &mut block)?;
+                let n = (bs as usize - skip).min(left);
+                block[skip..skip + n].copy_from_slice(&data[done..done + n]);
+                self.write_blocks(lba, &block)?;
+                done += n;
+            }
+        }
+        Ok(())
     }
 
     /// Read any bytes of the volume.

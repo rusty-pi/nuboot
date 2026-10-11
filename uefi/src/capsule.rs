@@ -1,12 +1,27 @@
 //! Firmware update capsules on the disk. fwupd puts a capsule for this
 //! firmware's ESRT entry in `\EFI\UpdateCapsule` on the EFI system partition
-//! and reboots; at boot this looks there, and checks each file against the
-//! keys the firmware's own `db` entries hold.
+//! and reboots; at boot this looks there, checks each file against the keys
+//! the firmware's own `db` entries hold, and stages what it carries as a
+//! tryboot.
 //!
 //! A capsule is an `EFI_CAPSULE_HEADER` for [`esrt::FIRMWARE_CLASS`], then a
 //! `WIN_CERTIFICATE_UEFI_GUID` holding a detached PKCS #7 signature over what
-//! follows it: `P4FW`, the version as a little-endian `u32`, and the flash
-//! region the firmware owns (`0` to `0x6ffff`), as much of it as is written.
+//! follows it: `P4FW`, the version as a little-endian `u32`, the length of
+//! `boot.sig` as one, `boot.sig`, and `boot.img`. The bootloader checks that
+//! pair against the EEPROM's customer key when it boots it.
+//!
+//! The update takes three boots:
+//!
+//! 1. The firmware that finds the capsule writes `tryboot.img` and
+//!    `tryboot.sig` next to `boot.img` and `boot.sig`, records that an update
+//!    is pending, and resets with the bootloader's tryboot request set.
+//! 2. The bootloader starts the new firmware out of `tryboot.img`. When that
+//!    firmware reaches `ExitBootServices` it records the update as proven.
+//!    The request is one-shot, so a boot that fails before then is followed by
+//!    one from `boot.img`.
+//! 3. The firmware that starts from `boot.img` finds the update proven and
+//!    makes `tryboot.img` and `tryboot.sig` the boot pair, or finds it
+//!    unproven and removes them.
 
 use alloc::vec::Vec;
 
@@ -14,14 +29,23 @@ use r_efi::efi;
 use r_efi::protocols::simple_file_system;
 
 use crate::util::{W, eq_ignore_case};
-use crate::{esrt, fat, info, proto, secure, var, warn};
+use crate::{esrt, fat, info, proto, secure, tables, var, warn};
 
 const DIRECTORY: &str = "\\EFI\\UpdateCapsule";
 const MAGIC: &[u8; 4] = b"P4FW";
-/// What the firmware owns of the flash: below the variable store.
 const HEADER: usize = 28;
 /// The most an image may carry.
-const MAX_IMAGE: usize = 16 * 1024 * 1024;
+const MAX_IMAGE: usize = 64 * 1024 * 1024;
+const MAX_SIGNATURE: usize = 4096;
+
+/// What an update leaves in the flash store: the state and the version the
+/// update carries.
+const RECORD: &str = "FwUpdate";
+/// What the last update came to, for the OS to read in the ESRT: the version
+/// and the status.
+const RESULT: &str = "FwUpdateResult";
+const PENDING: u8 = 1;
+const PROVEN: u8 = 2;
 
 /// `EFI_CERT_TYPE_PKCS7_GUID`.
 const PKCS7: efi::Guid =
@@ -30,11 +54,20 @@ const PKCS7: efi::Guid =
 /// A capsule that passed every check.
 pub struct Capsule {
     pub version: u32,
-    pub region: Vec<u8>,
+    pub sig: Vec<u8>,
+    pub img: Vec<u8>,
 }
 
 fn u32_at(b: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_le_bytes(b.get(at..at + 4)?.try_into().ok()?))
+}
+
+fn wide(text: &str) -> Vec<u16> {
+    text.encode_utf16().collect()
+}
+
+fn hex(bytes: &[u8]) -> alloc::string::String {
+    bytes.iter().map(|b| alloc::format!("{b:02x}")).collect()
 }
 
 /// What a capsule file is, if it passes: otherwise the status the ESRT gets
@@ -61,42 +94,128 @@ fn check(file: &[u8]) -> Result<Capsule, (u32, &'static str)> {
         return Err(invalid("image is not firmware"));
     }
     let version = u32_at(image, 4).ok_or(invalid("no version"))?;
-    let region = &image[8..];
-    if region.len() > MAX_IMAGE {
-        return Err((esrt::INSUFFICIENT_RESOURCES, "image is larger than the firmware's flash region"));
+    let sig_len = u32_at(image, 8).ok_or(invalid("no boot.sig"))? as usize;
+    let sig = image.get(12..12 + sig_len).filter(|_| sig_len <= MAX_SIGNATURE).ok_or(invalid("boot.sig does not fit"))?;
+    let img = &image[12 + sig_len..];
+    if img.is_empty() || img.len() > MAX_IMAGE {
+        return Err((esrt::INSUFFICIENT_RESOURCES, "boot.img is empty or too large"));
+    }
+    let text = core::str::from_utf8(sig).map_err(|_| invalid("boot.sig is not text"))?;
+    if !text.starts_with(hex(&crate::sha256::digest(img)).as_str()) || !text.contains("rsa2048:") {
+        return Err(invalid("boot.sig is not an RSA signature of this boot.img"));
     }
     if version <= esrt::VERSION {
-        return Err((esrt::INCORRECT_VERSION, "version is not newer than the running firmware"));
+        return Err((esrt::INCORRECT_VERSION, "version is not newer than the running firmware's"));
     }
-    Ok(Capsule { version, region: region.to_vec() })
+    Ok(Capsule { version, sig: sig.to_vec(), img: img.to_vec() })
 }
 
-/// What a capsule's application leaves for the boot after it, until that boot
-/// has told the OS how it went: the version it installed.
-const PENDING: &str = "FwUpdateVersion";
+fn record() -> Option<(u8, u32)> {
+    let data = var::bytes(RECORD, &esrt::FIRMWARE_CLASS)?;
+    Some((*data.first()?, u32_at(&data, 1)?))
+}
 
-/// If a capsule was applied before this boot, say how it went: the firmware
-/// that started is the version the capsule carried or it is not.
+fn set_record(state: u8, version: u32) -> efi::Status {
+    let mut data = alloc::vec![state];
+    data.extend_from_slice(&version.to_le_bytes());
+    var::keep(RECORD, esrt::FIRMWARE_CLASS, &data)
+}
+
+fn set_result(version: u32, status: u32) {
+    let mut data = version.to_le_bytes().to_vec();
+    data.extend_from_slice(&status.to_le_bytes());
+    var::keep(RESULT, esrt::FIRMWARE_CLASS, &data);
+    esrt::attempted(version, status);
+}
+
+/// The file system with the bootloader's `boot.img` on it.
+fn boot_fs() -> Option<efi::Handle> {
+    let boot = wide("boot.img");
+    proto::with(Some(&simple_file_system::PROTOCOL_GUID)).into_iter().find(|&fs| {
+        fat::list_files(fs, &[]).is_ok_and(|names| names.iter().any(|n| eq_ignore_case(n, &boot)))
+    })
+}
+
+fn staged(fs: efi::Handle) -> bool {
+    let names = fat::list_files(fs, &[]).unwrap_or_default();
+    ["tryboot.img", "tryboot.sig"].iter().all(|f| names.iter().any(|n| eq_ignore_case(n, &wide(f))))
+}
+
+/// Whether the file `name` on `fs` holds exactly `data`.
+fn holds(fs: efi::Handle, name: &str, data: &[u8]) -> bool {
+    fat::read_file(fs, &wide(name)).is_ok_and(|read| read == data)
+}
+
+/// Whether the signature file `sig` on `fs` is the digest of the image `img`.
+fn pair(fs: efi::Handle, img: &str, sig: &str) -> bool {
+    let (Ok(img), Ok(sig)) = (fat::read_file(fs, &wide(img)), fat::read_file(fs, &wide(sig))) else { return false };
+    core::str::from_utf8(&sig).is_ok_and(|text| text.starts_with(hex(&crate::sha256::digest(&img)).as_str()))
+}
+
+fn remove_staged(fs: efi::Handle) {
+    for name in ["tryboot.img", "tryboot.sig"] {
+        let _ = fat::remove_file(fs, &[], &wide(name));
+    }
+}
+
+/// The firmware that started from `tryboot.img` has reached the OS.
+fn prove() {
+    if let Some((PENDING, version)) = record() {
+        if version == esrt::VERSION {
+            set_record(PROVEN, version);
+            info!("capsule", "the updated firmware reached the OS"; version = version);
+        }
+    }
+}
+
+/// Say how an update an earlier boot started has gone, and finish it.
 pub fn resume() {
-    let Some(data) = var::bytes(PENDING, &esrt::FIRMWARE_CLASS) else { return };
-    var::forget(PENDING, esrt::FIRMWARE_CLASS);
-    let version = data.get(..4).and_then(|b| b.try_into().ok()).map_or(0, u32::from_le_bytes);
+    if let Some(data) = var::bytes(RESULT, &esrt::FIRMWARE_CLASS) {
+        if let (Some(version), Some(status)) = (u32_at(&data, 0), u32_at(&data, 4)) {
+            esrt::attempted(version, status);
+        }
+    }
+    let Some((state, version)) = record() else { return };
     if version == esrt::VERSION {
         info!("capsule", "firmware updated"; version = version);
         esrt::attempted(version, esrt::SUCCESS);
-    } else {
-        warn!("capsule", "the firmware that started is not the capsule's version"; capsule = version, running = esrt::VERSION);
-        esrt::attempted(version, esrt::UNSUCCESSFUL);
+        tables::before_exit_boot_services(prove);
+        return;
     }
+    let Some(fs) = boot_fs() else {
+        var::forget(RECORD, esrt::FIRMWARE_CLASS);
+        return;
+    };
+    if state == PROVEN && staged(fs) && pair(fs, "tryboot.img", "tryboot.sig") {
+        let (img, sig) = (wide("boot.img"), wide("boot.sig"));
+        let (timg, tsig) = (wide("tryboot.img"), wide("tryboot.sig"));
+        match fat::adopt(fs, &[], &[(&timg, &img), (&tsig, &sig)]) {
+            Ok(()) if !pair(fs, "boot.img", "boot.sig") => {
+                warn!("capsule", "boot.img and boot.sig do not belong together after the commit"; version = version);
+            }
+            Ok(()) => {
+                set_result(version, esrt::SUCCESS);
+                var::forget(RECORD, esrt::FIRMWARE_CLASS);
+                info!("capsule", "firmware committed"; version = version);
+                crate::watchdog::reset(false);
+            }
+            Err(status) => warn!("capsule", "update not committed"; version = version, status = status.as_usize()),
+        }
+        return;
+    }
+    warn!("capsule", "the updated firmware did not reach the OS, update dropped"; version = version);
+    remove_staged(fs);
+    set_result(version, esrt::UNSUCCESSFUL);
+    var::forget(RECORD, esrt::FIRMWARE_CLASS);
 }
 
 /// Look for capsules on every file system and check each one.
 pub fn scan() {
     resume();
-    let directory: Vec<u16> = DIRECTORY.encode_utf16().collect();
+    let directory = wide(DIRECTORY);
     for fs in proto::with(Some(&simple_file_system::PROTOCOL_GUID)) {
         let Ok(names) = fat::list_files(fs, &directory) else { continue };
-        for name in names.into_iter().filter(|n| n.len() > 4 && eq_ignore_case(&n[n.len() - 4..], &[b'.' as u16, b'c' as u16, b'a' as u16, b'p' as u16])) {
+        for name in names.into_iter().filter(|n| n.len() > 4 && eq_ignore_case(&n[n.len() - 4..], &wide(".cap"))) {
             let mut path = directory.clone();
             path.push(b'\\' as u16);
             path.extend_from_slice(&name);
@@ -109,8 +228,8 @@ pub fn scan() {
             };
             match check(&file) {
                 Ok(capsule) => {
-                    info!("capsule", "capsule verified"; path = W(&path), version = capsule.version, bytes = capsule.region.len());
-                    apply(&capsule);
+                    info!("capsule", "capsule verified"; path = W(&path), version = capsule.version, bytes = capsule.img.len());
+                    stage(fs, &directory, &name, &capsule);
                 }
                 Err((status, why)) => {
                     warn!("capsule", "capsule refused"; path = W(&path), reason = why);
@@ -121,7 +240,34 @@ pub fn scan() {
     }
 }
 
-fn apply(capsule: &Capsule) {
-    warn!("capsule", "applying a capsule is not implemented"; version = capsule.version);
-    esrt::attempted(capsule.version, esrt::UNSUCCESSFUL);
+/// Write the capsule's pair as the tryboot, and restart on it.
+fn stage(capsule_fs: efi::Handle, directory: &[u16], name: &[u16], capsule: &Capsule) {
+    let failed = |why: &str, status: efi::Status| {
+        warn!("capsule", "update not staged"; reason = why, status = status.as_usize());
+        esrt::attempted(capsule.version, esrt::UNSUCCESSFUL);
+    };
+    if !var::keeps() {
+        return failed("no device key or flash store to record the update in", efi::Status::UNSUPPORTED);
+    }
+    let Some(fs) = boot_fs() else { return failed("no file system holds boot.img", efi::Status::NOT_FOUND) };
+    let status = set_record(PENDING, capsule.version);
+    if status.is_error() {
+        return failed("the update could not be recorded", status);
+    }
+    let written = fat::write_file(fs, &[], &wide("tryboot.img"), &capsule.img)
+        .and_then(|()| fat::write_file(fs, &[], &wide("tryboot.sig"), &capsule.sig));
+    if let Err(status) = written {
+        remove_staged(fs);
+        var::forget(RECORD, esrt::FIRMWARE_CLASS);
+        return failed("tryboot.img and tryboot.sig could not be written", status);
+    }
+    if !holds(fs, "tryboot.img", &capsule.img) || !holds(fs, "tryboot.sig", &capsule.sig) {
+        remove_staged(fs);
+        var::forget(RECORD, esrt::FIRMWARE_CLASS);
+        return failed("what was written does not read back", efi::Status::DEVICE_ERROR);
+    }
+    let _ = fat::remove_file(capsule_fs, directory, name);
+    info!("capsule", "update staged, restarting as a tryboot"; version = capsule.version);
+    crate::watchdog::request_tryboot();
+    crate::watchdog::reset(false);
 }

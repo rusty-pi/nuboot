@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """Build a firmware update capsule, the file fwupd puts in \\EFI\\UpdateCapsule.
 
-    mkcapsule.py KEY CERT VERSION OUT [--image FILE] [--corrupt]
+    mkcapsule.py KEY CERT VERSION OUT [--boot-img FILE --boot-sig FILE] [--corrupt]
 
 KEY and CERT (PEM) are the signer's: a key one of the firmware's own `db`
 entries holds. VERSION is the number the ESRT carries once the capsule is
-applied. FILE is the flash region the firmware owns (up to 0x70000 bytes, from
-offset 0, erased bytes at its end left off); without it a short test pattern. --corrupt flips a byte after the
-signing.
+applied. The capsule carries a boot.img and its boot.sig
+(scripts/mkbootimg.py); without them a short test pattern with a signature
+line of the right shape that no bootloader would accept. --corrupt flips a
+byte after the signing.
 """
 
+import hashlib
 import os
 import struct
 import subprocess
@@ -26,15 +28,23 @@ def main():
     args = sys.argv[1:]
     corrupt = "--corrupt" in args
     args = [a for a in args if a != "--corrupt"]
-    region = bytes(range(256)) * 16
-    if "--image" in args:
-        at = args.index("--image")
-        region = open(args[at + 1], "rb").read().rstrip(b"\xff")
-        del args[at : at + 2]
+    img = bytes(range(256)) * 16
+    sig = None
+    for flag in ("--boot-img", "--boot-sig"):
+        if flag in args:
+            at = args.index(flag)
+            data = open(args[at + 1], "rb").read()
+            del args[at : at + 2]
+            if flag == "--boot-img":
+                img = data
+            else:
+                sig = data
+    if sig is None:
+        sig = f"{hashlib.sha256(img).hexdigest()}\nts: 1\nrsa2048: {'00' * 256}\n".encode()
     if len(args) != 4:
         sys.exit(__doc__)
     key, cert, version, out = args
-    image = b"P4FW" + struct.pack("<I", int(version, 0)) + region
+    image = b"P4FW" + struct.pack("<II", int(version, 0), len(sig)) + sig + img
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "image")
         open(path, "wb").write(image)

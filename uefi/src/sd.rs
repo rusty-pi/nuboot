@@ -30,6 +30,7 @@ const STATUS_DAT_INHIBIT: u32 = 1 << 1;
 
 const INT_CMD_DONE: u32 = 1 << 0;
 const INT_DATA_DONE: u32 = 1 << 1;
+const INT_WRITE_READY: u32 = 1 << 4;
 const INT_READ_READY: u32 = 1 << 5;
 const INT_ERROR: u32 = 1 << 15;
 
@@ -213,6 +214,46 @@ impl Sd {
     }
 }
 
+impl Sd {
+    fn write_run(&mut self, lba: u64, buf: &[u8]) -> Result<(), Error> {
+        let count = buf.len() / BLOCK;
+        let addr = if self.high_capacity { lba as u32 } else { (lba * BLOCK as u64) as u32 };
+        write32(BLKSIZECNT, (count as u32) << 16 | BLOCK as u32);
+        let (index, mode) = if count == 1 { (24, 0) } else { (25, TM_MULTI | TM_BLKCNT_EN | TM_AUTO_CMD12) };
+        self.command(index, addr, R1 | DATA_PRESENT | mode)?;
+        for block in buf.chunks_exact(BLOCK) {
+            if !wait_for(1_000_000, || read32(INTERRUPT) & (INT_WRITE_READY | INT_ERROR) != 0) {
+                self.reset_lines(C1_RESET_CMD | C1_RESET_DATA);
+                return Err(Error::Timeout);
+            }
+            let irq = read32(INTERRUPT);
+            if irq & INT_ERROR != 0 {
+                write32(INTERRUPT, irq);
+                self.reset_lines(C1_RESET_CMD | C1_RESET_DATA);
+                return Err(Error::Controller(irq));
+            }
+            write32(INTERRUPT, INT_WRITE_READY);
+            for word in block.chunks_exact(4) {
+                write32(DATA, u32::from_le_bytes(word.try_into().unwrap()));
+            }
+        }
+        if !wait_for(5_000_000, || read32(INTERRUPT) & (INT_DATA_DONE | INT_ERROR) != 0) {
+            self.reset_lines(C1_RESET_CMD | C1_RESET_DATA);
+            return Err(Error::Timeout);
+        }
+        write32(INTERRUPT, read32(INTERRUPT));
+        // The card is busy programming until it says it is ready for data.
+        for _ in 0..200 {
+            let status = self.command(13, self.rca << 16, R1)?[0];
+            if status & (1 << 8) != 0 {
+                return Ok(());
+            }
+            crate::util::delay_us(5_000);
+        }
+        Err(Error::Timeout)
+    }
+}
+
 /// The card's size in blocks, from its CSD (bits 127..8 as the controller
 /// gives them, shifted down by 8).
 fn capacity(r: &[u32; 4]) -> u64 {
@@ -248,6 +289,17 @@ impl Disk for Sd {
                         return Err(());
                     }
                 }
+            }
+        }
+        Ok(())
+    }
+
+    fn write(&mut self, lba: u64, buf: &[u8]) -> Result<(), ()> {
+        for (i, run) in buf.chunks(MAX_RUN * BLOCK).enumerate() {
+            let at = lba + (i * MAX_RUN) as u64;
+            if let Err(e) = self.write_run(at, run) {
+                warn!("sd", "write failed"; lba = at, error = crate::log::dbg(&e));
+                return Err(());
             }
         }
         Ok(())

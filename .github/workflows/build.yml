@@ -121,6 +121,7 @@ jobs:
           scripts/build-uefi.sh --test-apps
           scripts/build.sh
           scripts/build.sh --test-keys
+          scripts/build-capsule-test.sh
           # The optional features have to keep building too.
           cargo build --release --features color
 
@@ -130,6 +131,11 @@ jobs:
           path: |
             out/stock-pieeprom.bin
             out/pieeprom-tamper.bin
+            out/pieeprom-pending.bin
+            out/pieeprom-proven.bin
+            out/boot-next.img
+            out/boot-next.sig
+            out/capsule-apply.cap
             out/store-tamper.efi
             out/start4.elf
             out/start4-test.elf

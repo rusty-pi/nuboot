@@ -100,6 +100,10 @@ pimu boot --scenario scenarios/boot-key.yaml     # the boot key bound to PCR 4, 
 pimu boot --scenario scenarios/boot-key-unbound.yaml    # bound to PCR 7
 pimu boot --scenario scenarios/tpm2-commands.yaml  # TPM 2.0 commands on the VPU
 pimu boot --scenario scenarios/capsule.yaml     # firmware update capsules on the card
+pimu boot --scenario scenarios/capsule-stage.yaml   # a capsule written as tryboot.img and tryboot.sig
+pimu boot --scenario scenarios/capsule-trial.yaml   # the updated firmware proves itself
+pimu boot --scenario scenarios/capsule-commit.yaml  # the proven update becomes boot.img
+pimu boot --scenario scenarios/capsule-drop.yaml    # an update that never reached the OS is dropped
 pimu boot --scenario scenarios/runtime-variables.yaml  # variables through the runtime services
 pimu boot --scenario scenarios/watchdog-hang.yaml  # a hang in UEFI resets the board
 pimu boot --scenario scenarios/watchdog-exit.yaml  # ExitBootServices hands the dog to the OS

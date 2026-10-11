@@ -31,6 +31,7 @@ const PM_RSTC_WRCFG_FULL_RESET: u32 = 0x20;
 const PM_RSTC_WRCFG_CLR: u32 = 0xFFFF_FFCF;
 /// `PM_RSTS` partition 63: halt in the bootloader.
 const PM_RSTS_HALT: u32 = 0x555;
+const PM_RSTS_TRYBOOT: u32 = 1 << 1;
 /// The most the dog counts: 16 s.
 const PM_WDOG_MAX: u32 = 0xF_FFFF;
 
@@ -160,6 +161,13 @@ fn tell_vpu(what: u32) {
     write32(WORD, seq << 24 | what << 20);
     // The VPU reads memory past the ARM's caches.
     crate::util::cache_flush(WORD, 4);
+}
+
+/// Ask the bootloader to boot from `tryboot.img` and `tryboot.sig` at the next
+/// reset, once: bit 1 of `PM_RSTS`, which Linux's `reboot '0 tryboot'` sets
+/// through the mailbox.
+pub fn request_tryboot() {
+    write32(PM_RSTS, PM_PASSWORD | read32(PM_RSTS) | PM_RSTS_TRYBOOT);
 }
 
 /// Reset the board, as `bcm2835-wdt` does; with `halt`, to stay off.

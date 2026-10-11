@@ -1,6 +1,8 @@
-//! FAT12, FAT16 and FAT32, read-only, with long names: what an EFI system
-//! partition is. Each volume gets `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL`, and each
-//! open file or directory an `EFI_FILE_PROTOCOL`.
+//! FAT12, FAT16 and FAT32, with long names: what an EFI system partition is.
+//! Each volume gets `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL`, and each open file or
+//! directory an `EFI_FILE_PROTOCOL`, both read-only to an EFI application. The
+//! firmware itself writes the files an update needs ([`write_file`],
+//! [`remove_file`], [`adopt`]).
 
 use alloc::boxed::Box;
 use alloc::vec;
@@ -34,6 +36,11 @@ pub struct Fs {
     data: u64,
     root_cluster: u32,
     clusters: u32,
+    fats: u64,
+    /// The size of one FAT, in bytes.
+    fat_size: u64,
+    /// FAT32's FSInfo sector, or 0.
+    fsinfo: u64,
     label: [u8; 11],
     /// The 4 KiB of the FAT read last: its offset and its bytes.
     cache: (u64, Vec<u8>),
@@ -48,6 +55,15 @@ struct Entry {
     size: u32,
     /// The FAT date and time words: created, accessed (date only), written.
     times: [u16; 5],
+}
+
+/// An entry found in a directory's bytes: where its slots are.
+struct Found {
+    entry: Entry,
+    /// The slot of the first long-name entry, or its own when it has none.
+    first: usize,
+    /// The slot of its short entry.
+    slot: usize,
 }
 
 const ATTR_DIR: u8 = 0x10;
@@ -159,10 +175,17 @@ impl Fs {
 
     fn entries(&mut self, dir: &Entry) -> Vec<Entry> {
         let bytes = self.dir_bytes(dir);
+        self.parse(&bytes).into_iter().map(|f| f.entry).collect()
+    }
+
+    /// The entries of a directory's bytes, each with where its slots are: the
+    /// first of its long name's, and its own.
+    fn parse(&self, bytes: &[u8]) -> Vec<Found> {
         let mut out = Vec::new();
         let mut lfn = [0u16; 260];
         let mut lfn_len = 0usize;
-        for e in bytes.chunks_exact(32) {
+        let mut first = 0usize;
+        for (index, e) in bytes.chunks_exact(32).enumerate() {
             match e[0] {
                 0 => break,
                 0xe5 => {
@@ -180,6 +203,7 @@ impl Fs {
                 }
                 if e[0] & 0x40 != 0 {
                     lfn_len = 0;
+                    first = index;
                 }
                 let at = (ord - 1) * 13;
                 for (i, off) in [1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30].into_iter().enumerate() {
@@ -196,16 +220,21 @@ impl Fs {
                 lfn_len = 0;
                 continue;
             }
+            let first = if lfn_len > 0 { first } else { index };
             let name = if lfn_len > 0 { lfn[..lfn_len].to_vec() } else { short_name(e) };
             lfn_len = 0;
             let w = |at: usize| u16::from_le_bytes([e[at], e[at + 1]]);
             let cluster = if self.kind == Kind::Fat32 { (w(20) as u32) << 16 } else { 0 } | w(26) as u32;
-            out.push(Entry {
-                name,
-                attr,
-                cluster,
-                size: u32::from_le_bytes(e[28..32].try_into().unwrap()),
-                times: [w(16), w(14), w(18), w(24), w(22)],
+            out.push(Found {
+                entry: Entry {
+                    name,
+                    attr,
+                    cluster,
+                    size: u32::from_le_bytes(e[28..32].try_into().unwrap()),
+                    times: [w(16), w(14), w(18), w(24), w(22)],
+                },
+                first,
+                slot: index,
             });
         }
         out
@@ -276,6 +305,9 @@ pub fn mount(vol: &'static Volume) {
         data: data_sector * bps,
         root_cluster: if kind == Kind::Fat32 { d(44) as u32 } else { 0 },
         clusters,
+        fats,
+        fat_size: fat_size * bps,
+        fsinfo: if kind == Kind::Fat32 { w(48) } else { 0 },
         label,
         cache: (0, Vec::new()),
     }));
@@ -679,4 +711,374 @@ pub fn list_files(handle: efi::Handle, path: &[u16]) -> Result<Vec<Vec<u16>>, ef
     }
     close(dir);
     Ok(names)
+}
+
+// --- writing, for the firmware's own files ---
+
+impl Fs {
+    fn end_of_chain(&self) -> u32 {
+        match self.kind {
+            Kind::Fat12 => 0xfff,
+            Kind::Fat16 => 0xffff,
+            Kind::Fat32 => 0x0fff_ffff,
+        }
+    }
+
+    fn get(&self, fat: &[u8], c: u32) -> u32 {
+        match self.kind {
+            Kind::Fat12 => {
+                let at = c as usize * 3 / 2;
+                let v = fat[at] as u32 | (fat[at + 1] as u32) << 8;
+                if c & 1 == 1 { v >> 4 } else { v & 0xfff }
+            }
+            Kind::Fat16 => u16::from_le_bytes([fat[c as usize * 2], fat[c as usize * 2 + 1]]) as u32,
+            Kind::Fat32 => u32::from_le_bytes(fat[c as usize * 4..c as usize * 4 + 4].try_into().unwrap()) & 0x0fff_ffff,
+        }
+    }
+
+    fn put(&self, fat: &mut [u8], c: u32, value: u32) {
+        match self.kind {
+            Kind::Fat12 => {
+                let at = c as usize * 3 / 2;
+                let old = fat[at] as u32 | (fat[at + 1] as u32) << 8;
+                let new = if c & 1 == 1 { (old & 0x000f) | value << 4 } else { (old & 0xf000) | (value & 0xfff) };
+                fat[at] = new as u8;
+                fat[at + 1] = (new >> 8) as u8;
+            }
+            Kind::Fat16 => fat[c as usize * 2..c as usize * 2 + 2].copy_from_slice(&(value as u16).to_le_bytes()),
+            Kind::Fat32 => {
+                let old = u32::from_le_bytes(fat[c as usize * 4..c as usize * 4 + 4].try_into().unwrap());
+                fat[c as usize * 4..c as usize * 4 + 4].copy_from_slice(&((old & 0xf000_0000) | (value & 0x0fff_ffff)).to_le_bytes());
+            }
+        }
+    }
+
+    fn load_fat(&mut self) -> Result<Vec<u8>, efi::Status> {
+        if self.fat_size > 32 << 20 {
+            return Err(efi::Status::OUT_OF_RESOURCES);
+        }
+        let mut fat = vec![0u8; self.fat_size as usize];
+        self.vol.read_bytes(self.fat, &mut fat).map_err(|_| efi::Status::DEVICE_ERROR)?;
+        Ok(fat)
+    }
+
+    /// Write back what differs between `old` and `new` in every copy of the
+    /// FAT, and forget what was cached of it.
+    fn store_fat(&mut self, old: &[u8], new: &[u8]) -> Result<(), efi::Status> {
+        const PIECE: usize = 512;
+        self.cache = (0, Vec::new());
+        let mut at = 0;
+        while at < new.len() {
+            let end = (at + PIECE).min(new.len());
+            if old[at..end] != new[at..end] {
+                let mut stop = end;
+                while stop < new.len() && old[stop..(stop + PIECE).min(new.len())] != new[stop..(stop + PIECE).min(new.len())] {
+                    stop = (stop + PIECE).min(new.len());
+                }
+                for copy in 0..self.fats {
+                    let at_bytes = self.fat + copy * self.fat_size + at as u64;
+                    self.vol.write_bytes(at_bytes, &new[at..stop]).map_err(|_| efi::Status::DEVICE_ERROR)?;
+                }
+                at = stop;
+            } else {
+                at = end;
+            }
+        }
+        Ok(())
+    }
+
+    /// Link `n` free clusters into a chain, and give them.
+    fn allocate(&self, fat: &mut [u8], n: usize) -> Result<Vec<u32>, efi::Status> {
+        let mut out = Vec::with_capacity(n);
+        let mut c = 2;
+        while out.len() < n && c < self.clusters + 2 {
+            if self.get(fat, c) == 0 {
+                out.push(c);
+            }
+            c += 1;
+        }
+        if out.len() < n {
+            return Err(efi::Status::VOLUME_FULL);
+        }
+        for (i, &c) in out.iter().enumerate() {
+            let next = out.get(i + 1).copied().unwrap_or(self.end_of_chain());
+            self.put(fat, c, next);
+        }
+        Ok(out)
+    }
+
+    fn release(&self, fat: &mut [u8], first: u32) {
+        let mut c = first;
+        for _ in 0..self.clusters {
+            if c < 2 || c >= self.clusters + 2 {
+                break;
+            }
+            let next = self.get(fat, c);
+            self.put(fat, c, 0);
+            if next == 0 || next >= self.end_of_chain() - 7 {
+                break;
+            }
+            c = next;
+        }
+    }
+
+    /// Write `data` into `clusters`, a run of consecutive ones at a time.
+    fn write_clusters(&self, clusters: &[u32], data: &[u8]) -> Result<(), efi::Status> {
+        let size = self.cluster_size as usize;
+        let mut i = 0;
+        while i < clusters.len() {
+            let mut run = 1;
+            while i + run < clusters.len() && clusters[i + run] == clusters[i] + run as u32 {
+                run += 1;
+            }
+            let from = i * size;
+            let to = ((i + run) * size).min(data.len());
+            let mut buf = data[from..to].to_vec();
+            buf.resize(run * size, 0);
+            self.vol.write_bytes(self.cluster_offset(clusters[i]), &buf).map_err(|_| efi::Status::DEVICE_ERROR)?;
+            i += run;
+        }
+        Ok(())
+    }
+
+    /// The directory at `path`, from the root.
+    fn resolve(&mut self, path: &[u16]) -> Option<Entry> {
+        let mut dir = self.root();
+        for part in path.split(|&c| c == b'\\' as u16).filter(|p| !p.is_empty()) {
+            let next = self.entries(&dir).into_iter().find(|e| e.attr & ATTR_DIR != 0 && eq_ignore_case(&e.name, part))?;
+            dir = next;
+        }
+        Some(dir)
+    }
+
+    fn dir_first(&self, dir: &Entry) -> u32 {
+        if dir.cluster == 0 { self.root_cluster } else { dir.cluster }
+    }
+
+    /// Write the slots of a directory's bytes that differ from `old`.
+    fn store_dir(&mut self, dir: &Entry, old: &[u8], new: &[u8]) -> Result<(), efi::Status> {
+        let fixed_root = dir.cluster == 0 && self.kind != Kind::Fat32;
+        let first = self.dir_first(dir);
+        let mut at = 0;
+        while at < new.len() {
+            let end = (at + 512).min(new.len());
+            if old.get(at..end) != Some(&new[at..end]) {
+                if fixed_root {
+                    self.vol.write_bytes(self.root_dir + at as u64, &new[at..end]).map_err(|_| efi::Status::DEVICE_ERROR)?;
+                } else {
+                    self.write_chain(first, at as u64, &new[at..end])?;
+                }
+            }
+            at = end;
+        }
+        self.cache = (0, Vec::new());
+        Ok(())
+    }
+
+    fn write_chain(&mut self, first: u32, pos: u64, data: &[u8]) -> Result<(), efi::Status> {
+        let mut c = first;
+        for _ in 0..pos / self.cluster_size {
+            c = self.next(c).ok_or(efi::Status::DEVICE_ERROR)?;
+        }
+        let mut skip = pos % self.cluster_size;
+        let mut done = 0;
+        while done < data.len() {
+            let n = ((self.cluster_size - skip) as usize).min(data.len() - done);
+            self.vol.write_bytes(self.cluster_offset(c) + skip, &data[done..done + n]).map_err(|_| efi::Status::DEVICE_ERROR)?;
+            done += n;
+            skip = 0;
+            if done < data.len() {
+                c = self.next(c).ok_or(efi::Status::DEVICE_ERROR)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// FSInfo's free count and next free cluster are no longer known.
+    fn forget_free_count(&mut self) {
+        if self.fsinfo != 0 {
+            let at = self.fsinfo * self.vol.block_size() as u64;
+            let _ = self.vol.write_bytes(at + 488, &[0xff; 8]);
+        }
+    }
+}
+
+/// `name` as 8.3 in a directory slot, if it fits.
+fn short_slot(name: &[u16]) -> Option<[u8; 11]> {
+    let text: Vec<u8> = name.iter().map(|&c| u8::try_from(c).ok()).collect::<Option<_>>()?;
+    let upper = text.to_ascii_uppercase();
+    let (base, ext) = match upper.iter().rposition(|&b| b == b'.') {
+        Some(dot) => (&upper[..dot], &upper[dot + 1..]),
+        None => (&upper[..], &[][..]),
+    };
+    let ok = |part: &[u8]| part.iter().all(|&b| b.is_ascii_uppercase() || b.is_ascii_digit() || b"_-$~!#%&'(){}@^`".contains(&b));
+    if base.is_empty() || base.len() > 8 || ext.len() > 3 || !ok(base) || !ok(ext) {
+        return None;
+    }
+    let mut slot = [b' '; 11];
+    slot[..base.len()].copy_from_slice(base);
+    slot[8..8 + ext.len()].copy_from_slice(ext);
+    Some(slot)
+}
+
+fn fs_of(handle: efi::Handle) -> Result<&'static mut Fs, efi::Status> {
+    let p = proto::get(handle, &simple_file_system::PROTOCOL_GUID).ok_or(efi::Status::NOT_FOUND)?;
+    Ok(unsafe { &mut *(p as *mut Fs) })
+}
+
+fn set_cluster(slot: &mut [u8], kind: Kind, cluster: u32, size: u32) {
+    if kind == Kind::Fat32 {
+        slot[20..22].copy_from_slice(&((cluster >> 16) as u16).to_le_bytes());
+    }
+    slot[26..28].copy_from_slice(&(cluster as u16).to_le_bytes());
+    slot[28..32].copy_from_slice(&size.to_le_bytes());
+}
+
+/// Make the file `name` in the directory `dir` of the file system on `handle`
+/// hold `data`: the new data goes into free clusters and the FAT first, and
+/// the directory entry is written last, so a write that stops short leaves the
+/// file as it was.
+pub fn write_file(handle: efi::Handle, dir: &[u16], name: &[u16], data: &[u8]) -> Result<(), efi::Status> {
+    let fs = fs_of(handle)?;
+    let dir = fs.resolve(dir).ok_or(efi::Status::NOT_FOUND)?;
+    let mut bytes = fs.dir_bytes(&dir);
+    if bytes.is_empty() {
+        return Err(efi::Status::DEVICE_ERROR);
+    }
+    let found = fs.parse(&bytes).into_iter().find(|f| eq_ignore_case(&f.entry.name, name));
+    if found.as_ref().is_some_and(|f| f.entry.attr & ATTR_DIR != 0) {
+        return Err(efi::Status::ACCESS_DENIED);
+    }
+    let short = short_slot(name);
+    if found.is_none() && short.is_none() {
+        return Err(efi::Status::UNSUPPORTED);
+    }
+    let old_dir = bytes.clone();
+    let mut fat = fs.load_fat()?;
+    let before = fat.clone();
+    let needed = data.len().div_ceil(fs.cluster_size as usize);
+    let clusters = fs.allocate(&mut fat, needed)?;
+    let mut grown = None;
+    let at = match &found {
+        Some(f) => f.slot,
+        None => {
+            let free = bytes.chunks_exact(32).position(|e| e[0] == 0 || e[0] == 0xe5);
+            match free {
+                Some(i) => i,
+                None => {
+                    if dir.cluster == 0 && fs.kind != Kind::Fat32 {
+                        return Err(efi::Status::OUT_OF_RESOURCES);
+                    }
+                    let extra = fs.allocate(&mut fat, 1)?[0];
+                    let mut last = fs.dir_first(&dir);
+                    while let Some(n) = fs.next(last) {
+                        last = n;
+                    }
+                    fs.put(&mut fat, last, extra);
+                    grown = Some(extra);
+                    let at = bytes.len() / 32;
+                    bytes.resize(bytes.len() + fs.cluster_size as usize, 0);
+                    at
+                }
+            }
+        }
+    };
+    fs.write_clusters(&clusters, data)?;
+    if let Some(extra) = grown {
+        fs.write_clusters(&[extra], &[])?;
+    }
+    fs.store_fat(&before, &fat)?;
+    let first = clusters.first().copied().unwrap_or(0);
+    let slot = &mut bytes[at * 32..at * 32 + 32];
+    if found.is_none() {
+        slot.fill(0);
+        slot[..11].copy_from_slice(&short.unwrap_or([b' '; 11]));
+        slot[11] = 0x20;
+        slot[16..18].copy_from_slice(&0x0021u16.to_le_bytes());
+        slot[18..20].copy_from_slice(&0x0021u16.to_le_bytes());
+        slot[24..26].copy_from_slice(&0x0021u16.to_le_bytes());
+    }
+    set_cluster(slot, fs.kind, first, data.len() as u32);
+    // A directory that grew has its new cluster zeroed and then written from
+    // the start; the slots that differ are all that goes to the old part.
+    let old_for_diff = if grown.is_some() {
+        let mut o = old_dir.clone();
+        o.resize(bytes.len(), 0xaa);
+        o
+    } else {
+        old_dir
+    };
+    fs.store_dir(&dir, &old_for_diff, &bytes)?;
+    if let Some(f) = &found {
+        if f.entry.cluster >= 2 {
+            let mut after = fat.clone();
+            fs.release(&mut after, f.entry.cluster);
+            fs.store_fat(&fat, &after)?;
+        }
+    }
+    fs.forget_free_count();
+    Ok(())
+}
+
+/// Remove the file `name` from the directory `dir`.
+pub fn remove_file(handle: efi::Handle, dir: &[u16], name: &[u16]) -> Result<(), efi::Status> {
+    let fs = fs_of(handle)?;
+    let dir = fs.resolve(dir).ok_or(efi::Status::NOT_FOUND)?;
+    let mut bytes = fs.dir_bytes(&dir);
+    let old = bytes.clone();
+    let f = fs.parse(&bytes).into_iter().find(|f| eq_ignore_case(&f.entry.name, name)).ok_or(efi::Status::NOT_FOUND)?;
+    if f.entry.attr & ATTR_DIR != 0 {
+        return Err(efi::Status::ACCESS_DENIED);
+    }
+    for i in f.first..=f.slot {
+        bytes[i * 32] = 0xe5;
+    }
+    fs.store_dir(&dir, &old, &bytes)?;
+    if f.entry.cluster >= 2 {
+        let fat = fs.load_fat()?;
+        let mut after = fat.clone();
+        fs.release(&mut after, f.entry.cluster);
+        fs.store_fat(&fat, &after)?;
+    }
+    fs.forget_free_count();
+    Ok(())
+}
+
+/// Make each `to` in `dir` the file `from` is, and remove `from`: the entries
+/// change in memory and go to the disk together, so with the slots in one
+/// sector the swap is one write.
+pub fn adopt(handle: efi::Handle, dir: &[u16], pairs: &[(&[u16], &[u16])]) -> Result<(), efi::Status> {
+    let fs = fs_of(handle)?;
+    let dir = fs.resolve(dir).ok_or(efi::Status::NOT_FOUND)?;
+    let mut bytes = fs.dir_bytes(&dir);
+    let old = bytes.clone();
+    let mut released = Vec::new();
+    for (from, to) in pairs {
+        let all = fs.parse(&bytes);
+        let source = all.iter().find(|f| eq_ignore_case(&f.entry.name, from)).ok_or(efi::Status::NOT_FOUND)?;
+        let target = all.iter().find(|f| eq_ignore_case(&f.entry.name, to)).ok_or(efi::Status::NOT_FOUND)?;
+        if source.entry.attr & ATTR_DIR != 0 || target.entry.attr & ATTR_DIR != 0 {
+            return Err(efi::Status::ACCESS_DENIED);
+        }
+        if target.entry.cluster >= 2 {
+            released.push(target.entry.cluster);
+        }
+        let (cluster, size) = (source.entry.cluster, source.entry.size);
+        let (first, slot, target_slot) = (source.first, source.slot, target.slot);
+        set_cluster(&mut bytes[target_slot * 32..target_slot * 32 + 32], fs.kind, cluster, size);
+        for i in first..=slot {
+            bytes[i * 32] = 0xe5;
+        }
+    }
+    fs.store_dir(&dir, &old, &bytes)?;
+    if !released.is_empty() {
+        let fat = fs.load_fat()?;
+        let mut after = fat.clone();
+        for first in released {
+            fs.release(&mut after, first);
+        }
+        fs.store_fat(&fat, &after)?;
+    }
+    fs.forget_free_count();
+    Ok(())
 }

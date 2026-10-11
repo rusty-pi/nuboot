@@ -17,6 +17,7 @@ static TPL: Global<efi::Tpl> = Global::new(efi::TPL_APPLICATION);
 static MONOTONIC: Global<u64> = Global::new(0);
 /// Called on `ExitBootServices`, before anything else, to stop DMA.
 static QUIESCE: Global<Vec<fn()>> = Global::new(Vec::new());
+static BEFORE_EXIT: Global<Vec<fn()>> = Global::new(Vec::new());
 
 /// The runtime data page: the system table, the runtime services, the
 /// configuration tables and the vendor string, which the OS reads after
@@ -81,6 +82,12 @@ fn reseal() {
 
 pub fn on_exit_boot_services(f: fn()) {
     QUIESCE.get().push(f);
+}
+
+/// Called once on the first `ExitBootServices`, before anything else, while
+/// the variables can still be sealed.
+pub fn before_exit_boot_services(f: fn()) {
+    BEFORE_EXIT.get().push(f);
 }
 
 // --- boot services ---
@@ -427,6 +434,9 @@ extern "efiapi" fn unload_image(handle: efi::Handle) -> efi::Status {
 extern "efiapi" fn exit_boot_services(_handle: efi::Handle, key: usize) -> efi::Status {
     if key != mem::map().key {
         return efi::Status::INVALID_PARAMETER;
+    }
+    for f in core::mem::take(BEFORE_EXIT.get()) {
+        f();
     }
     event::signal_group(&BEFORE_EXIT_BOOT_SERVICES);
     event::signal_group(&efi::EVENT_GROUP_EXIT_BOOT_SERVICES);

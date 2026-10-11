@@ -160,7 +160,7 @@ fn boot(parent: efi::Handle) {
 
 #[unsafe(no_mangle)]
 extern "C" fn pi4_main(tree_addr: u64) -> ! {
-    info!("uefi", "UEFI firmware started"; commit = COMMIT, tree = Hex(tree_addr));
+    info!("uefi", "UEFI firmware started"; commit = COMMIT, version = esrt::VERSION, tree = Hex(tree_addr));
     watchdog::start();
     let Some(tree) = fdt::Fdt::at(tree_addr) else {
         error!("uefi", "no device tree, stopping"; at = Hex(tree_addr));

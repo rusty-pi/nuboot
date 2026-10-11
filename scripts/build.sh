@@ -46,6 +46,8 @@ toolchain/bin/vc4-elf-size "out/start4$suffix.elf"
 # once with one it does not.
 if [ -n "$suffix" ]; then
   scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-tamper.bin
+  scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-pending.bin --update pending 2147483000
+  scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-proven.bin --update proven 2147483000
   mkdir -p out/test-keys
   for name in boot boot-stranger; do
     [ -f "out/test-keys/$name.key" ] || openssl genrsa -out "out/test-keys/$name.key" 2048 2>/dev/null

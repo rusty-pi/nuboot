@@ -20,10 +20,10 @@ boot:
 milestones:
   - why: "A capsule signed by the test key, newer than the firmware, passes."
     line: "capsule verified  path=\\EFI\\UpdateCapsule\\new.cap"
-  - why: "A verified capsule reaches the apply step."
-    line: "applying a capsule is not implemented"
+  - why: "Without a device key to seal the record of an update in, nothing is staged."
+    line: "no device key or flash store to record the update in"
   - why: "An older version is refused."
-    line: "reason=\"version is not newer than the running firmware\""
+    line: "reason=\"version is not newer than the running firmware's\""
   - why: "A byte changed after the signing breaks the signature."
     line: "capsule refused  path=\\EFI\\UpdateCapsule\\corrupt.cap"
   - why: "A key db does not hold cannot sign firmware."

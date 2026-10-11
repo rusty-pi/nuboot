@@ -82,6 +82,7 @@ From the boot ROM to the threads that run for as long as the board is up:
 | Property mailbox: `NOTIFY_XHCI_RESET` reloads the VL805's firmware | ✅ | ➖ | ➖ | ➖ |
 | TPM 2.0 on the VPU (PCRs, properties, random numbers) behind `EFI_TCG2_PROTOCOL`, shim measuring into it, firmware and board measured into PCRs 0 and 1 | ✅ | ➖ | ➖ | ➖ |
 | systemd-boot and systemd-stub (a unified kernel image) measuring into the TPM | ✅ | ➖ | ➖ | ➖ |
+| Firmware updates: a signed capsule on the card staged as `tryboot.img`, started under the bootloader's tryboot, committed once it reaches the OS and dropped when it does not | ✅ | ➖ | ➖ | ➖ |
 | A boot key from the fused private key, handed over once, nothing of it left in the VPU's memory | ✅ | ➖ | ➖ | ➖ |
 
 ## Building
@@ -151,6 +152,7 @@ pimu boot --eeprom out/stock-pieeprom.bin --sd boot/
 | `src/pcie.rs`, `src/vl805.rs`, `src/usb.rs`, `src/lzss.rs` | The PCIe link, and the VL805 and its firmware |
 | `src/mailbox.rs` | The property mailbox |
 | `src/arm.rs`, `src/fdt.rs` | Starting the ARM, and the device tree it gets |
+| `scripts/mkcapsule.py` | Puts a signed `boot.img` and `boot.sig` in a firmware update capsule |
 | `scripts/mkbootimg.py` | Puts `start4.elf` in a signed `boot.img` and `boot.sig` |
 | `uefi/` | The UEFI firmware, its Secure Boot keys, and the armstub and decompressor the ARM starts in |
 

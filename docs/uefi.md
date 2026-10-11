@@ -159,14 +159,38 @@ there is checked:
    image after it. The signer has to chain to a `db` entry that is not
    Microsoft's, whose CAs sign for anyone, and the image's SHA-256 must not
    be in `dbx`.
-3. The image is `P4FW`, a little-endian `u32` version and at most 16 MiB of
-   payload.
+3. The image is `P4FW`, a little-endian `u32` version, the length of
+   `boot.sig` as one, `boot.sig`, and `boot.img` ([boot.md](boot.md#signed-boot)).
+   `boot.sig` names the SHA-256 of that `boot.img`.
 4. The version is newer than the running firmware's.
 
 A capsule that fails sets the ESRT's last attempt version and status
 (`4` invalid format, `5` authentication error, `3` incorrect version, `2`
 image too large) and is logged with the reason. `scripts/mkcapsule.py` builds
-one. A capsule that passes is logged and not applied.
+one.
+
+A capsule that passes is staged as a tryboot, when the board has a device key
+and the flash store answers, so that the update can be recorded. The update
+takes three boots:
+
+1. The firmware that finds the capsule writes `tryboot.img` and `tryboot.sig`
+   next to `boot.img` and `boot.sig` on the file system that has them, reads
+   them back, removes the capsule, records the update as pending in a sealed
+   variable the OS cannot see, and resets with the bootloader's tryboot request
+   set (bit 1 of `PM_RSTS`).
+2. The bootloader checks `tryboot.sig` against the EEPROM's key and starts the
+   new firmware out of `tryboot.img`. That firmware finds the record, reports
+   success in the ESRT, and records the update as proven when it reaches
+   `ExitBootServices`. The request is one-shot: a boot that fails before then
+   is followed by one from `boot.img`.
+3. The firmware that starts from `boot.img` finds the update proven, checks
+   that the pair belongs together, and makes `tryboot.img` and `tryboot.sig` the
+   `boot.img` and `boot.sig` in one directory update, and resets into the new
+   firmware. Finding it unproven, it removes `tryboot.img` and `tryboot.sig` and
+   reports failure in the ESRT.
+
+The result stays in the flash store for the OS to read in the ESRT until the
+next update.
 
 ## Building
 
@@ -212,8 +236,7 @@ pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed b
 - Nothing sets the ARM's clock.
 - Nothing reads `BootOrder`: the boot is always the removable-media path.
 - `dbx` holds image hashes only; a certificate in it is ignored.
-- Storage is read-only to EFI applications.
-- A capsule that verifies is not applied.
+- Storage is read-only to EFI applications; the firmware writes only the files an update needs.
 - A runtime `SetVariable` lasts until reset.
 - No NVMe, no network boot, no USB keyboards.
 - The xHCI driver gives each empty root port 400 ms to show a connection,
