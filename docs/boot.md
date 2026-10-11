@@ -121,6 +121,7 @@ they are signed with ([uefi.md](uefi.md#secure-boot)).
 - The property mailbox answers `GET_REBOOT_FLAGS` and `SET_REBOOT_FLAGS` (bit 0 is the one-shot tryboot request in `PM_RSTS`, which Linux's `reboot '0 tryboot'` sets), `NOTIFY_XHCI_RESET` (reload the VL805's
   firmware after the OS has reset the PCIe link), the TPM 2.0 on the VPU (tag
   `0x000300a3` carries a command, `0x000300a1` extends a PCR) and the
-  one-time boot key (tag `0x000300a0`) and variable store key (`0x000300a5`),
+  one-time boot key (tag `0x000300a0`) and the device key's signatures, HMACs and
+  public key (`0x0003008e` to `0x00030095`, [keystore.md](keystore.md#the-firmware-cryptography-service)),
   and no other tag. None returns a fuse.
 - Nothing sets the ARM's clock.

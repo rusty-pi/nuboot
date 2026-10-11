@@ -12,7 +12,7 @@
 //! firmware does not know is left as it came, and the buffer is marked
 //! answered either way, which is what the stock firmware does.
 
-use crate::{debug, error, idle, info, keystore, measure, mmio, tpm2, vl805, warn, watchdog};
+use crate::{crypto, debug, error, idle, info, keystore, measure, mmio, tpm2, vl805, warn, watchdog};
 
 const VPU_VIEW: u32 = 0x7e00_b980;
 /// Mailbox 0, which the ARM reads.
@@ -52,9 +52,19 @@ const TAG_EXTEND_BOOT_MEASUREMENT: u32 = 0x0003_00a1;
 /// is. Linux's firmware interface cannot set the tag's length word, so it is
 /// not what says.
 const TAG_TPM2_COMMAND: u32 = 0x0003_00a3;
-/// The key UEFI seals the variables it keeps in the flash with: 32 bytes out,
-/// once ([`keystore::take_store_key`]).
-const TAG_GET_STORE_KEY: u32 = 0x0003_00a5;
+/// The firmware cryptography service `rpi-fw-crypto` speaks ([`crypto`]).
+const TAG_CRYPTO_LAST_ERROR: u32 = 0x0003_008e;
+const TAG_CRYPTO_NUM_KEYS: u32 = 0x0003_008f;
+const TAG_CRYPTO_KEY_STATUS: u32 = 0x0003_0090;
+const TAG_CRYPTO_SET_KEY_STATUS: u32 = 0x0003_8090;
+const TAG_CRYPTO_SIGN: u32 = 0x0003_0091;
+const TAG_CRYPTO_HMAC_SHA256: u32 = 0x0003_0092;
+const TAG_CRYPTO_PUBLIC_KEY: u32 = 0x0003_0093;
+const TAG_CRYPTO_PRIVATE_KEY: u32 = 0x0003_0094;
+const TAG_CRYPTO_GEN_ECDSA_KEY: u32 = 0x0003_0095;
+const TAG_CRYPTO_GET_KEY_USAGE: u32 = 0x0003_009c;
+const TAG_CRYPTO_SET_KEY_USAGE: u32 = 0x0003_809c;
+
 /// Event `n` of what the VPU measured before the ARM started, for the log
 /// UEFI keeps: the index in, then the PCR, the event type, the digest, the
 /// length of the data and the data.
@@ -142,17 +152,95 @@ fn answer(bus: u32) {
                     None => warn!("keystore", "no boot key to hand over"; mask = format_args!("{mask:#x}")),
                 }
             }
-            TAG_GET_STORE_KEY if room >= 32 => match keystore::take_store_key() {
-                Some(mut key) => {
-                    for (n, bytes) in key.chunks_exact(4).enumerate() {
-                        set(value + n as u32, u32::from_le_bytes(bytes.try_into().unwrap()));
-                    }
-                    keystore::zero(&mut key);
-                    info!("keystore", "variable store key handed over");
-                    set(i + 2, RESPONSE | 32);
+            TAG_CRYPTO_LAST_ERROR if room >= 4 => {
+                set(value, crypto::last_error());
+                set(i + 2, RESPONSE | 4);
+            }
+            TAG_CRYPTO_NUM_KEYS if room >= 4 => {
+                set(value, crypto::keys());
+                set(i + 2, RESPONSE | 4);
+            }
+            TAG_CRYPTO_KEY_STATUS if room >= 4 => {
+                set(value, crypto::status(word(value)).unwrap_or(crypto::ERROR | crypto::ERR_KEY_NOT_FOUND));
+                set(i + 2, RESPONSE | 4);
+            }
+            TAG_CRYPTO_SET_KEY_STATUS if room >= 8 => {
+                let (id, bits) = (word(value), word(value + 1));
+                if crypto::lock(id, bits).is_ok() {
+                    info!("crypto", "key locked"; key = id, bits = format_args!("{bits:#x}"));
                 }
-                None => warn!("keystore", "no variable store key to hand over"),
-            },
+                set(i + 2, RESPONSE | 8);
+            }
+            TAG_CRYPTO_SIGN if room >= 44 => {
+                let (id, length) = (word(value + 1), word(value + 2) as usize);
+                let mut hash = [0u8; 32];
+                for (n, byte) in hash.iter_mut().enumerate() {
+                    *byte = (word(value + 3 + n as u32 / 4) >> (8 * (n % 4))) as u8;
+                }
+                let mut der = [0u8; 72];
+                let (status, len) = match if length == 32 { crypto::sign(id, &hash, &mut der) } else { Err(crypto::ERR_EINVAL) } {
+                    Ok(len) => (0, len),
+                    Err(code) => (crypto::ERROR | code, 0),
+                };
+                set(value, status);
+                set(value + 1, len as u32);
+                for (n, bytes) in der[..len].chunks(4).enumerate() {
+                    let mut w = [0u8; 4];
+                    w[..bytes.len()].copy_from_slice(bytes);
+                    set(value + 2 + n as u32, u32::from_le_bytes(w));
+                }
+                set(i + 2, RESPONSE | (8 + len as u32));
+            }
+            TAG_CRYPTO_HMAC_SHA256 if room >= 12 + 32 => {
+                let (id, length) = (word(value + 1), word(value + 2) as usize);
+                let message = crypto_message();
+                let mac = if length <= crypto::HMAC_MESSAGE_MAX && 12 + length <= room as usize {
+                    for (n, byte) in message[..length].iter_mut().enumerate() {
+                        *byte = (word(value + 3 + n as u32 / 4) >> (8 * (n % 4))) as u8;
+                    }
+                    crypto::hmac(id, &message[..length])
+                } else {
+                    Err(crypto::ERR_EINVAL)
+                };
+                match mac {
+                    Ok(mac) => {
+                        set(value, 0);
+                        set(value + 1, 32);
+                        for (n, bytes) in mac.chunks_exact(4).enumerate() {
+                            set(value + 2 + n as u32, u32::from_le_bytes(bytes.try_into().unwrap()));
+                        }
+                    }
+                    Err(code) => {
+                        set(value, crypto::ERROR | code);
+                        set(value + 1, 0);
+                    }
+                }
+                set(i + 2, RESPONSE | 40);
+            }
+            TAG_CRYPTO_PUBLIC_KEY if room >= 8 + 91 => {
+                let mut der = [0u8; 91];
+                let (status, len) = match crypto::public_key(word(value + 1), &mut der) {
+                    Ok(len) => (0, len),
+                    Err(code) => (crypto::ERROR | code, 0),
+                };
+                set(value, status);
+                set(value + 1, len as u32);
+                for (n, bytes) in der[..len].chunks(4).enumerate() {
+                    let mut w = [0u8; 4];
+                    w[..bytes.len()].copy_from_slice(bytes);
+                    set(value + 2 + n as u32, u32::from_le_bytes(w));
+                }
+                set(i + 2, RESPONSE | (8 + len as u32));
+            }
+            TAG_CRYPTO_PRIVATE_KEY if room >= 8 => {
+                set(value, crypto::ERROR | crypto::refused());
+                set(value + 1, 0);
+                set(i + 2, RESPONSE | 8);
+            }
+            TAG_CRYPTO_GEN_ECDSA_KEY | TAG_CRYPTO_GET_KEY_USAGE | TAG_CRYPTO_SET_KEY_USAGE if room >= 4 => {
+                set(value, crypto::ERROR | crypto::unsupported());
+                set(i + 2, RESPONSE | room.min(8));
+            }
             TAG_EXTEND_BOOT_MEASUREMENT if room >= 36 => {
                 let pcr = word(value);
                 let mut digest = [0u8; 32];
@@ -211,4 +299,10 @@ fn answer(bus: u32) {
         i = value + room / 4;
     }
     set(1, RESPONSE);
+}
+
+/// Room for the message of an HMAC request.
+fn crypto_message() -> &'static mut [u8; crypto::HMAC_MESSAGE_MAX] {
+    static mut MESSAGE: [u8; crypto::HMAC_MESSAGE_MAX] = [0; crypto::HMAC_MESSAGE_MAX];
+    unsafe { &mut *(&raw mut MESSAGE) }
 }

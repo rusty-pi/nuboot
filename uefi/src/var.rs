@@ -12,7 +12,7 @@ use core::ffi::c_void;
 use r_efi::efi;
 
 use crate::util::{Global, W, wstr};
-use crate::{debug, info, pkcs7, secure, store, warn};
+use crate::{debug, info, p256, pkcs7, secure, store, warn};
 
 struct Var {
     name: Vec<u16>,
@@ -66,9 +66,9 @@ fn add(name: &str, guid: efi::Guid, attributes: u32, data: Vec<u8>, fixed: bool)
 }
 
 /// Whether what [`keep`] keeps survives a reset: the board has a device key
-/// to seal it with, and the flash store answers.
+/// to sign it with, and the flash store answers.
 pub fn keeps() -> bool {
-    SEAL.get().is_some() && store::available()
+    DEVICE.get().is_some() && store::available()
 }
 
 /// A variable the firmware keeps across resets for itself: not visible to
@@ -216,17 +216,20 @@ pub extern "efiapi" fn set_variable(
     write_plain(name, guid, attributes, bytes, None)
 }
 
-/// The key the variable store is sealed with, until the OS has the board.
-static SEAL: Global<Option<[u8; 32]>> = Global::new(None);
+/// The device key's public key, while the VPU signs for it: the board has a
+/// device key, and the OS has not got the board yet. What the store's records
+/// are checked against, and signed for.
+static DEVICE: Global<Option<p256::Point>> = Global::new(None);
 /// The sequence number the next sealed record gets: what stops an old record
 /// being put back after a newer one.
 static PLAIN_SEQ: Global<u64> = Global::new(0);
 /// The most a sealed record holds.
 const MAX_SEALED: usize = 16 * 1024;
 
-/// What a record is sealed over: everything but the seal.
-fn seal(r: &store::Record, key: &[u8; 32]) -> [u8; 32] {
+/// What a record is signed over: everything but the signature.
+fn digest(r: &store::Record) -> [u8; 32] {
     let mut message = Vec::new();
+    message.extend_from_slice(b"pi4-server-firmware variable store record v2");
     message.extend_from_slice(&r.kind.to_le_bytes());
     message.extend_from_slice(&r.attributes.to_le_bytes());
     message.extend_from_slice(&r.guid);
@@ -235,7 +238,13 @@ fn seal(r: &store::Record, key: &[u8; 32]) -> [u8; 32] {
         message.extend_from_slice(&c.to_le_bytes());
     }
     message.extend_from_slice(&r.data);
-    crate::sha256::hmac(key, &message)
+    crate::sha256::digest(&message)
+}
+
+/// Whether the device key signed `r`: its `auth` is `r || s`.
+fn signed_by(r: &store::Record, public: &p256::Point) -> bool {
+    let (Some(rs), Some(ss)) = (r.auth.get(..32), r.auth.get(32..64)) else { return false };
+    r.auth.len() == 64 && p256::verify(public, &digest(r), rs.try_into().unwrap(), ss.try_into().unwrap())
 }
 
 /// `SetVariable` for a variable no signature guards. `replayed` is the
@@ -253,7 +262,9 @@ fn write_plain(
         let Some(i) = existing else { return efi::Status::NOT_FOUND };
         let v = &VARS.get()[i];
         if replayed.is_none() && v.attributes & NV != 0 && !v.history.is_empty() {
-            let record = sealed(store::DELETE, v.attributes, &guid, name, &[]);
+            let Some(record) = sealed(store::DELETE, v.attributes, &guid, name, &[]) else {
+                return efi::Status::DEVICE_ERROR;
+            };
             if !commit(i, &record, &[]) {
                 return efi::Status::DEVICE_ERROR;
             }
@@ -266,7 +277,7 @@ fn write_plain(
     }
     let append = attributes & APPEND != 0;
     let attributes = attributes & !APPEND;
-    let persistent = attributes & NV != 0 && SEAL.get().is_some();
+    let persistent = attributes & NV != 0 && DEVICE.get().is_some();
     if let Some(i) = existing {
         if !append && VARS.get()[i].attributes != attributes {
             return efi::Status::INVALID_PARAMETER;
@@ -285,7 +296,9 @@ fn write_plain(
             Some(r) => r,
             None => {
                 let kept = attributes | if append { APPEND } else { 0 };
-                let record = sealed(store::SET, kept, &guid, name, bytes);
+                let Some(record) = sealed(store::SET, kept, &guid, name, bytes) else {
+                    return efi::Status::DEVICE_ERROR;
+                };
                 let mut all = history.clone();
                 all.push((order, record.clone()));
                 if !commit(existing.unwrap_or(usize::MAX), &record, &all) {
@@ -296,7 +309,7 @@ fn write_plain(
         };
         history.push((order, record));
         *NEXT.get() += 1;
-    } else if attributes & NV != 0 && SEAL.get().is_none() {
+    } else if attributes & NV != 0 && DEVICE.get().is_none() {
         debug!("var", "no device key, a non-volatile variable lasts until reset"; name = W(name));
     }
     match existing {
@@ -322,8 +335,9 @@ fn write_plain(
     efi::Status::SUCCESS
 }
 
-/// A new record for the store, sealed with the key.
-fn sealed(kind: u32, attributes: u32, guid: &efi::Guid, name: &[u16], data: &[u8]) -> store::Record {
+/// A new record for the store, signed by the device key: none when the VPU
+/// does not sign it.
+fn sealed(kind: u32, attributes: u32, guid: &efi::Guid, name: &[u16], data: &[u8]) -> Option<store::Record> {
     let seq = *PLAIN_SEQ.get();
     *PLAIN_SEQ.get() += 1;
     let mut time = [0u8; 16];
@@ -337,10 +351,11 @@ fn sealed(kind: u32, attributes: u32, guid: &efi::Guid, name: &[u16], data: &[u8
         data: data.to_vec(),
         auth: Vec::new(),
     };
-    if let Some(key) = SEAL.get() {
-        record.auth = seal(&record, key).to_vec();
+    if DEVICE.get().is_some() {
+        let (r, s) = crate::mailbox::device_sign(&digest(&record))?;
+        record.auth = [r, s].concat();
     }
-    record
+    Some(record)
 }
 
 /// The parts of an `EFI_VARIABLE_AUTHENTICATION_2` descriptor and what
@@ -470,21 +485,19 @@ fn commit(index: usize, record: &store::Record, history: &[(u64, store::Record)]
     })
 }
 
-/// Zero the key the store is sealed with: from here on the OS has the board.
+/// The OS has the board: nothing signs for it from here on.
 fn lock() {
-    if let Some(key) = SEAL.get().as_mut() {
-        crate::util::zero(key);
-    }
-    *SEAL.get() = None;
+    *DEVICE.get() = None;
+    crate::mailbox::lock_device_key();
 }
 
 /// Apply what the flash store holds to the built-in keys and the variables:
 /// each write to `KEK`, `db` and `dbx` checked as it was when it was made,
 /// each of the others checked against its seal.
 pub fn load_store() {
-    *SEAL.get() = crate::mailbox::store_key();
+    *DEVICE.get() = crate::mailbox::device_public();
     crate::tables::on_exit_boot_services(lock);
-    if SEAL.get().is_none() {
+    if DEVICE.get().is_none() {
         warn!("var", "no device key is fused: variables other than KEK, db and dbx stay in memory");
     }
     for r in store::load() {
@@ -505,13 +518,13 @@ pub fn load_store() {
 }
 
 fn replay_plain(r: store::Record) {
-    let Some(key) = *SEAL.get() else {
+    let Some(public) = *DEVICE.get() else {
         warn!("var", "stored variable ignored: no device key is fused"; name = W(&r.name));
         return;
     };
     let seq = u64::from_le_bytes(r.time[..8].try_into().unwrap());
-    if r.auth.as_slice() != seal(&r, &key) {
-        warn!("var", "stored variable ignored: its seal does not match"; name = W(&r.name));
+    if !signed_by(&r, &public) {
+        warn!("var", "stored variable ignored: the device key did not sign it"; name = W(&r.name));
         return;
     }
     if seq < *PLAIN_SEQ.get() {

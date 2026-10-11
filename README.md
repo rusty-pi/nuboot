@@ -83,6 +83,7 @@ From the boot ROM to the threads that run for as long as the board is up:
 | TPM 2.0 on the VPU (PCRs, properties, random numbers) behind `EFI_TCG2_PROTOCOL`, shim measuring into it, firmware and board measured into PCRs 0 and 1 | ✅ | ➖ | ➖ | ➖ |
 | systemd-boot and systemd-stub (a unified kernel image) measuring into the TPM | ✅ | ➖ | ➖ | ➖ |
 | Firmware updates: a signed capsule on the card staged as `tryboot.img`, started under the bootloader's tryboot, committed once it reaches the OS and dropped when it does not | ✅ | ➖ | ➖ | ➖ |
+| The firmware cryptography service: the fused key signs and HMACs for UEFI, gives its public key, never itself, and is locked from the OS | ✅ | ➖ | ➖ | ➖ |
 | A boot key from the fused private key, handed over once, nothing of it left in the VPU's memory | ✅ | ➖ | ➖ | ➖ |
 
 ## Building
@@ -146,7 +147,7 @@ pimu boot --eeprom out/stock-pieeprom.bin --sd boot/
 | `src/sched.rs`, `src/critical.rs`, `src/sync.rs`, `src/stack.rs` | Threads, critical sections, semaphores, queues and locks, stack guards |
 | `src/idle.rs`, `src/timer.rs`, `src/stc.rs` | Interrupts, sleeping, the system timer |
 | `src/watchdog.rs`, `src/handover.rs` | The boot watchdog, and the state the bootloader hands over |
-| `src/tpm2.rs`, `src/keystore.rs`, `src/rng.rs` | The TPM 2.0 on the VPU, its PCRs and the boot key derived from the device private key, the random number generator |
+| `src/tpm2.rs`, `src/keystore.rs`, `src/crypto.rs`, `src/rng.rs` | The TPM 2.0 on the VPU, its PCRs, the boot key derived from the device private key and the firmware cryptography service for it, the random number generator |
 | `src/console.rs`, `src/cm.rs`, `src/otp.rs`, `src/board.rs` | The PL011, clock generators, OTP and the board's identity |
 | `src/spi_flash.rs`, `src/eeprom.rs`, `src/elf.rs`, `src/cache.rs` | The EEPROM and its sections, loading the ARM's image |
 | `src/pcie.rs`, `src/vl805.rs`, `src/usb.rs`, `src/lzss.rs` | The PCIe link, and the VL805 and its firmware |

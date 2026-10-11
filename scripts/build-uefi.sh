@@ -24,7 +24,7 @@
 #                     the same crate: ask for the boot key bound to PCR 4 or
 #                     to nothing (two images) and try to measure after it;
 #                     send the TPM on the VPU a series of commands
-#   out/runtime-variables.efi
+#   out/runtime-variables.efi, out/crypto.efi
 #                     uefi/test-apps/runtime: exit boot services and use the
 #                     variable services the OS is left with
 #   out/capsule-*.cap firmware update capsules the capsule scenario puts on the
@@ -183,6 +183,7 @@ sign "$mb/target/aarch64-unknown-uefi/release/reboot-flags.efi" "$out/reboot-fla
 rt="$here/uefi/test-apps/runtime"
 (cd "$rt" && cargo build --release --target aarch64-unknown-uefi)
 sign "$rt/target/aarch64-unknown-uefi/release/variables.efi" "$out/runtime-variables.efi"
+sign "$rt/target/aarch64-unknown-uefi/release/crypto.efi" "$out/crypto.efi"
 
 st="$here/uefi/test-apps/store"
 (cd "$st" && cargo build --release --target aarch64-unknown-uefi)

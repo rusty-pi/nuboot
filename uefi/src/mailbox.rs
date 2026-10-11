@@ -22,7 +22,13 @@ const ANSWER_US: u64 = 200_000;
 const TPM_ANSWER_US: u64 = 5_000_000;
 
 const TAG_EXTEND_BOOT_MEASUREMENT: u32 = 0x0003_00a1;
-const TAG_GET_STORE_KEY: u32 = 0x0003_00a5;
+const TAG_CRYPTO_SET_KEY_STATUS: u32 = 0x0003_8090;
+const TAG_CRYPTO_SIGN: u32 = 0x0003_0091;
+const TAG_CRYPTO_PUBLIC_KEY: u32 = 0x0003_0093;
+/// The device private key's id in the firmware cryptography service.
+const DEVICE_KEY: u32 = 1;
+const SIGN_LOCKED: u32 = 1 << 10;
+const HMAC_LOCKED: u32 = 1 << 11;
 const TAG_TPM2_COMMAND: u32 = 0x0003_00a3;
 const TAG_GET_EARLY_EVENT: u32 = 0x0003_00a4;
 /// The largest TPM command or response (`src/tpm2.rs`).
@@ -166,20 +172,83 @@ pub fn early_event(index: u32) -> Option<EarlyEvent> {
     Some(EarlyEvent { pcr: word(0), kind: word(1), digest, data })
 }
 
-/// The key the VPU hands over once for sealing the variable store, if the
-/// board's private key is fused.
-pub fn store_key() -> Option<[u8; 32]> {
-    if !call(TAG_GET_STORE_KEY, &[0u32; 8]) {
+/// One tag of the firmware cryptography service, with `request` as the first
+/// words of its value and `room` bytes of value: the words it answered with,
+/// if the VPU answered.
+fn crypto_call(tag: u32, request: &[u32], room: usize) -> Option<alloc::vec::Vec<u32>> {
+    let buf = BIG.0.get() as *mut u32;
+    let words = room / 4;
+    if words + 6 > 6 + TPM_MAX / 4 {
         return None;
     }
-    let buf = BUFFER.0.get() as *const u32;
-    let mut key = [0u8; 32];
-    for (n, bytes) in key.chunks_exact_mut(4).enumerate() {
-        bytes.copy_from_slice(&unsafe { read_volatile(buf.add(5 + n)) }.to_le_bytes());
+    unsafe {
+        write_volatile(buf, (4 * (words + 6)) as u32);
+        write_volatile(buf.add(1), 0);
+        write_volatile(buf.add(2), tag);
+        write_volatile(buf.add(3), room as u32);
+        write_volatile(buf.add(4), 4 * request.len() as u32);
+        for i in 0..words {
+            write_volatile(buf.add(5 + i), request.get(i).copied().unwrap_or(0));
+        }
+        write_volatile(buf.add(5 + words), 0);
     }
-    unsafe { core::ptr::write_bytes(BUFFER.0.get() as *mut u32, 0, 16) };
-    cache_flush(BUFFER.0.get() as u64, 64);
-    Some(key)
+    if !post(buf as u64, 4 * (words + 6), TPM_ANSWER_US) || unsafe { read_volatile(buf.add(4)) } & RESPONSE == 0 {
+        return None;
+    }
+    Some((0..words).map(|i| unsafe { read_volatile(buf.add(5 + i)) }).collect())
+}
+
+fn word_bytes(words: &[u32], len: usize) -> alloc::vec::Vec<u8> {
+    words.iter().flat_map(|w| w.to_le_bytes()).take(len).collect()
+}
+
+/// The device private key's public key, if one is fused.
+pub fn device_public() -> Option<crate::p256::Point> {
+    let answer = crypto_call(TAG_CRYPTO_PUBLIC_KEY, &[0, DEVICE_KEY], 8 + 512)?;
+    if answer[0] != 0 {
+        return None;
+    }
+    let der = word_bytes(&answer[2..], answer[1] as usize);
+    let point = der.get(der.len().checked_sub(65)?..)?;
+    (point[0] == 4).then(|| crate::p256::Point { x: point[1..33].try_into().unwrap(), y: point[33..65].try_into().unwrap() })
+}
+
+/// `(r, s)`, the device key's ECDSA signature of `digest`.
+pub fn device_sign(digest: &[u8; 32]) -> Option<([u8; 32], [u8; 32])> {
+    let mut request = [0u32; 11];
+    request[1] = DEVICE_KEY;
+    request[2] = 32;
+    for (w, bytes) in request[3..].iter_mut().zip(digest.chunks_exact(4)) {
+        *w = u32::from_le_bytes(bytes.try_into().unwrap());
+    }
+    let answer = crypto_call(TAG_CRYPTO_SIGN, &request, 8 + 128)?;
+    if answer[0] != 0 {
+        return None;
+    }
+    let der = word_bytes(&answer[2..], answer[1] as usize);
+    let integer = |at: usize| -> Option<([u8; 32], usize)> {
+        if *der.get(at)? != 2 {
+            return None;
+        }
+        let len = *der.get(at + 1)? as usize;
+        let value = der.get(at + 2..at + 2 + len)?;
+        let value = &value[value.len().saturating_sub(32)..];
+        let mut out = [0u8; 32];
+        out[32 - value.len()..].copy_from_slice(value);
+        Some((out, at + 2 + len))
+    };
+    if der.first() != Some(&0x30) {
+        return None;
+    }
+    let (r, next) = integer(2)?;
+    let (s, _) = integer(next)?;
+    Some((r, s))
+}
+
+/// Forbid the device key to sign and to HMAC until the next boot: the OS has
+/// the board.
+pub fn lock_device_key() {
+    crypto_call(TAG_CRYPTO_SET_KEY_STATUS, &[DEVICE_KEY, SIGN_LOCKED | HMAC_LOCKED], 8);
 }
 
 /// Extend a PCR on the VPU.

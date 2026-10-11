@@ -124,16 +124,17 @@ log in two banks of 20 KiB from `0x74000`, and come back at the next boot.
   boot starts from the built-in keys and checks each stored write again against
   the keys as they were when it was made.
 - Every other non-volatile variable (boot entries, shim's MOK list) is stored
-  with a seal, an HMAC-SHA256 under the key the VPU derives from the device
-  private key ([keystore.md](keystore.md#the-variable-store-key)), over its
-  attributes, name, value and a counter. A record whose seal does not match, or
+  with a signature, the device private key's ECDSA P-256 signature
+  ([keystore.md](keystore.md#the-firmware-cryptography-service)) over its
+  attributes, name, value and a counter. A record whose signature does not verify, or
   whose counter is not above the one before it, is ignored. A variable is
   at most 16 KiB.
 
 The OS can write the flash, but it can only drop records, never add or
-reorder them: it has neither a signing key nor the seal key. Dropping the
+reorder them: it cannot sign, since the firmware locks the device key's signing at
+`ExitBootServices`. Dropping the
 newest record of a variable returns it to its previous value. Where the flash
-does not answer, or no device private key is fused, the seal is missing and a
+does not answer, or no device private key is fused, there is no signature and a
 variable other than `KEK`, `db` and `dbx` lasts until reset. Writing a whole new
 `pieeprom.bin` clears the store.
 
@@ -175,7 +176,7 @@ takes three boots:
 
 1. The firmware that finds the capsule writes `tryboot.img` and `tryboot.sig`
    next to `boot.img` and `boot.sig` on the file system that has them, reads
-   them back, removes the capsule, records the update as pending in a sealed
+   them back, removes the capsule, records the update as pending in a signed
    variable the OS cannot see, and resets with the bootloader's tryboot request
    set (bit 1 of `PM_RSTS`).
 2. The bootloader checks `tryboot.sig` against the EEPROM's key and starts the

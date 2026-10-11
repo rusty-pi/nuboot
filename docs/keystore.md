@@ -10,15 +10,21 @@ The PCRs are the TPM's ([tpm2.md](tpm2.md)): 24 SHA-256 registers on the VPU,
 extended by UEFI as it boots and by shim, GRUB, systemd-boot and the Linux EFI
 stub through `EFI_TCG2_PROTOCOL`, and by the OS through the TPM commands.
 
-## The variable store key
+## The firmware cryptography service
 
-UEFI asks for a second key, tag `0x000300a5`, before anything else runs:
-`HMAC-SHA256(private key, "pi4-server-firmware variable store key v1")`. It is
-answered once, to whoever asks first, which is always UEFI, and the OS never
-gets it. UEFI seals the variables it keeps in the EEPROM with it
-([uefi.md](uefi.md#the-variable-store)) and zeroes it at `ExitBootServices`. A
-board without a fused private key gets no key, and its variables stay in
-memory.
+The VPU answers the mailbox tags Raspberry Pi's `rpi-fw-crypto` speaks
+(`0x0003008e` to `0x00030095`, `0x0003009c`), for key id 1, the device private
+key in OTP rows 56-63, read as a P-256 private key, most significant byte
+first: an ECDSA signature of a SHA-256 hash (in DER), an HMAC-SHA256 with the
+key's 32 raw bytes, and the public key (`SubjectPublicKeyInfo`). The key itself
+is never answered, nor is a key generated or its usage set.
+
+A key's status says what it may no longer be asked, and a lock holds until the
+next boot. Reading, generating and setting the usage are locked from the start.
+UEFI signs the records of its variable store with the key ([uefi.md](uefi.md#the-variable-store)),
+and locks signing and HMAC at `ExitBootServices`, because an OS that could sign
+any hash could sign a record. A board without a fused private key answers
+`KEY_NOT_SET`, and its variables stay in memory.
 
 ## The boot key
 

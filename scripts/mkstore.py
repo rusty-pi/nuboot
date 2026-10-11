@@ -6,8 +6,8 @@ they fuse.
     mkstore.py PIEEPROM OUT [--update pending|proven VERSION]
 
 By default the store is the tamper scenario's, with known damage in it: what a
-board's OS could do to the flash, done to it. It holds, in order: Good and Fresh, sealed and in sequence; Forged, whose seal is
-wrong; Stale, sealed but numbered below what came before it; Torn, whose
+board's OS could do to the flash, done to it. It holds, in order: Good and Fresh, signed and in sequence; Forged, whose seal is
+wrong; Stale, signed but numbered below what came before it; Torn, whose
 digest does not match; and AfterTorn, sealed and in sequence, behind it.
 
 With --update the store holds one sealed record, what the firmware keeps while
@@ -15,10 +15,13 @@ a capsule's update is under way: its state, and the version it carries.
 """
 
 import hashlib
-import hmac
 import struct
 import sys
 import uuid
+
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric.utils import Prehashed, decode_dss_signature
 
 BASE = 0x74000
 BANK = 0x5000
@@ -28,19 +31,24 @@ SET = 1
 ATTRIBUTES = 0x1 | 0x2 | 0x4
 GUID = uuid.UUID("5d0f3a58-1c0e-4d1b-9a44-0123456789ab").bytes_le
 ROWS = [0xC0DE2001, 0xC0DE3112, 0xC0DE4223, 0xC0DE5334, 0xC0DE6445, 0xC0DE7556, 0xC0DE8667, 0xC0DE9778]
-LABEL = b"pi4-server-firmware variable store key v1"
+LABEL = b"pi4-server-firmware variable store record v2"
 
 
-def store_key():
+def device_key():
     private = b"".join(struct.pack("<I", r) for r in ROWS)
-    return hmac.new(private, LABEL, hashlib.sha256).digest()
+    return ec.derive_private_key(int.from_bytes(private, "big"), ec.SECP256R1())
+
+
+def sign(digest):
+    r, s = decode_dss_signature(device_key().sign(digest, ec.ECDSA(Prehashed(hashes.SHA256()))))
+    return r.to_bytes(32, "big") + s.to_bytes(32, "big")
 
 
 def record(name, data, seq, seal=True, torn=False, guid=GUID, attributes=ATTRIBUTES):
     time = struct.pack("<Q", seq) + bytes(8)
     utf16 = name.encode("utf-16-le")
-    signed = struct.pack("<II", SET, attributes) + guid + time + utf16 + data
-    mac = hmac.new(store_key(), signed, hashlib.sha256).digest() if seal else bytes(32)
+    signed = LABEL + struct.pack("<II", SET, attributes) + guid + time + utf16 + data
+    mac = sign(hashlib.sha256(signed).digest()) if seal else bytes(64)
     body_len = 60 + len(utf16) + len(data) + len(mac)
     padded = -(-body_len // 4) * 4
     total = padded + 32

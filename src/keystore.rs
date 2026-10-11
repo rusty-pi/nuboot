@@ -26,19 +26,17 @@
 
 use core::ptr::{read_volatile, write_volatile};
 
-use crate::{cache, critical, otp, rng, sha256};
+use crate::{cache, critical, otp, p256, rng, sha256};
 
 const FIRST_ROW: u32 = 56;
 const ROWS: usize = 8;
 const LABEL: &[u8] = b"pi4-server-firmware boot key v1";
-const STORE_LABEL: &[u8] = b"pi4-server-firmware variable store key v1";
 const TPM_LABEL: &[u8] = b"pi4-server-firmware TPM secret v1";
 pub const PCRS: usize = 24;
 
 static mut PCR: [[u8; 32]; PCRS] = [[0; 32]; PCRS];
 static mut COUNT: u32 = 0;
 static mut TAKEN: bool = false;
-static mut STORE_TAKEN: bool = false;
 static mut BOOT_SECRET: [u8; 32] = [0; 32];
 static mut BOOT_SECRET_SET: bool = false;
 
@@ -95,28 +93,6 @@ pub fn take(mask: u32) -> Option<[u8; 32]> {
     key
 }
 
-/// The key UEFI seals its variable store with, once, if the board's private
-/// key is fused: it depends on nothing else, so it is the same at every boot.
-/// UEFI takes it before the OS runs and the OS is never given it.
-pub fn take_store_key() -> Option<[u8; 32]> {
-    if unsafe { read_volatile(&raw const STORE_TAKEN) } {
-        return None;
-    }
-    unsafe { write_volatile(&raw mut STORE_TAKEN, true) };
-    let _section = critical::enter();
-    let key = derive_store();
-    scrub();
-    key
-}
-
-#[inline(never)]
-fn derive_store() -> Option<[u8; 32]> {
-    let mut private = private_key()?;
-    let key = sha256::hmac(&private, STORE_LABEL);
-    zero(&mut private);
-    Some(key)
-}
-
 /// A secret of the TPM called `label`: with `stable`, the same at every boot on
 /// a board whose private key is fused, and random for this boot on one whose is
 /// not; without, random for this boot. The TPM's seeds and proofs come from
@@ -145,6 +121,72 @@ pub fn tpm_secret(label: &[u8], stable: bool) -> [u8; 32] {
             sha256::hmac(unsafe { &*(&raw const BOOT_SECRET) }, message)
         }
     }
+}
+
+/// Why the device key could not do what it was asked.
+pub enum Fault {
+    /// No private key is fused.
+    NotSet,
+    /// The fused value is not a P-256 private key.
+    Invalid,
+    /// The random number generator ran dry.
+    NoRandom,
+}
+
+/// The device key as a P-256 private key: the 32 bytes of rows 56-63, most
+/// significant first.
+fn device_scalar() -> Result<[u8; 32], Fault> {
+    let mut d = private_key().ok_or(Fault::NotSet)?;
+    if !p256::valid_scalar(&d) {
+        zero(&mut d);
+        return Err(Fault::Invalid);
+    }
+    Ok(d)
+}
+
+/// The device key's public key.
+pub fn device_public() -> Result<p256::Point, Fault> {
+    let mut d = device_scalar()?;
+    let public = p256::public_key(&d);
+    zero(&mut d);
+    scrub();
+    public.ok_or(Fault::Invalid)
+}
+
+/// An ECDSA signature `(r, s)` of `digest` by the device key. The
+/// per-signature secret mixes the key and the digest with fresh random bytes,
+/// so a weak draw does not give the key away.
+pub fn device_sign(digest: &[u8; 32]) -> Result<([u8; 32], [u8; 32]), Fault> {
+    let mut d = device_scalar()?;
+    let mut result = Err(Fault::NoRandom);
+    for attempt in 0..8u8 {
+        let mut message = [0u8; 32 + 32 + 1];
+        message[32..64].copy_from_slice(digest);
+        message[64] = attempt;
+        if !rng::fill(&mut message[..32]) {
+            break;
+        }
+        let mut k = sha256::hmac(&d, &message);
+        zero(&mut message);
+        let signature = p256::sign(&d, digest, &k);
+        zero(&mut k);
+        if let Some(signature) = signature {
+            result = Ok(signature);
+            break;
+        }
+    }
+    zero(&mut d);
+    scrub();
+    result
+}
+
+/// `HMAC-SHA256(device key, message)`, the key as its 32 raw bytes.
+pub fn device_hmac(message: &[u8]) -> Result<[u8; 32], Fault> {
+    let mut key = private_key().ok_or(Fault::NotSet)?;
+    let mac = sha256::hmac(&key, message);
+    zero(&mut key);
+    scrub();
+    Ok(mac)
 }
 
 /// Whether the board's private key is fused, so the TPM's keys outlast a boot.

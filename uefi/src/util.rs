@@ -22,13 +22,6 @@ impl<T> Global<T> {
     }
 }
 
-/// Overwrite `bytes` with zeros in a way the compiler keeps.
-pub fn zero(bytes: &mut [u8]) {
-    for b in bytes {
-        unsafe { core::ptr::write_volatile(b, 0) };
-    }
-}
-
 pub fn read32(addr: u64) -> u32 {
     unsafe { core::ptr::read_volatile(addr as *const u32) }
 }

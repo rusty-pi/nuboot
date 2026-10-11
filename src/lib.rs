@@ -14,6 +14,7 @@ pub mod board;
 pub mod cache;
 pub mod cm;
 pub mod console;
+pub mod crypto;
 pub mod critical;
 pub mod eeprom;
 pub mod elf;
