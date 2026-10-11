@@ -137,6 +137,12 @@ jobs:
             out/boot-next.img
             out/boot-next.sig
             out/capsule-apply.cap
+            out/capsule-eeprom.cap
+            out/boot-eeprom.img
+            out/boot-eeprom.sig
+            out/pieeprom-eeprom-pending.bin
+            out/pieeprom-stamped.bin
+            out/store-eeprom.bak
             out/store-tamper.efi
             out/start4.elf
             out/start4-test.elf

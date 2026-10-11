@@ -22,6 +22,7 @@ mod console;
 mod critical;
 mod devpath;
 mod dma;
+mod eeprom;
 mod entry;
 mod esrt;
 mod event;

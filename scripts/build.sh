@@ -48,6 +48,14 @@ if [ -n "$suffix" ]; then
   scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-tamper.bin
   scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-pending.bin --update pending 2147483000
   scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-proven.bin --update proven 2147483000
+  # An EEPROM update: the image the capsule carries as the update, the EEPROM
+  # before it with the update under way, the store it was staged with, and the
+  # EEPROM after it, stamped and with an empty store.
+  scripts/mkbootimg.py out/test-keys/boot.key out/start4-test.elf out --prefix boot-eeprom --eeprom out/stock-pieeprom.bin:1790000001
+  scripts/mkcapsule.py out/test-keys/db.key out/test-keys/db.crt 1790000001 out/capsule-eeprom.cap --class eeprom \
+    --boot-img out/boot-eeprom.img --boot-sig out/boot-eeprom.sig
+  scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-eeprom-pending.bin --update pending 1790000001 --eeprom --backup out/store-eeprom.bak
+  scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-stamped.bin --stamp 1790000001 --empty
   mkdir -p out/test-keys
   for name in boot boot-stranger; do
     [ -f "out/test-keys/$name.key" ] || openssl genrsa -out "out/test-keys/$name.key" 2048 2>/dev/null

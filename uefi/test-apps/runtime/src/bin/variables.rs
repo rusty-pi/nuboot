@@ -45,7 +45,7 @@ fn check_esrt(system_table: *mut SystemTable) {
     let word = |i: usize| unsafe { *words.add(i) };
     let (count, version) = (word(0), word(2));
     let (kind, firmware_version, status) = (word(8), word(9), word(13));
-    check("the ESRT has one system firmware resource", count == 1 && version == 1 && kind == 1);
+    check("the ESRT has the firmware and the EEPROM bootloader", count == 2 && version == 1 && kind == 1 && word(18) == 2);
     check("the ESRT carries a version and no failed attempt", firmware_version > 0 && status == 0);
 }
 

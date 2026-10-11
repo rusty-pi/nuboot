@@ -4,13 +4,15 @@
 //! the firmware's own `db` entries hold, and stages what it carries as a
 //! tryboot.
 //!
-//! A capsule is an `EFI_CAPSULE_HEADER` for [`esrt::FIRMWARE_CLASS`], then a
+//! A capsule is an `EFI_CAPSULE_HEADER` for one of the ESRT's resources, this
+//! firmware ([`esrt::FIRMWARE_CLASS`]) or the EEPROM bootloader
+//! ([`esrt::EEPROM_CLASS`]), then a
 //! `WIN_CERTIFICATE_UEFI_GUID` holding a detached PKCS #7 signature over what
 //! follows it: `P4FW`, the version as a little-endian `u32`, the length of
 //! `boot.sig` as one, `boot.sig`, and `boot.img`. The bootloader checks that
 //! pair against the EEPROM's customer key when it boots it.
 //!
-//! The update takes three boots:
+//! An update of the firmware takes three boots:
 //!
 //! 1. The firmware that finds the capsule writes `tryboot.img` and
 //!    `tryboot.sig` next to `boot.img` and `boot.sig`, records that an update
@@ -22,6 +24,12 @@
 //! 3. The firmware that starts from `boot.img` finds the update proven and
 //!    makes `tryboot.img` and `tryboot.sig` the boot pair, or finds it
 //!    unproven and removes them.
+//!
+//! An update of the EEPROM carries a `pieeprom.upd` and `pieeprom.sig` in its
+//! `boot.img`, which the bootloader writes to the EEPROM when it boots the
+//! tryboot. That wipes the variable store in the EEPROM's tail, so the store
+//! is copied to the file system first, and put back once the EEPROM says it was
+//! updated. The version of an EEPROM capsule is the time in `pieeprom.sig`.
 
 use alloc::vec::Vec;
 
@@ -51,8 +59,49 @@ const PROVEN: u8 = 2;
 const PKCS7: efi::Guid =
     efi::Guid::from_fields(0x4aafd29d, 0x68df, 0x49ee, 0x8a, 0xa9, &[0x34, 0x7d, 0x37, 0x56, 0x65, 0xa7]);
 
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Firmware,
+    Eeprom,
+}
+
+impl Kind {
+    fn class(self) -> &'static efi::Guid {
+        match self {
+            Kind::Firmware => &esrt::FIRMWARE_CLASS,
+            Kind::Eeprom => &esrt::EEPROM_CLASS,
+        }
+    }
+
+    fn running(self) -> u32 {
+        match self {
+            Kind::Firmware => esrt::VERSION,
+            Kind::Eeprom => crate::eeprom::version(),
+        }
+    }
+
+    fn result_name(self) -> &'static str {
+        match self {
+            Kind::Firmware => RESULT,
+            Kind::Eeprom => "EepromUpdateResult",
+        }
+    }
+
+    fn of(class: &[u8]) -> Option<Kind> {
+        [Kind::Firmware, Kind::Eeprom].into_iter().find(|k| k.class().as_bytes() == class)
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Kind::Firmware => "firmware",
+            Kind::Eeprom => "EEPROM",
+        }
+    }
+}
+
 /// A capsule that passed every check.
 pub struct Capsule {
+    kind: Kind,
     pub version: u32,
     pub sig: Vec<u8>,
     pub img: Vec<u8>,
@@ -74,9 +123,7 @@ fn hex(bytes: &[u8]) -> alloc::string::String {
 /// and why.
 fn check(file: &[u8]) -> Result<Capsule, (u32, &'static str)> {
     let invalid = |why| (esrt::INVALID_FORMAT, why);
-    if file.get(..16) != Some(esrt::FIRMWARE_CLASS.as_bytes()) {
-        return Err(invalid("not a capsule for this firmware"));
-    }
+    let kind = file.get(..16).and_then(Kind::of).ok_or(invalid("not a capsule for this firmware"))?;
     let header = u32_at(file, 16).ok_or(invalid("truncated"))? as usize;
     let size = u32_at(file, 24).ok_or(invalid("truncated"))? as usize;
     if header < HEADER || size > file.len() || header > size {
@@ -104,28 +151,30 @@ fn check(file: &[u8]) -> Result<Capsule, (u32, &'static str)> {
     if !text.starts_with(hex(&crate::sha256::digest(img)).as_str()) || !text.contains("rsa2048:") {
         return Err(invalid("boot.sig is not an RSA signature of this boot.img"));
     }
-    if version <= esrt::VERSION {
-        return Err((esrt::INCORRECT_VERSION, "version is not newer than the running firmware's"));
+    if version <= kind.running() {
+        return Err((esrt::INCORRECT_VERSION, "version is not newer than the running one's"));
     }
-    Ok(Capsule { version, sig: sig.to_vec(), img: img.to_vec() })
+    Ok(Capsule { kind, version, sig: sig.to_vec(), img: img.to_vec() })
 }
 
-fn record() -> Option<(u8, u32)> {
+/// The update under way: its state, what it updates and its version.
+fn record() -> Option<(u8, Kind, u32)> {
     let data = var::bytes(RECORD, &esrt::FIRMWARE_CLASS)?;
-    Some((*data.first()?, u32_at(&data, 1)?))
+    let kind = if *data.get(1)? == 1 { Kind::Eeprom } else { Kind::Firmware };
+    Some((*data.first()?, kind, u32_at(&data, 2)?))
 }
 
-fn set_record(state: u8, version: u32) -> efi::Status {
-    let mut data = alloc::vec![state];
+fn set_record(state: u8, kind: Kind, version: u32) -> efi::Status {
+    let mut data = alloc::vec![state, (kind == Kind::Eeprom) as u8];
     data.extend_from_slice(&version.to_le_bytes());
     var::keep(RECORD, esrt::FIRMWARE_CLASS, &data)
 }
 
-fn set_result(version: u32, status: u32) {
+fn set_result(kind: Kind, version: u32, status: u32) {
     let mut data = version.to_le_bytes().to_vec();
     data.extend_from_slice(&status.to_le_bytes());
-    var::keep(RESULT, esrt::FIRMWARE_CLASS, &data);
-    esrt::attempted(version, status);
+    var::keep(kind.result_name(), esrt::FIRMWARE_CLASS, &data);
+    esrt::attempted(kind.class(), version, status);
 }
 
 /// The file system with the bootloader's `boot.img` on it.
@@ -160,25 +209,41 @@ fn remove_staged(fs: efi::Handle) {
 
 /// The firmware that started from `tryboot.img` has reached the OS.
 fn prove() {
-    if let Some((PENDING, version)) = record() {
+    if let Some((PENDING, Kind::Firmware, version)) = record() {
         if version == esrt::VERSION {
-            set_record(PROVEN, version);
+            set_record(PROVEN, Kind::Firmware, version);
             info!("capsule", "the updated firmware reached the OS"; version = version);
         }
     }
 }
 
+/// The variable store as it was before an EEPROM update.
+const BACKUP: &str = "STORE.BAK";
+
 /// Say how an update an earlier boot started has gone, and finish it.
 pub fn resume() {
-    if let Some(data) = var::bytes(RESULT, &esrt::FIRMWARE_CLASS) {
-        if let (Some(version), Some(status)) = (u32_at(&data, 0), u32_at(&data, 4)) {
-            esrt::attempted(version, status);
+    if restore_store() {
+        return;
+    }
+    for kind in [Kind::Firmware, Kind::Eeprom] {
+        if let Some(data) = var::bytes(kind.result_name(), &esrt::FIRMWARE_CLASS) {
+            if let (Some(version), Some(status)) = (u32_at(&data, 0), u32_at(&data, 4)) {
+                esrt::attempted(kind.class(), version, status);
+            }
         }
     }
-    let Some((state, version)) = record() else { return };
+    let Some((state, kind, version)) = record() else { return };
+    match kind {
+        Kind::Firmware => resume_firmware(state, version),
+        Kind::Eeprom => resume_eeprom(version),
+    }
+}
+
+fn resume_firmware(state: u8, version: u32) {
+    let kind = Kind::Firmware;
     if version == esrt::VERSION {
         info!("capsule", "firmware updated"; version = version);
-        esrt::attempted(version, esrt::SUCCESS);
+        esrt::attempted(kind.class(), version, esrt::SUCCESS);
         tables::before_exit_boot_services(prove);
         return;
     }
@@ -194,7 +259,7 @@ pub fn resume() {
                 warn!("capsule", "boot.img and boot.sig do not belong together after the commit"; version = version);
             }
             Ok(()) => {
-                set_result(version, esrt::SUCCESS);
+                set_result(kind, version, esrt::SUCCESS);
                 var::forget(RECORD, esrt::FIRMWARE_CLASS);
                 info!("capsule", "firmware committed"; version = version);
                 crate::watchdog::reset(false);
@@ -205,8 +270,46 @@ pub fn resume() {
     }
     warn!("capsule", "the updated firmware did not reach the OS, update dropped"; version = version);
     remove_staged(fs);
-    set_result(version, esrt::UNSUCCESSFUL);
+    set_result(kind, version, esrt::UNSUCCESSFUL);
     var::forget(RECORD, esrt::FIRMWARE_CLASS);
+}
+
+/// The boot after the bootloader was asked to update the EEPROM: it has, or it
+/// has not.
+fn resume_eeprom(version: u32) {
+    let kind = Kind::Eeprom;
+    let Some(fs) = boot_fs() else {
+        var::forget(RECORD, esrt::FIRMWARE_CLASS);
+        return;
+    };
+    remove_staged(fs);
+    var::forget(RECORD, esrt::FIRMWARE_CLASS);
+    let _ = fat::remove_file(fs, &[], &wide(BACKUP));
+    if kind.running() < version {
+        warn!("capsule", "the bootloader did not update the EEPROM, update dropped"; version = version, eeprom = kind.running());
+        set_result(kind, version, esrt::UNSUCCESSFUL);
+        return;
+    }
+    set_result(kind, version, esrt::SUCCESS);
+    info!("capsule", "EEPROM updated"; version = version);
+}
+
+/// An EEPROM update wipes the variable store, record of the update included.
+/// With the store empty and the copy the update was staged with on the file
+/// system, put the copy back and start again: the record says what came of it.
+fn restore_store() -> bool {
+    if !crate::eeprom::store_is_empty() {
+        return false;
+    }
+    let Some(fs) = boot_fs() else { return false };
+    let Ok(backup) = fat::read_file(fs, &wide(BACKUP)) else { return false };
+    let _ = fat::remove_file(fs, &[], &wide(BACKUP));
+    if !crate::eeprom::restore(&backup) {
+        warn!("capsule", "variable store not restored");
+        return false;
+    }
+    info!("capsule", "variable store restored after an EEPROM update, restarting");
+    crate::watchdog::reset(false);
 }
 
 /// Look for capsules on every file system and check each one.
@@ -233,7 +336,7 @@ pub fn scan() {
                 }
                 Err((status, why)) => {
                     warn!("capsule", "capsule refused"; path = W(&path), reason = why);
-                    esrt::attempted(0, status);
+                    esrt::attempted(&esrt::FIRMWARE_CLASS, 0, status);
                 }
             }
         }
@@ -244,13 +347,13 @@ pub fn scan() {
 fn stage(capsule_fs: efi::Handle, directory: &[u16], name: &[u16], capsule: &Capsule) {
     let failed = |why: &str, status: efi::Status| {
         warn!("capsule", "update not staged"; reason = why, status = status.as_usize());
-        esrt::attempted(capsule.version, esrt::UNSUCCESSFUL);
+        esrt::attempted(capsule.kind.class(), capsule.version, esrt::UNSUCCESSFUL);
     };
     if !var::keeps() {
         return failed("no device key or flash store to record the update in", efi::Status::UNSUPPORTED);
     }
     let Some(fs) = boot_fs() else { return failed("no file system holds boot.img", efi::Status::NOT_FOUND) };
-    let status = set_record(PENDING, capsule.version);
+    let status = set_record(PENDING, capsule.kind, capsule.version);
     if status.is_error() {
         return failed("the update could not be recorded", status);
     }
@@ -267,7 +370,17 @@ fn stage(capsule_fs: efi::Handle, directory: &[u16], name: &[u16], capsule: &Cap
         return failed("what was written does not read back", efi::Status::DEVICE_ERROR);
     }
     let _ = fat::remove_file(capsule_fs, directory, name);
-    info!("capsule", "update staged, restarting as a tryboot"; version = capsule.version);
+    if capsule.kind == Kind::Eeprom {
+        let saved = crate::eeprom::backup().is_some_and(|bytes| {
+            fat::write_file(fs, &[], &wide(BACKUP), &bytes).is_ok() && holds(fs, BACKUP, &bytes)
+        });
+        if !saved {
+            remove_staged(fs);
+            var::forget(RECORD, esrt::FIRMWARE_CLASS);
+            return failed("the variable store could not be saved", efi::Status::DEVICE_ERROR);
+        }
+    }
+    info!("capsule", "update staged, restarting as a tryboot"; version = capsule.version, kind = capsule.kind.name());
     crate::watchdog::request_tryboot();
     crate::watchdog::reset(false);
 }

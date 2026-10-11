@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Build a firmware update capsule, the file fwupd puts in \\EFI\\UpdateCapsule.
 
-    mkcapsule.py KEY CERT VERSION OUT [--boot-img FILE --boot-sig FILE] [--corrupt]
+    mkcapsule.py KEY CERT VERSION OUT [--class firmware|eeprom] [--boot-img FILE --boot-sig FILE] [--corrupt]
 
 KEY and CERT (PEM) are the signer's: a key one of the firmware's own `db`
 entries holds. VERSION is the number the ESRT carries once the capsule is
-applied. The capsule carries a boot.img and its boot.sig
+applied: for the EEPROM the time in the pieeprom.sig its boot.img carries.
+--class says which resource the capsule is for. The capsule carries a boot.img and its boot.sig
 (scripts/mkbootimg.py); without them a short test pattern with a signature
 line of the right shape that no bootloader would accept. --corrupt flips a
 byte after the signing.
@@ -19,7 +20,10 @@ import sys
 import tempfile
 import uuid
 
-FIRMWARE_CLASS = uuid.UUID("7d1c0a4e-5b83-4f2a-9c61-e2084a3d95b7")
+CLASSES = {
+    "firmware": uuid.UUID("7d1c0a4e-5b83-4f2a-9c61-e2084a3d95b7"),
+    "eeprom": uuid.UUID("3f8a0c5e-91d2-4b7a-a6c3-5d1e08f2b947"),
+}
 CERT_TYPE_PKCS7 = uuid.UUID("4aafd29d-68df-49ee-8aa9-347d375665a7")
 HEADER = 28
 
@@ -30,6 +34,11 @@ def main():
     args = [a for a in args if a != "--corrupt"]
     img = bytes(range(256)) * 16
     sig = None
+    resource = "firmware"
+    if "--class" in args:
+        at = args.index("--class")
+        resource = args[at + 1]
+        del args[at : at + 2]
     for flag in ("--boot-img", "--boot-sig"):
         if flag in args:
             at = args.index(flag)
@@ -57,7 +66,7 @@ def main():
     if corrupt:
         image = image[:-1] + bytes([image[-1] ^ 1])
     body = descriptor + image
-    capsule = FIRMWARE_CLASS.bytes_le + struct.pack("<III", HEADER, 0x00010000, HEADER + len(body)) + body
+    capsule = CLASSES[resource].bytes_le + struct.pack("<III", HEADER, 0x00010000, HEADER + len(body)) + body
     open(out, "wb").write(capsule)
 
 

@@ -19,7 +19,12 @@ const ESRT_GUID: efi::Guid =
 pub const FIRMWARE_CLASS: efi::Guid =
     efi::Guid::from_fields(0x7d1c0a4e, 0x5b83, 0x4f2a, 0x9c, 0x61, &[0xe2, 0x08, 0x4a, 0x3d, 0x95, 0xb7]);
 
+/// What a capsule for the EEPROM bootloader names.
+pub const EEPROM_CLASS: efi::Guid =
+    efi::Guid::from_fields(0x3f8a0c5e, 0x91d2, 0x4b7a, 0xa6, 0xc3, &[0x5d, 0x1e, 0x08, 0xf2, 0xb9, 0x47]);
+
 const FIRMWARE_TYPE_SYSTEM: u32 = 1;
+const FIRMWARE_TYPE_DEVICE: u32 = 2;
 /// `ESRT` entry's version: 1.
 const TABLE_VERSION: u64 = 1;
 /// `LAST_ATTEMPT_STATUS_SUCCESS`.
@@ -55,39 +60,54 @@ struct Table {
     count: u32,
     count_max: u32,
     version: u64,
-    entry: Entry,
+    entries: [Entry; 2],
 }
 
 static TABLE: Global<*mut Table> = Global::new(core::ptr::null_mut());
 
-/// Record the last capsule attempt for the OS: the version it carried and how
-/// it went.
-pub fn attempted(version: u32, status: u32) {
+/// Record the last capsule attempt for the OS: the resource it was for, the
+/// version it carried and how it went.
+pub fn attempted(class: &efi::Guid, version: u32, status: u32) {
     let table = *TABLE.get();
-    if !table.is_null() {
-        unsafe {
-            (*table).entry.last_attempt_version = version;
-            (*table).entry.last_attempt_status = status;
+    if table.is_null() {
+        return;
+    }
+    for entry in unsafe { &mut (*table).entries } {
+        if entry.class == *class {
+            entry.last_attempt_version = version;
+            entry.last_attempt_status = status;
         }
     }
 }
 
 pub fn init() {
+    crate::info!("esrt", "resources"; firmware = VERSION, eeprom = crate::eeprom::version());
     let at = mem::alloc_pages(efi::BOOT_SERVICES_DATA, 1).expect("ESRT page") as *mut Table;
     unsafe {
         at.write(Table {
-            count: 1,
-            count_max: 1,
+            count: 2,
+            count_max: 2,
             version: TABLE_VERSION,
-            entry: Entry {
-                class: FIRMWARE_CLASS,
-                kind: FIRMWARE_TYPE_SYSTEM,
-                version: VERSION,
-                lowest_supported: 1,
-                capsule_flags: 0,
-                last_attempt_version: 0,
-                last_attempt_status: SUCCESS,
-            },
+            entries: [
+                Entry {
+                    class: FIRMWARE_CLASS,
+                    kind: FIRMWARE_TYPE_SYSTEM,
+                    version: VERSION,
+                    lowest_supported: 1,
+                    capsule_flags: 0,
+                    last_attempt_version: 0,
+                    last_attempt_status: SUCCESS,
+                },
+                Entry {
+                    class: EEPROM_CLASS,
+                    kind: FIRMWARE_TYPE_DEVICE,
+                    version: crate::eeprom::version(),
+                    lowest_supported: 1,
+                    capsule_flags: 0,
+                    last_attempt_version: 0,
+                    last_attempt_status: SUCCESS,
+                },
+            ],
         })
     };
     *TABLE.get() = at;

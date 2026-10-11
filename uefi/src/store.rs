@@ -11,8 +11,8 @@ use crate::spiflash::{self, PAGE, SECTOR};
 use crate::util::Global;
 use crate::{debug, info, warn};
 
-const BASE: u32 = 0x74000;
-const BANK: u32 = 0x5000;
+pub const BASE: u32 = 0x74000;
+pub const BANK: u32 = 0x5000;
 const BANKS: [u32; 2] = [BASE, BASE + BANK];
 
 const BANK_MAGIC: u32 = 0x5634_4950;

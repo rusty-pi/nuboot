@@ -46,6 +46,7 @@ are Raspberry Pi's procedure ([secure-boot-recovery](https://github.com/raspberr
 |---|---|
 | `0x00000` | the bootloader's sections: the boot ROM's bootcode, `bootmain`, the SDRAM training firmware, `vl805hub.bin`, `vl805mcu.bin`, its configuration |
 | `0x74000` | the variable store, two banks of 20 KiB ([uefi.md](uefi.md#the-variable-store)) |
+| `0x7fff8` | after an update, its time and the time's complement, which the ESRT reports as the EEPROM's version |
 
 The sections end near `0x73068`; the store sits in the flash that follows,
 which the bootloader and its signature do not cover. Writing a whole new
@@ -104,6 +105,9 @@ pimu boot --scenario scenarios/capsule-stage.yaml   # a capsule written as trybo
 pimu boot --scenario scenarios/capsule-trial.yaml   # the updated firmware proves itself
 pimu boot --scenario scenarios/capsule-commit.yaml  # the proven update becomes boot.img
 pimu boot --scenario scenarios/capsule-drop.yaml    # an update that never reached the OS is dropped
+pimu boot --scenario scenarios/capsule-eeprom-stage.yaml    # an EEPROM update staged, the store saved
+pimu boot --scenario scenarios/capsule-eeprom-restore.yaml  # after it, the store put back
+pimu boot --scenario scenarios/capsule-eeprom-failed.yaml   # an EEPROM update the bootloader did not make
 pimu boot --scenario scenarios/runtime-variables.yaml  # variables through the runtime services
 pimu boot --scenario scenarios/watchdog-hang.yaml  # a hang in UEFI resets the board
 pimu boot --scenario scenarios/watchdog-exit.yaml  # ExitBootServices hands the dog to the OS

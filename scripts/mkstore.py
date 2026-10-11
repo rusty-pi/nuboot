@@ -3,7 +3,7 @@
 start from what an earlier boot left in it. The device key is the test key
 they fuse.
 
-    mkstore.py PIEEPROM OUT [--update pending|proven VERSION]
+    mkstore.py PIEEPROM OUT [--update pending|proven VERSION [--eeprom]] [--stamp TS] [--backup FILE] [--empty]
 
 By default the store is the tamper scenario's, with known damage in it: what a
 board's OS could do to the flash, done to it. It holds, in order: Good and Fresh, signed and in sequence; Forged, whose seal is
@@ -11,7 +11,11 @@ wrong; Stale, signed but numbered below what came before it; Torn, whose
 digest does not match; and AfterTorn, sealed and in sequence, behind it.
 
 With --update the store holds one sealed record, what the firmware keeps while
-a capsule's update is under way: its state, and the version it carries.
+a capsule's update is under way: its state, and the version it carries. With
+--eeprom the update is the EEPROM's. --stamp puts the time of an EEPROM update in
+the flash's last 8 bytes, as the bootloader does, and --backup writes the
+store's region of the result to a file, as the firmware copies it before an
+EEPROM update. With --empty the store holds nothing.
 """
 
 import hashlib
@@ -68,6 +72,18 @@ STATES = {"pending": 1, "proven": 2}
 def main():
     args = sys.argv[1:]
     update = None
+    eeprom = "--eeprom" in args
+    empty = "--empty" in args
+    args = [a for a in args if a not in ("--eeprom", "--empty")]
+    stamp = backup = None
+    if "--stamp" in args:
+        at = args.index("--stamp")
+        stamp = int(args[at + 1], 0)
+        del args[at : at + 2]
+    if "--backup" in args:
+        at = args.index("--backup")
+        backup = args[at + 1]
+        del args[at : at + 2]
     if "--update" in args:
         at = args.index("--update")
         update = (STATES[args[at + 1]], int(args[at + 2], 0))
@@ -75,8 +91,10 @@ def main():
     if len(args) != 2:
         sys.exit(__doc__)
     image = bytearray(open(args[0], "rb").read())
-    if update:
-        data = bytes([update[0]]) + struct.pack("<I", update[1])
+    if empty:
+        records = []
+    elif update:
+        data = bytes([update[0], int(eeprom)]) + struct.pack("<I", update[1])
         records = [record("FwUpdate", data, 0, guid=FIRMWARE_CLASS, attributes=0x1 | 0x2)]
     else:
         records = [
@@ -91,8 +109,13 @@ def main():
     head = struct.pack("<II", BANK_MAGIC, 1)
     if any(b != 0xFF for b in image[BASE : BASE + len(head) + len(log)]):
         sys.exit("the image's variable store is not empty")
-    image[BASE : BASE + len(head)] = head
-    image[BASE + 8 : BASE + 8 + len(log)] = log
+    if records:
+        image[BASE : BASE + len(head)] = head
+        image[BASE + 8 : BASE + 8 + len(log)] = log
+    if stamp is not None:
+        image[-8:] = struct.pack("<II", ~stamp & 0xFFFFFFFF, stamp)
+    if backup:
+        open(backup, "wb").write(image[BASE : BASE + 2 * BANK])
     open(args[1], "wb").write(image)
 
 

@@ -150,7 +150,7 @@ board.
 
 ## Firmware capsules
 
-The firmware is the one resource in the ESRT, and fwupd's `uefi-capsule`
+The firmware and the EEPROM bootloader are the two resources in the ESRT, and fwupd's `uefi-capsule`
 plugin updates it by putting a capsule in `\EFI\UpdateCapsule` on the EFI
 system partition. At every boot, before the boot option runs, each `.cap` file
 there is checked:
@@ -189,6 +189,28 @@ takes three boots:
    `boot.img` and `boot.sig` in one directory update, and resets into the new
    firmware. Finding it unproven, it removes `tryboot.img` and `tryboot.sig` and
    reports failure in the ESRT.
+
+A capsule for the EEPROM bootloader carries, in its `boot.img`, a `pieeprom.upd`
+and a `pieeprom.sig`, which the stock bootloader writes to the EEPROM when it
+boots them, if the time in `pieeprom.sig` is later than its own. The capsule's
+version is that time. It is staged like a firmware update's, with one more step
+and a different end:
+
+- The bootloader's update writes the whole flash, so the variable store, the
+  record of the update in it included, would be lost. The firmware copies the
+  store to `STORE.BAK` on the file system before it resets, and reads the copy
+  back to check it.
+- The bootloader stamps the update's time into the last 8 bytes of the flash.
+  The ESRT's version for the EEPROM is that time.
+- When the firmware next starts with an empty store and a `STORE.BAK`, it puts
+  the copy back and restarts. The record then says an update of the EEPROM was
+  pending: the flash is as new as the capsule said, and the ESRT reports
+  success, or it is not, and the ESRT reports failure. Either way the staged pair
+  and the copy go.
+
+The configuration, signature and public key the EEPROM holds are part of the
+image the capsule's builder prepares (`rpi-eeprom-config`), so the update keeps
+them.
 
 The result stays in the flash store for the OS to read in the ESRT until the
 next update.
