@@ -29,8 +29,9 @@ Out of scope: HATs, IPv6 and ACPI (the operating system gets a device tree).
 
 > [!NOTE]
 > This is an early firmware. On a Raspberry Pi 4B rev 1.5 (`d03115`) it starts
-> the ARM in UEFI, which boots Debian's arm64 kernel off the SD card; USB and the
-> other boards are tested only in pimu ([Tested](#tested)).
+> the ARM in UEFI, which boots Debian's arm64 kernel off the SD card and runs an
+> EFI application off a USB drive; the other boards are tested only in pimu
+> ([Tested](#tested)).
 
 ## What it does
 
@@ -83,7 +84,7 @@ From the boot ROM to the threads that run for as long as the board is up:
 | Pi 4B rev 1.4 (`d03114`) and rev 1.2 (`c03112`) | ✅ | ➖ | ➖ | ➖ |
 | ARM started in UEFI: SD card, a signed EFI application | ✅ | ✅ | ➖ | ➖ |
 | Secure Boot: Ubuntu's shim and GRUB run, an image not signed by a key in `db` is refused | ✅ | ➖ | ➖ | ➖ |
-| USB: VL805 firmware from the EEPROM, an EFI application off a USB drive | ✅ | ❌ | ➖ | ➖ |
+| USB: VL805 firmware from the EEPROM, an EFI application off a USB drive | ✅ | ✅ | ➖ | ➖ |
 | Property mailbox: `NOTIFY_XHCI_RESET` reloads the VL805's firmware | ✅ | ➖ | ➖ | ➖ |
 | TPM 2.0 on the VPU (PCRs, properties, random numbers) behind `EFI_TCG2_PROTOCOL`, shim measuring into it, firmware and board measured into PCRs 0 and 1 | ✅ | ➖ | ➖ | ➖ |
 | systemd-boot and systemd-stub (a unified kernel image) measuring into the TPM | ✅ | ➖ | ➖ | ➖ |

@@ -11,6 +11,7 @@
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::devpath::{self, Builder};
 use crate::util::{Global, Hex, POLL_US, counter_us, delay_us, read32, wait_for, write32};
@@ -26,28 +27,37 @@ const WINDOW_BUS: u64 = 0x8000_0000;
 const WINDOW_CPU: u64 = 0x6_0000_0000;
 const WINDOW_SIZE: u64 = 0x4000_0000;
 
-/// Config space of the one function on bus 1, the VL805.
+/// The buses the VL805 answers on through the config window: behind the root
+/// port, which is where the model puts it, and a Raspberry Pi 4B's own
+/// answer, bus 0.
+const ENDPOINT_BUSES: [u32; 2] = [1, 0];
+
+static ENDPOINT_BUS: AtomicU32 = AtomicU32::new(ENDPOINT_BUSES[0]);
+
+/// Config space of the one function the window shows, the VL805.
 fn cfg(offset: u64) -> u64 {
-    write32(EXT_CFG_INDEX, 1 << 20);
+    write32(EXT_CFG_INDEX, ENDPOINT_BUS.load(Ordering::Relaxed) << 20);
     let _ = read32(EXT_CFG_INDEX);
     EXT_CFG_DATA + offset
 }
 
 /// The controller's registers, if the VL805 is there.
 fn registers() -> Option<u64> {
-    let id = read32(cfg(0));
-    if id == 0 || id == u32::MAX || read32(cfg(8)) >> 8 != 0x0c_0330 {
-        return None;
-    }
+    let bus = ENDPOINT_BUSES.into_iter().find(|&bus| {
+        ENDPOINT_BUS.store(bus, Ordering::Relaxed);
+        let id = read32(cfg(0));
+        id != 0 && id != u32::MAX && read32(cfg(8)) >> 8 == 0x0c_0330
+    })?;
+    ENDPOINT_BUS.store(bus, Ordering::Relaxed);
     let lo = read32(cfg(0x10));
     let hi = if lo & 0x6 == 0x4 { read32(cfg(0x14)) } else { 0 };
-    let bus = (hi as u64) << 32 | (lo & !0xf) as u64;
-    if !(WINDOW_BUS..WINDOW_BUS + WINDOW_SIZE).contains(&bus) {
+    let bar = (hi as u64) << 32 | (lo & !0xf) as u64;
+    if !(WINDOW_BUS..WINDOW_BUS + WINDOW_SIZE).contains(&bar) {
         return None;
     }
     // Memory space and bus mastering.
     write32(cfg(4), read32(cfg(4)) | 0x6);
-    Some(bus - WINDOW_BUS + WINDOW_CPU)
+    Some(bar - WINDOW_BUS + WINDOW_CPU)
 }
 
 // Operational registers.

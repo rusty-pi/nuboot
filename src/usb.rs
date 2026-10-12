@@ -45,6 +45,7 @@ pub fn bring_up(board: &Board) -> bool {
         error!("pcie", "no VL805 on the link");
         return false;
     };
+    vl805::set_endpoint_bus(bus);
     pcie::assign_bar0(bus);
     let mut firmware = "flash";
     if board.vl805_from_host() {

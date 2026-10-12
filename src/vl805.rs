@@ -11,6 +11,8 @@
 //! Register indices, values and waits are the stock firmware's; what they
 //! mean inside the chip is not documented.
 
+use core::sync::atomic::{AtomicU32, Ordering};
+
 use crate::pcie::{self, Function};
 use crate::{mmio, timer};
 
@@ -51,8 +53,13 @@ const FIRMWARE_SETTLE_US: u32 = 5_000;
 
 const VENDOR_ID: u16 = 0x1106;
 const DEVICE_ID: u16 = 0x3483;
-/// The function start4 reloads: bus 1, device 0.
-const ENDPOINT_INDEX: u32 = 1 << 20;
+/// The bus the function start4 reloads answered on: bus 1, device 0, until
+/// [`set_endpoint_bus`] says otherwise.
+static ENDPOINT_BUS: AtomicU32 = AtomicU32::new(1);
+
+pub fn set_endpoint_bus(bus: u32) {
+    ENDPOINT_BUS.store(bus, Ordering::Relaxed);
+}
 
 /// Where the images sit (the VPU's uncached view, above `start4.elf`'s 16 MiB),
 /// and the room each image has.
@@ -212,7 +219,7 @@ pub fn firmware_reset() -> u32 {
     const FAILED: u32 = !0;
     let images = unsafe { IMAGES };
     let saved = pcie::selected();
-    pcie::select_raw(ENDPOINT_INDEX);
+    pcie::select_raw(ENDPOINT_BUS.load(Ordering::Relaxed) << 20);
     let id = (pcie::selected::read16(0), pcie::selected::read16(2));
     let status = match images {
         Some(images) if id == (VENDOR_ID, DEVICE_ID) => reload(&images),
