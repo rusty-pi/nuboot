@@ -88,12 +88,15 @@ From the boot ROM to the threads that run for as long as the board is up:
 | Property mailbox: `NOTIFY_XHCI_RESET` reloads the VL805's firmware | ✅ | ✅ | ➖ | ➖ |
 | TPM 2.0 on the VPU (PCRs, properties, random numbers) behind `EFI_TCG2_PROTOCOL`, shim measuring into it, firmware and board measured into PCRs 0 and 1 | ✅ | ➖ | ➖ | ➖ |
 | systemd-boot and systemd-stub (a unified kernel image) measuring into the TPM | ✅ | ➖ | ➖ | ➖ |
-| Firmware updates: a signed capsule on the card staged as `tryboot.img`, started under the bootloader's tryboot, committed once it reaches the OS and dropped when it does not; an EEPROM update the stock bootloader makes from the capsule's `pieeprom.upd`, with the variable store saved and put back | ✅ | ➖ | ➖ | ➖ |
-| The firmware cryptography service: the fused key signs and HMACs for UEFI, gives its public key, never itself, and is locked from the OS | ✅ | ➖ | ➖ | ➖ |
+| Firmware update capsules: one signed by a key in `db` with a newer version is verified; an older one, a changed one, one signed by another key and a file that is not a capsule are refused | ✅ | ✅ | ➖ | ➖ |
+| Firmware update, the firmware's side: a capsule staged as `tryboot.img` with the bootloader's tryboot request, the updated firmware proven once it reaches the OS and committed as `boot.img`, or dropped when it does not | ✅ | ✅ | ➖ | ➖ |
+| EEPROM update, the firmware's side: a capsule staged with the variable store saved, dropped when the bootloader did not update the EEPROM | ✅ | ✅ | ➖ | ➖ |
+| EEPROM update the stock bootloader makes from the capsule's `pieeprom.upd`, with the variable store put back | ✅ | ➖ | ➖ | ➖ |
+| The firmware cryptography service: the fused key signs and HMACs for UEFI, gives its public key, never itself, and is locked from the OS | ✅ | ✅ | ➖ | ➖ |
 | Linux 6.12 (Debian's arm64 kernel in a signed unified kernel image, started by systemd-boot): its loader variables are there, Secure Boot reads as on and the kernel locks down, `efivarfs` and the ESRT read, `tools/tpm-vpu` (signed with a key in `db`) gives `/dev/tpm0` with the PCRs and the event log | ✅ | ✅ | ➖ | ➖ |
 | Linux 6.12 as above: `bootctl status` (systemd 257) reads Secure Boot as enabled and the unified kernel image as measured | ✅ | ✅ | ➖ | ➖ |
 | Linux 6.12 as above: a variable is written and is there after the OS resets the board | ✅ | ✅ | ➖ | ➖ |
-| Variables the OS writes through the runtime services, a signed `db` update among them, kept across a reset | ✅ | ➖ | ➖ | ➖ |
+| Variables the OS writes through the runtime services, a signed `db` update among them, kept across a reset | ✅ | ✅ | ➖ | ➖ |
 | A boot key from the fused private key, handed over once, nothing of it left in the VPU's memory | ✅ | ➖ | ➖ | ➖ |
 
 The Pi 4B column is a rev 1.5 (`d03115`).
