@@ -8,7 +8,8 @@
 //! and the GIC's per-core view, then drops to non-secure EL2. There the
 //! primary core goes on to decompress the payload with `x0` = the device tree
 //! the VPU firmware wrote at `0xf8`; the others wait on the spin table the
-//! device tree points at (`cpu-release-addr = <0 0xd8>` ... `<0 0xf0>`).
+//! device tree points at (`cpu-release-addr = <0 0xd8>` ... `<0 0xf0>`), and
+//! on the mailboxes the ACPI tables point at (the parking protocol).
 
 use core::arch::global_asm;
 
@@ -23,8 +24,11 @@ global_asm!(
 .equ GICC_OFFSET, 0x1000
 .equ GICD_CTLR, 0x0
 .equ GICD_IGROUPR, 0x80
+.equ GICD_ISENABLER0, 0x100
 .equ GICC_CTLR, 0x0
 .equ GICC_PMR, 0x4
+.equ GICC_IAR, 0xc
+.equ GICC_EOIR, 0x10
 // Eight group registers: 256 interrupts.
 .equ IGROUPR_BYTES, (8 * 4)
 
@@ -87,7 +91,7 @@ in_el2:
 secondary:
     wfe
     ldr x4, [x5, x6, lsl #3]
-    cbz x4, secondary
+    cbz x4, parked
     mov x0, #0
     mov x1, #0
     mov x2, #0
@@ -119,10 +123,10 @@ watchdog_word:
     .word 0
 
     .org 0x100
-// Every core: all interrupts in group 1, the CPU interface enabled and nothing
-// masked by priority. The group registers of the private interrupts and the
-// CPU interface are banked per core. Only the secondary cores write the
-// distributor's control word.
+// Every core: all interrupts in group 1, the software interrupts enabled, the
+// CPU interface enabled and nothing masked by priority. The group and enable
+// registers of the private interrupts and the CPU interface are banked per
+// core. Only the secondary cores write the distributor's control word.
 setup_gic:
     mrs x0, mpidr_el1
     ldr x2, =GICD
@@ -130,7 +134,9 @@ setup_gic:
     b.eq 1f
     mov w0, #3
     str w0, [x2, #GICD_CTLR]
-1:  add x1, x2, #GICC_OFFSET
+1:  mov w0, #0xffff
+    str w0, [x2, #GICD_ISENABLER0]
+    add x1, x2, #GICC_OFFSET
     mov w0, #0x1e7
     str w0, [x1, #GICC_CTLR]
     mov w0, #0xff
@@ -144,5 +150,46 @@ setup_gic:
     ret
 
     .ltorg
+
+    // The ACPI parking protocol, for an operating system that starts the
+    // cores from the tables: a core woken by the software interrupt the
+    // operating system sends takes the entry point its mailbox holds, once
+    // the mailbox names it.
+    .org 0x200
+parked:
+    ldr x7, =GICD
+    add x7, x7, #GICC_OFFSET
+    ldr w9, [x7, #GICC_IAR]
+    and w10, w9, #0x3ff
+    cmp w10, #1020
+    b.hs 1f
+    str w9, [x7, #GICC_EOIR]
+1:  adr x8, parking_mailboxes
+    add x8, x8, x6, lsl #4
+    ldr w9, [x8]
+    cmp w9, w6
+    b.ne secondary
+    ldr x4, [x8, #8]
+    cbz x4, secondary
+    str xzr, [x8, #8]
+    mov w9, #-1
+    str w9, [x8]
+    dsb sy
+    mov x0, #0
+    mov x1, #0
+    mov x2, #0
+    mov x3, #0
+    br x4
+
+    .ltorg
+
+    // One mailbox for each core: the number the operating system writes
+    // (all ones until it does), then the entry point.
+    .org 0x800
+parking_mailboxes:
+    .rept 4
+    .word 0xffffffff, 0
+    .quad 0
+    .endr
 "#
 );
