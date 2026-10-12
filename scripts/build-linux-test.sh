@@ -71,6 +71,12 @@ rm -rf "$root/usr/lib/aarch64-linux-gnu/gconv" "$root/usr/lib/aarch64-linux-gnu/
 printf 'ID=test\nNAME="Test"\nPRETTY_NAME="Test OS"\nVERSION_ID=1\n' >"$root/etc/os-release"
 xz -dc "$tmp"/kernel/usr/lib/modules/*/kernel/fs/efivarfs/efivarfs.ko.xz >"$root/efivarfs.ko"
 xz -dc "$tmp"/kernel/usr/lib/modules/*/kernel/drivers/watchdog/bcm2835_wdt.ko.xz >"$root/bcm2835_wdt.ko"
+mkdir -p "$root/modules"
+# The reset controller xhci-pci waits for, then what `modprobe --show-depends xhci_pci usb_storage sd_mod` gives for this kernel, in load order.
+for module in reset-raspberrypi usb-common usbcore xhci-hcd xhci-pci scsi_common scsi_mod usb-storage sd_mod; do
+  xz -dc "$tmp"/kernel/usr/lib/modules/*/kernel/drivers/*/*/"$module".ko.xz >"$root/modules/$module.ko" 2>/dev/null \
+    || xz -dc "$tmp"/kernel/usr/lib/modules/*/kernel/drivers/*/"$module".ko.xz >"$root/modules/$module.ko"
+done
 cp "$tmp/tpm-vpu/tpm_vpu.ko" "$root/tpm_vpu.ko"
 cp "$here/uefi/test-apps/linux/init" "$root/init"
 chmod +x "$root/init"

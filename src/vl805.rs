@@ -215,11 +215,11 @@ pub fn boot_load(bus: u32, hub: &[u8], mcu_phys: u32) -> bool {
 /// copies [`keep`] took, the old hub image cleared first. The answer is 0, or
 /// all-ones when the images are missing, the device is not a VL805 or the hub
 /// image did not read back.
-pub fn firmware_reset() -> u32 {
+pub fn firmware_reset(device: u32) -> u32 {
     const FAILED: u32 = !0;
     let images = unsafe { IMAGES };
     let saved = pcie::selected();
-    pcie::select_raw(ENDPOINT_BUS.load(Ordering::Relaxed) << 20);
+    pcie::select_raw(if device != 0 { device } else { ENDPOINT_BUS.load(Ordering::Relaxed) << 20 });
     let id = (pcie::selected::read16(0), pcie::selected::read16(2));
     let status = match images {
         Some(images) if id == (VENDOR_ID, DEVICE_ID) => reload(&images),

@@ -40,6 +40,16 @@ done
 log=$(wc -c < /sys/kernel/security/tpm0/binary_bios_measurements 2>&1)
 say "event log $([ "$log" -gt 0 ] 2>/dev/null && echo present || echo "unreadable: $log")"
 /usr/bin/bootctl status --no-pager 2>&1 | while read -r line; do say "bootctl: $line"; done
+for module in reset-raspberrypi usb-common usbcore xhci-hcd xhci-pci scsi_common scsi_mod usb-storage sd_mod; do
+    insmod /modules/$module.ko 2>&1 || say "module $module: failed"
+done
+for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    [ -e /sys/class/block/sda ] && break
+    sleep 1
+done
+say "xhci $(dmesg | grep -c 'xHCI Host Controller') controller(s)"
+say "usb devices $(cat /sys/bus/usb/devices/*/product 2>/dev/null | tr '\n' ',')"
+say "usb disk $(cat /sys/class/block/sda/size 2>&1) sectors"
 TEST=6b1c0a52-3a7e-4d1f-9a0b-112233445566
 if [ -e /sys/firmware/efi/efivars/LinuxTest-$TEST ]; then
     say "variable survived the reset $(var LinuxTest $TEST)"

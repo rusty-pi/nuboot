@@ -204,7 +204,7 @@ fn answer(bus: u32, runtime: bool) {
             }
             TAG_NOTIFY_XHCI_RESET if room >= 4 => {
                 let device = word(value);
-                let status = vl805::firmware_reset();
+                let status = vl805::firmware_reset(device);
                 if status == 0 {
                     info!("usb", "VL805 firmware reloaded for the OS"; device = format_args!("{device:#x}"));
                 } else {

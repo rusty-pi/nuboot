@@ -85,7 +85,7 @@ From the boot ROM to the threads that run for as long as the board is up:
 | ARM started in UEFI: SD card, a signed EFI application | ✅ | ✅ | ➖ | ➖ |
 | Secure Boot: Ubuntu's shim and GRUB run, an image not signed by a key in `db` is refused | ✅ | ➖ | ➖ | ➖ |
 | USB: VL805 firmware from the EEPROM, an EFI application off a USB drive | ✅ | ✅ | ➖ | ➖ |
-| Property mailbox: `NOTIFY_XHCI_RESET` reloads the VL805's firmware | ✅ | ➖ | ➖ | ➖ |
+| Property mailbox: `NOTIFY_XHCI_RESET` reloads the VL805's firmware | ✅ | ✅ | ➖ | ➖ |
 | TPM 2.0 on the VPU (PCRs, properties, random numbers) behind `EFI_TCG2_PROTOCOL`, shim measuring into it, firmware and board measured into PCRs 0 and 1 | ✅ | ➖ | ➖ | ➖ |
 | systemd-boot and systemd-stub (a unified kernel image) measuring into the TPM | ✅ | ➖ | ➖ | ➖ |
 | Firmware updates: a signed capsule on the card staged as `tryboot.img`, started under the bootloader's tryboot, committed once it reaches the OS and dropped when it does not; an EEPROM update the stock bootloader makes from the capsule's `pieeprom.upd`, with the variable store saved and put back | ✅ | ➖ | ➖ | ➖ |
