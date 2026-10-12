@@ -323,7 +323,6 @@ pub fn start(image: &[u8], tree: &[u8], serial: u32) -> Result<Started, Error> {
     power_up();
     crate::rng::quiesce();
     cm::start_arm_pll(ARM_RATE_MHZ);
-    cm::retune_vpu();
     for ctl in ARM_TIME_CLOCKS {
         cm::switch_generator(ctl, cm::DIV_ONE, cm::SRC_PLLA_CORE);
     }

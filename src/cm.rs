@@ -92,8 +92,6 @@ pub const ISP_DIV: u32 = 0x034;
 /// `config.txt`. Not known to be a generator.
 pub const REG_128: u32 = 0x128;
 pub const REG_12C: u32 = 0x12c;
-const VPU_CTL: u32 = 0x008;
-const VPU_DIV: u32 = 0x00c;
 /// A divider of 1.
 pub const DIV_ONE: u32 = 1 << 12;
 pub const V3D_CTL: u32 = 0x038;
@@ -299,25 +297,6 @@ pub fn stop_generator(ctl_off: u32) {
     let reg = BASE + ctl_off;
     write(ctl_off, mmio::read(reg) & !ENAB);
     timer::wait(1000, || mmio::read(reg) & BUSY == 0);
-}
-
-/// Set the VPU's clock again to what [`start_plla`] left it at, which start4
-/// does once more after the ARM's PLL is up.
-pub fn retune_vpu() {
-    move_vpu_clock(DIV_ONE, SRC_PLLA_CORE);
-}
-
-/// Move the VPU's clock the way start4's generator code moves any running
-/// clock that keeps its source: divider first, then the source, twice. The
-/// VPU's keeps running across the source change as well.
-fn move_vpu_clock(div: u32, src: u32) {
-    let reg = BASE + VPU_CTL;
-    let _ = mmio::read(reg);
-    let _ = mmio::read(BASE + VPU_DIV);
-    write(VPU_DIV, div);
-    timer::wait(1000, || mmio::read(reg) & DIV_PENDING == 0);
-    write(VPU_CTL, src | GATE | ENAB);
-    write(VPU_CTL, src | GATE | ENAB);
 }
 
 /// The ARM rates start4 runs a board at: the default, and what `arm_boost`
