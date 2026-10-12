@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "linux"
-description: "Debian's arm64 kernel, in a unified kernel image that Debian's systemd-boot starts, boots under the firmware with Secure Boot on, and its first process looks at what the firmware gave it: the kernel's own log of the EFI tables, the Secure Boot variables through efivarfs, the ESRT, the TPM on the VPU through the module in tools/tpm-vpu, and a variable it writes and finds again after it resets the board."
+description: "Debian's arm64 kernel, in a unified kernel image that Debian's systemd-boot starts, boots under the firmware with Secure Boot on, and its first process looks at what the firmware gave it: the kernel's own log of the EFI tables, the Secure Boot variables through efivarfs, the ESRT, the TPM on the VPU through the module in tools/tpm-vpu, `bootctl status`, and a variable it writes and finds again after it resets the board."
 
 boot:
   eeprom: "../out/stock-pieeprom.bin"
@@ -58,6 +58,10 @@ milestones:
     line: "linux test: StubInfo systemd-stub"
   - why: "The entry systemd-boot started is the unified kernel image."
     line: "linux test: LoaderEntrySelected linux-test.efi"
+  - why: "systemd's bootctl reads Secure Boot as enabled from the firmware's variables."
+    line: "linux test: bootctl: Secure Boot: enabled"
+  - why: "systemd-stub measured the unified kernel image into the TPM, which bootctl reads back from the variables the stub set."
+    line: "linux test: bootctl: Measured UKI: yes"
   - why: "The OS can write a variable."
     line: "linux test: variable written"
   - why: "The OS resets the board, and the variable it wrote is there at the next boot: the VPU signed and kept the write."

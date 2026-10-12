@@ -39,6 +39,7 @@ for i in 0 1 5 9 11 12; do
 done
 log=$(wc -c < /sys/kernel/security/tpm0/binary_bios_measurements 2>&1)
 say "event log $([ "$log" -gt 0 ] 2>/dev/null && echo present || echo "unreadable: $log")"
+/usr/bin/bootctl status --no-pager 2>&1 | while read -r line; do say "bootctl: $line"; done
 TEST=6b1c0a52-3a7e-4d1f-9a0b-112233445566
 if [ -e /sys/firmware/efi/efivars/LinuxTest-$TEST ]; then
     say "variable survived the reset $(var LinuxTest $TEST)"
