@@ -12,7 +12,7 @@
 //! firmware does not know is left as it came, and the buffer is marked
 //! answered either way, which is what the stock firmware does.
 
-use crate::{crypto, debug, error, idle, info, keystore, measure, mmio, tpm2, varstore, vl805, warn, watchdog};
+use crate::{arm, crypto, debug, error, idle, info, keystore, measure, mmio, tpm2, varstore, vl805, warn, watchdog};
 
 const VPU_VIEW: u32 = 0x7e00_b980;
 /// Mailbox 0, which the ARM reads.
@@ -32,7 +32,7 @@ const CHANNEL_RUNTIME: u32 = 7;
 const RESPONSE: u32 = 0x8000_0000;
 const CODE_ERROR: u32 = 0x8000_0001;
 /// The largest buffer walked, so a bad size word cannot run off into memory.
-const MAX_BUFFER: u32 = 0x1_0000;
+const MAX_BUFFER: u32 = 0x6000;
 
 /// Linux's `RPI_FIRMWARE_NOTIFY_XHCI_RESET`: it has reset the PCIe link, and
 /// with it a VL805 that keeps no firmware of its own.
@@ -102,20 +102,48 @@ pub fn serve(timeout_us: u32) {
     idle::listen_mailbox();
 }
 
-/// Answer the buffer at bus address `bus`, in place.
+/// What the buffer held when the ARM posted it. The ARM goes on running while
+/// the tags are answered, so nothing is read twice from the buffer it can
+/// change: each tag is parsed from this copy, and an answer goes to both.
+static mut REQUEST: [u32; (MAX_BUFFER / 4) as usize] = [0; (MAX_BUFFER / 4) as usize];
+
+/// Answer the buffer at bus address `bus`, in place. A buffer that is not
+/// wholly in memory the ARM owns is not touched: the firmware's own memory is
+/// not the ARM's to have read or written through the mailbox.
 fn answer(bus: u32, runtime: bool) {
     // The ARM's bus addresses alias SDRAM at 0xC000_0000, uncached, as the
     // VPU's own do.
-    let base = 0xc000_0000 | (bus & 0x3fff_ffff);
-    let word = |i: u32| unsafe { core::ptr::read_volatile((base + 4 * i) as usize as *const u32) };
-    let set = |i: u32, v: u32| unsafe { core::ptr::write_volatile((base + 4 * i) as usize as *mut u32, v) };
-
-    let size = word(0);
-    if !(12..=MAX_BUFFER).contains(&size) || size % 4 != 0 {
-        error!("mailbox", "property buffer with a bad size"; bus = format_args!("{bus:#010x}"), size = size);
-        set(1, CODE_ERROR);
+    let physical = bus & 0x3fff_ffff;
+    let base = 0xc000_0000 | physical;
+    if physical % 4 != 0 || physical + 12 > arm::VPU_BASE {
+        error!("mailbox", "property buffer outside the ARM's memory"; bus = format_args!("{bus:#010x}"));
         return;
     }
+    let os_word = |i: u32| unsafe { core::ptr::read_volatile((base + 4 * i) as usize as *const u32) };
+    let os_set = |i: u32, v: u32| unsafe { core::ptr::write_volatile((base + 4 * i) as usize as *mut u32, v) };
+
+    let size = os_word(0);
+    if !(12..=MAX_BUFFER).contains(&size) || size % 4 != 0 {
+        error!("mailbox", "property buffer with a bad size"; bus = format_args!("{bus:#010x}"), size = size);
+        os_set(1, CODE_ERROR);
+        return;
+    }
+    if physical + size > arm::VPU_BASE {
+        error!("mailbox", "property buffer outside the ARM's memory"; bus = format_args!("{bus:#010x}"), size = size);
+        os_set(1, CODE_ERROR);
+        return;
+    }
+    let copy = (&raw mut REQUEST).cast::<u32>();
+    for n in 0..size / 4 {
+        unsafe { core::ptr::write(copy.add(n as usize), os_word(n)) };
+    }
+    let word = |i: u32| if i < size / 4 { unsafe { core::ptr::read(copy.add(i as usize)) } } else { 0 };
+    let set = |i: u32, v: u32| {
+        if i < size / 4 {
+            unsafe { core::ptr::write(copy.add(i as usize), v) };
+            os_set(i, v);
+        }
+    };
     let words = size / 4;
     let mut i = 2;
     while i + 3 <= words {

@@ -26,6 +26,8 @@ milestones:
     line: "runtime test: a variable is written after ExitBootServices ok"
   - why: "A db update signed by a KEK key is accepted at runtime."
     line: "runtime test: a signed update of db is accepted ok"
+  - why: "A buffer the OS posts in the firmware's own memory is refused, not answered in place."
+    line: "property buffer outside the ARM's memory"
   - why: "After the reset the variable has what was written and appended."
     line: "runtime test: the variable is still there with what was appended ok"
   - why: "The deletion lasted."

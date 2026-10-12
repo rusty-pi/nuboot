@@ -110,6 +110,34 @@ fn raw_delete(var: &str, guid: &Guid) -> u32 {
     }
 }
 
+/// What an OS does that points the mailbox at the firmware's memory: post a
+/// buffer there, and say whether the word the VPU answers in was left alone.
+fn post_in_firmware_memory() -> bool {
+    const MAIL1_WRITE: usize = 0xfe00_b8a0;
+    const MAIL1_STATUS: usize = 0xfe00_b8b8;
+    const BUFFER: usize = 0x3ff0_0000;
+    let code = (BUFFER + 4) as *const u32;
+    flush(BUFFER, 64);
+    let before = unsafe { core::ptr::read_volatile(code) };
+    unsafe {
+        while core::ptr::read_volatile(MAIL1_STATUS as *const u32) & (1 << 31) != 0 {}
+        core::ptr::write_volatile(MAIL1_WRITE as *mut u32, (0xc000_0000 | BUFFER as u32) | 7);
+    }
+    let freq: u64;
+    unsafe { core::arch::asm!("mrs {0}, cntfrq_el0", out(reg) freq) };
+    let start: u64;
+    unsafe { core::arch::asm!("isb", "mrs {0}, cntpct_el0", out(reg) start) };
+    loop {
+        let now: u64;
+        unsafe { core::arch::asm!("isb", "mrs {0}, cntpct_el0", out(reg) now) };
+        if now - start > freq / 10 {
+            break;
+        }
+    }
+    flush(BUFFER, 64);
+    unsafe { core::ptr::read_volatile(code) == before }
+}
+
 fn reset() -> ! {
     const PM_RSTC: usize = 0xfe10_001c;
     const PM_WDOG: usize = 0xfe10_0024;
@@ -149,6 +177,7 @@ pub extern "efiapi" fn efi_main(image: Handle, system_table: *mut SystemTable) -
             set(rt, "db", &SECURITY_DB, NV_BS_RT | TIME_BASED | APPEND, DB_UPDATE) == Status::SUCCESS,
         );
         check("the VPU signs a deletion of SecureBoot", raw_delete("SecureBoot", &GLOBAL) == 0);
+        check("a buffer in the firmware's memory is left alone", post_in_firmware_memory());
         check("a hidden variable is created over", set(rt, "RtHidden", &OURS, NV_BS_RT, &[1]) == Status::SUCCESS);
         check("and deleted", set(rt, "RtHidden", &OURS, 0, &[]) == Status::SUCCESS);
         say("persist test: resetting\r\n");
