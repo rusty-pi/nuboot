@@ -9,13 +9,15 @@ board's device tree, and starts the ARM in them:
 1. It puts `pi4-uefi.bin` at ARM physical 0, where the cores come out of
    reset, and the device tree at `0xF0_0000` with `/memory@0` filled in from
    the board's SDRAM, a `vpu-tpm` node ([os-image.md](os-image.md)) and the
-   Ethernet controller's `local-mac-address`: `02:` and five bytes of a hash of
+   reserved page of the TPM's command response buffer ([tpm2.md](tpm2.md#the-command-response-buffer)),
+   and the Ethernet controller's `local-mac-address`: `02:` and five bytes of a hash of
    the board's serial number, the same at every boot. The ARM gets everything below `0x3EC0_0000`, where the
    VPU firmware's own memory starts, and all the memory above 1 GiB.
 2. `pi4-uefi.bin` (`uefi/stub/`) starts with an armstub: each core sets up
    the local timer, the generic timer, the GIC and EL3's controls, and drops
    to non-secure EL2. The secondary cores wait on the spin table at `0xd8`
-   that the device tree names.
+   that the device tree names, and on the mailboxes at `0x800` that the ACPI
+   tables name.
 3. The primary core decompresses the payload, coded with xz's ARM64 filter
    and LZMA, to `0x100_0000` and enters it with `x0` holding the device tree.
 4. The payload sets up an identity map, builds the memory map from the
@@ -52,9 +54,53 @@ from `start4.elf`'s:
 | `SetWatchdogTimer`, `ExitBootServices` | UEFI beats the board's watchdog from the hypervisor timer's interrupt and hands it back to `start4.elf` at `ExitBootServices` ([boot.md](boot.md#boot-watchdog)) |
 | ESRT | One system firmware resource, the firmware itself, in the `EFI_SYSTEM_RESOURCE_TABLE`, with the commit's time as its version. `OsIndicationsSupported` offers file capsule delivery, and `OsIndications` takes the OS's write |
 | Device tree | Passed on to the OS as the `EFI_DTB_TABLE` configuration table |
+| ACPI | The tables of the [next section](#acpi), as the `EFI_ACPI_20_TABLE_GUID` configuration table |
 | Variables | Held in RAM, with the non-volatile ones also in the flash store ([below](#the-variable-store)) |
 
 The SD card is tried before USB.
+
+## ACPI
+
+The firmware also offers ACPI tables: the RSDP is the
+`EFI_ACPI_20_TABLE_GUID` configuration table, and the tables are built at every
+boot from the board and the VPU's own state. A kernel that is given both them
+and the device tree uses the device tree, and uses the tables when its command
+line says `acpi=on`. With them the OS finds the TPM on the VPU through its own
+driver, with no module ([os-image.md](os-image.md#with-the-acpi-tables)).
+
+| table | holds |
+|---|---|
+| FADT | Hardware-reduced ACPI 6.3, with no PSCI: the cores start through the parking protocol |
+| MADT | The four cores and the GIC-400 |
+| GTDT | The generic timers |
+| SPCR | The PL011 on GPIO 14 and 15 as the console, at 115200 baud |
+| PPTT | Each core's caches (48 KiB for instructions, 32 KiB for data) and the 1 MiB they share |
+| TPM2 | The TPM on the VPU, as a command response buffer device with the ACPI start method ([tpm2.md](tpm2.md#the-command-response-buffer)) |
+| DSDT | The devices below |
+
+The DSDT has a device for each of:
+
+| device | `_HID` | what takes it |
+|---|---|---|
+| each core | `ACPI0007` | the kernel's processor driver |
+| the console | `ARMH0011` | the PL011 driver |
+| the TPM | `MSFT0101` | `tpm_crb`; its start method writes the doorbell to the mailbox |
+| the power manager | `PRP0001`, with the `compatible` of the device tree's node | `bcm2835-pm`: the watchdog the boot watchdog is handed to ([boot.md](boot.md#boot-watchdog)), and the OS's reset |
+| the SD host | `BRCME88C` | `sdhci-iproc`, with the card at 3.3 V and no DMA, as this firmware's own driver runs it |
+| the network interface | `BCM6E4E` | `genet`, with the address the device tree gives it |
+
+The secondary cores wait in the armstub on the spin table the device tree names
+and on a mailbox for each core, the ACPI parking protocol's: the OS writes the
+core's number and an entry point there and sends software interrupt 0, which
+wakes the core, and the core takes the entry point.
+
+Not described: USB, so an OS on the tables uses the SD card or the network;
+and power off, which the tables have no way to ask for.
+
+`scripts/test-acpi.sh` builds the table code for the host (`tools/acpi-check`)
+and checks the tables' links and checksums, then disassembles each with the
+ACPICA tools' `iasl` and compiles the DSDT again to the same bytes.
+`scenarios/linux-acpi.yaml` boots Debian's arm64 kernel on them in pimu.
 
 ## Secure Boot
 
@@ -295,6 +341,7 @@ pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed b
 - The device tree is Raspberry Pi's for the Pi 4B whatever the board, with
   nothing filled in but `/memory@0`, the TPM's node and the Ethernet address,
   which is not the one Raspberry Pi's firmware gives the board.
+- The ACPI tables describe a Raspberry Pi 4B's devices whatever the board.
 - Nothing sets the ARM's clock.
 - Nothing reads `BootOrder`: the boot is always the removable-media path.
 - `dbx` holds image hashes only; a certificate in it is ignored.

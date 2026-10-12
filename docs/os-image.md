@@ -1,11 +1,51 @@
 # Giving the OS the TPM
 
+The TPM on the VPU reaches an operating system in one of two ways, by what the
+OS describes the board with. Either way the OS has `/dev/tpm0` and
+`/dev/tpmrm0`, and `/sys/kernel/security/tpm0/binary_bios_measurements` holds
+the event log UEFI kept.
+
+- **The ACPI tables** (`acpi=on` on the kernel's command line): the TPM is a
+  TPM 2.0 device that the kernel's own driver takes. Nothing is built or
+  installed.
+- **The device tree**, which a kernel uses unless it is told otherwise: a
+  kernel module, built for the kernel it is for.
+
+## With the ACPI tables
+
+The firmware gives the OS ACPI tables next to its device tree
+([uefi.md](uefi.md#acpi)). A kernel that is given both uses the device tree,
+and uses the tables when its command line says so:
+
+```text
+acpi=on
+```
+
+In a unified kernel image that is the `.cmdline` section; with GRUB, the
+`linux` line. The tables name the TPM as a command response buffer device
+(`MSFT0101`, with the ACPI start method), which `tpm_crb` takes
+([tpm2.md](tpm2.md#the-command-response-buffer)): an interface the TCG
+defines and the kernel has long had a driver for (`CONFIG_TCG_CRB`, built in on
+Debian), so there is no module to build, sign or keep in step with a kernel.
+
+What else the tables describe is in [uefi.md](uefi.md#acpi): the four cores, the
+interrupt controller and timers, the PL011 console, the SD host, the network
+interface, and the power manager, whose watchdog and reset the kernel's
+`bcm2835-pm` driver provides through the `compatible` property the table gives
+it. The board's USB controller is not described, so an OS on the tables uses
+the SD card or the network.
+
+`scenarios/linux-acpi.yaml` boots Debian's 6.12 arm64 kernel with `acpi=on`
+under Secure Boot: `tpm_crb` registers the TPM, the PCRs and the event log are
+there, and so are the SD card and the network interface.
+
+## With the device tree
+
 The firmware's device tree has a `vpu-tpm` node, and the kernel module in
 `tools/tpm-vpu` binds to it and registers a TPM 2.0 chip that sends each
-command to the VPU over the firmware mailbox. The OS then has `/dev/tpm0` and
-`/dev/tpmrm0`, and `/sys/kernel/security/tpm0/binary_bios_measurements` holds
-the event log UEFI kept. Nothing needs configuring: the node's `compatible`
-string loads the module when it is installed for the running kernel.
+command to the VPU over the firmware mailbox. Nothing needs configuring: the
+node's `compatible` string loads the module when it is installed for the
+running kernel.
 
 The module uses the kernel's `rpi_firmware` interface, which both upstream and
 Raspberry Pi's kernels have, and the TPM core's `send` operation of Linux 6.12
@@ -16,7 +56,7 @@ headers of the kernel it is for:
 make -C tools/tpm-vpu KDIR=/lib/modules/$(uname -r)/build
 ```
 
-## In an mkosi image
+### In an mkosi image
 
 Build it with DKMS when the image is made, so it follows the image's kernel.
 `tools/tpm-vpu` is the DKMS source (`dkms.conf` is there):
@@ -60,8 +100,9 @@ were measured into, and the event log.
 
 ## Unlocking the root volume
 
-With the module in the initrd, a LUKS2 volume's key is sealed to the TPM
-with `systemd-cryptenroll`, as on a PC. Sealing it to PCR 7 binds it to the
+With the TPM's driver in the initrd (the module, or the kernel's own), a
+LUKS2 volume's key is sealed to the TPM with
+`systemd-cryptenroll`, as on a PC. Sealing it to PCR 7 binds it to the
 Secure Boot state: the keys in `db` and `dbx` and the certificate that
 verified each image.
 

@@ -25,7 +25,8 @@ for:
   resources, and a signed capsule that fwupd stages is applied as a tryboot
   and committed once it has reached the OS ([docs/updates.md](docs/updates.md)).
 
-Out of scope: HATs, IPv6 and ACPI (the operating system gets a device tree).
+Out of scope: HATs and IPv6. The operating system gets a device tree, and ACPI
+tables when it asks for them ([docs/uefi.md](docs/uefi.md#acpi)).
 
 > [!NOTE]
 > This is an early firmware. On a Raspberry Pi 4B rev 1.5 (`d03115`) it starts
@@ -54,6 +55,9 @@ From the boot ROM to the threads that run for as long as the board is up:
    UEFI measures what it verifies into a TPM 2.0 on the VPU and offers
    `EFI_TCG2_PROTOCOL` over it ([docs/tpm2.md](docs/tpm2.md)); the payload can
    have a key from the device private key ([docs/keystore.md](docs/keystore.md)).
+   The OS finds that TPM through the ACPI tables UEFI builds, with its own
+   driver, or through the device tree and a module
+   ([docs/os-image.md](docs/os-image.md)).
 6. Starts the scheduler: a service thread that answers the property mailbox
    (Linux's `NOTIFY_XHCI_RESET`, which has the VL805's firmware reloaded, and
    the TPM's commands and the boot key), and a monitor thread that reports each
@@ -96,6 +100,7 @@ From the boot ROM to the threads that run for as long as the board is up:
 | Linux 6.12 (Debian's arm64 kernel in a signed unified kernel image, started by systemd-boot): its loader variables are there, Secure Boot reads as on and the kernel locks down, `efivarfs` and the ESRT read, `tools/tpm-vpu` (signed with a key in `db`) gives `/dev/tpm0` with the PCRs and the event log | ✅ | ✅ | ➖ | ➖ |
 | Linux 6.12 as above: `bootctl status` (systemd 257) reads Secure Boot as enabled and the unified kernel image as measured | ✅ | ✅ | ➖ | ➖ |
 | Linux 6.12 as above: a variable is written and is there after the OS resets the board | ✅ | ✅ | ➖ | ➖ |
+| Linux 6.12 as above, started with `acpi=on` and no module: the kernel's own `tpm_crb` takes the TPM (the PCRs, the event log), the four cores start, the SD card and the network interface are there, and the variable survives the reset | ✅ | ➖ | ➖ | ➖ |
 | Variables the OS writes through the runtime services, a signed `db` update among them, kept across a reset | ✅ | ✅ | ➖ | ➖ |
 | A boot key from the fused private key, handed over once, nothing of it left in the VPU's memory | ✅ | ➖ | ➖ | ➖ |
 
@@ -167,11 +172,12 @@ pimu boot --eeprom out/stock-pieeprom.bin --sd boot/
 | `src/spi_flash.rs`, `src/eeprom.rs`, `src/elf.rs`, `src/cache.rs` | The EEPROM and its sections, loading the ARM's image |
 | `src/pcie.rs`, `src/vl805.rs`, `src/usb.rs`, `src/lzss.rs` | The PCIe link, and the VL805 and its firmware |
 | `src/mailbox.rs` | The property mailbox |
+| `src/tpm_crb.rs` | The TPM's command response buffer, a page of the ARM's memory the VPU answers commands in |
 | `src/arm.rs`, `src/fdt.rs` | Starting the ARM, and the device tree it gets |
 | `scripts/mkcapsule.py` | Puts a signed `boot.img` and `boot.sig` in a firmware update capsule |
 | `scripts/mkcab.py` | Puts a capsule in the cabinet `fwupdmgr install` takes ([docs/updates.md](docs/updates.md)) |
 | `scripts/mkbootimg.py` | Puts `start4.elf` in a signed `boot.img` and `boot.sig` |
-| `uefi/` | The UEFI firmware, its Secure Boot keys, and the armstub and decompressor the ARM starts in |
+| `uefi/` | The UEFI firmware, its Secure Boot keys and ACPI tables, and the armstub and decompressor the ARM starts in |
 
 ## Licence
 

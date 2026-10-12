@@ -3,9 +3,16 @@
 `start4.elf` carries a TPM 2.0 (`src/tpm2.rs`). UEFI measures into it as it
 boots and offers it as `EFI_TCG2_PROTOCOL`; shim, GRUB, systemd-boot and the
 Linux EFI stub measure into the protocol as they do on a PC. The OS reaches
-the TPM over the property mailbox: tag `0x000300a3`, with the command in the
-tag's value and its length in the length word, and the response coming back
-the same way.
+the TPM in one of two ways, by what it describes the board with:
+
+- through the ACPI tables, as a TPM 2.0 device with a command response buffer
+  ([below](#the-command-response-buffer)), which the kernel's own driver takes;
+- over the property mailbox: tag `0x000300a3`, with the command in the tag's
+  value and its length in the length word, and the response coming back the
+  same way, which the module in `tools/tpm-vpu` uses
+  ([os-image.md](os-image.md)).
+
+Both end in the same TPM: the commands, the PCRs and the keys are the same.
 
 The TPM is started when the firmware is. A `TPM2_Startup` from a payload gets
 `TPM_RC_INITIALIZE`.
@@ -99,6 +106,28 @@ memory ([keystore.md](keystore.md)), and anyone who can send the TPM
 commands can unseal what the PCRs and policy of an object allow, as with any
 TPM.
 
+## The command response buffer
+
+The `TPM2` table names the TPM as a command response buffer with the ACPI
+start method (start method 8), and the `MSFT0101` device in the DSDT is what
+the kernel's `tpm_crb` takes. The buffer is one page of the ARM's memory, the
+last below the VPU's own (`0x3EBF_F000`), which the device tree reserves:
+
+| offset | |
+|---|---|
+| `0x40` | the control area: the status, `START`, the sizes and addresses of the command and response buffers |
+| `0x80` | one buffer of 2048 bytes, for the command and then the response |
+
+The OS writes a command in the buffer and sets `START`, and the device's
+start method (`_DSM` function 1 of the TPM start UUID,
+`6bbf6cab-5463-4714-b7cd-f0203c0368d4`) writes the doorbell to the mailbox, on
+channel 6, where the VPU's service thread answers it. The VPU copies the command
+out of the page, runs it, writes the response in the buffer and clears `START`.
+Where the buffer is and how long it is are the VPU's own, whatever the control
+area says when the doorbell rings; a command whose length does not fit the
+buffer gets `TPM_RC_COMMAND_SIZE`. The interface has locality 0 only, and
+nothing to cancel: a command that has started runs to its end.
+
 ## Checks
 
 `scenarios/tpm2-commands.yaml` boots an EFI application that sends the TPM a
@@ -116,10 +145,17 @@ are what SHA-256 makes of what was extended, the update counter, the error
 codes of the commands the TPM refuses, and what the key, the sealed data and the
 sessions answer and refuse.
 
+`scenarios/linux-acpi.yaml` boots Debian's arm64 kernel with `acpi=on` and no
+module of this firmware's: `tpm_crb` registers `/dev/tpm0`, and the PCRs and the
+event log are there as they are over the mailbox
+([os-image.md](os-image.md)). `tools/tpm-sim/tests/crb.rs` runs the buffer's
+code on the host.
+
 `scripts/test-tpm.sh` builds the TPM's code for the host (`tools/tpm-sim`) and
 runs two things. Its unit tests compare P-256 (public keys, ECDH, ECDSA),
 AES-CFB, `KDFa` and `KDFe` with vectors from Python's `cryptography`
-(`tools/tpm-sim/gen-vectors.py`). With `tpm2-tools` installed it also serves
+(`tools/tpm-sim/gen-vectors.py`), and run the command response buffer's code.
+With `tpm2-tools` installed it also serves
 the TPM over the TPM simulator's socket protocol and drives it with the real
 tools (`tools/tpm-sim/tpm2-tools-test.sh`): the primary key, sealing and
 unsealing, a PCR policy built by a trial session and refused once a PCR has
