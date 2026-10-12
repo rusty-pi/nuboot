@@ -103,6 +103,21 @@ fn public_keys_of_awkward_scalars() {
 }
 
 #[test]
+fn awkward_scalars_agree_with_the_short_way() {
+    // The secret paths and the verifying one are different code: a key made on
+    // the first has to verify on the second, and two parties get the same secret.
+    for (d, _) in EDGE_KEYS {
+        let q = p256::public_key(d).unwrap();
+        let (r, s) = p256::sign(d, &[0x33; 32], &[0x44; 32]).unwrap();
+        assert!(p256::verify(&q, &[0x33; 32], &r, &s));
+        for (other, _) in EDGE_KEYS {
+            let p = p256::public_key(other).unwrap();
+            assert_eq!(p256::ecdh(d, &p), p256::ecdh(other, &q));
+        }
+    }
+}
+
+#[test]
 fn sign_and_verify_round_trip() {
     for k in KEYS {
         let q = p256::public_key(&k.d).unwrap();

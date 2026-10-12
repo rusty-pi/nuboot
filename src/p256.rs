@@ -1,6 +1,9 @@
-//! NIST P-256: public keys, ECDH and ECDSA, for the TPM's keys. Not constant
-//! time: nothing here is reachable but through the TPM's command interface, and
-//! the VPU's timing is not something its callers can see closely.
+//! NIST P-256: public keys, ECDH and ECDSA, for the TPM's keys. What takes a
+//! secret (a private key, a per-signature secret) takes the same steps for
+//! every value of it: the field arithmetic has no branch on its operands, a
+//! scalar multiplication is a fixed number of doublings and additions with
+//! complete formulas, and a table entry is picked by reading all of them.
+//! Verifying a signature works on public numbers and takes the shorter way.
 //!
 //! Numbers are 256 bits as eight 32-bit limbs, least significant first, and
 //! as 32 bytes, big endian, at the edges. Arithmetic is Montgomery's, modulo
@@ -52,34 +55,54 @@ fn to_bytes(l: &Limbs) -> [u8; 32] {
     b
 }
 
+/// 1 for a word that is not zero, and 0 for one that is.
+#[inline(always)]
+fn nonzero(x: u32) -> u32 {
+    (x | x.wrapping_neg()) >> 31
+}
+
+/// All ones for a 1 and all zeros for a 0.
+#[inline(always)]
+fn mask(bit: u32) -> u32 {
+    bit.wrapping_neg()
+}
+
+/// `a` where `m` is all ones, and `b` where it is zero.
+fn select(m: u32, a: &Limbs, b: &Limbs) -> Limbs {
+    let mut out = [0u32; 8];
+    for i in 0..8 {
+        out[i] = (a[i] & m) | (b[i] & !m);
+    }
+    out
+}
+
 fn is_zero(a: &Limbs) -> bool {
-    a.iter().all(|&w| w == 0)
+    let mut any = 0u32;
+    for &w in a.iter() {
+        any |= w;
+    }
+    nonzero(any) == 0
 }
 
 /// `a >= b`.
 fn geq(a: &Limbs, b: &Limbs) -> bool {
-    for i in (0..8).rev() {
-        if a[i] != b[i] {
-            return a[i] > b[i];
-        }
-    }
-    true
+    sub_borrow(a, b).1 == 0
 }
 
-/// `a - b` and whether it borrowed.
-fn sub_raw(a: &Limbs, b: &Limbs) -> (Limbs, bool) {
+/// `a - b` and its borrow, 0 or 1.
+fn sub_borrow(a: &Limbs, b: &Limbs) -> (Limbs, u32) {
     let mut out = [0u32; 8];
-    let mut borrow = 0i64;
+    let mut borrow = 0u32;
     for i in 0..8 {
-        let d = a[i] as i64 - b[i] as i64 - borrow;
+        let d = (a[i] as u64).wrapping_sub(b[i] as u64).wrapping_sub(borrow as u64);
         out[i] = d as u32;
-        borrow = (d < 0) as i64;
+        borrow = (d >> 63) as u32;
     }
-    (out, borrow != 0)
+    (out, borrow)
 }
 
-/// `a + b` and its carry.
-fn add_raw(a: &Limbs, b: &Limbs) -> (Limbs, bool) {
+/// `a + b` and its carry, 0 or 1.
+fn add_carry(a: &Limbs, b: &Limbs) -> (Limbs, u32) {
     let mut out = [0u32; 8];
     let mut carry = 0u64;
     for i in 0..8 {
@@ -87,21 +110,19 @@ fn add_raw(a: &Limbs, b: &Limbs) -> (Limbs, bool) {
         out[i] = s as u32;
         carry = s >> 32;
     }
-    (out, carry != 0)
+    (out, carry as u32)
 }
 
 fn add_mod(a: &Limbs, b: &Limbs, mo: &Modulus) -> Limbs {
-    let (s, carry) = add_raw(a, b);
-    if carry || geq(&s, &mo.m) {
-        sub_raw(&s, &mo.m).0
-    } else {
-        s
-    }
+    let (s, carry) = add_carry(a, b);
+    let (d, borrow) = sub_borrow(&s, &mo.m);
+    select(mask(carry | (borrow ^ 1)), &d, &s)
 }
 
 fn sub_mod(a: &Limbs, b: &Limbs, mo: &Modulus) -> Limbs {
-    let (d, borrow) = sub_raw(a, b);
-    if borrow { add_raw(&d, &mo.m).0 } else { d }
+    let (d, borrow) = sub_borrow(a, b);
+    let (e, _) = add_carry(&d, &mo.m);
+    select(mask(borrow), &e, &d)
 }
 
 /// The 64-bit product of two 32-bit numbers, as its low and high words, from
@@ -156,10 +177,8 @@ fn mont_mul(a: &Limbs, b: &Limbs, mo: &Modulus) -> Limbs {
     }
     let mut out = [0u32; 8];
     out.copy_from_slice(&t[..8]);
-    if t[8] != 0 || geq(&out, &mo.m) {
-        out = sub_raw(&out, &mo.m).0;
-    }
-    out
+    let (d, borrow) = sub_borrow(&out, &mo.m);
+    select(mask(nonzero(t[8]) | (borrow ^ 1)), &d, &out)
 }
 
 /// Montgomery square `a * a / 2^256 mod m`: the 28 products of different limbs
@@ -201,24 +220,17 @@ fn mont_sqr(a: &Limbs, mo: &Modulus) -> Limbs {
             t[i + j] = s;
             carry = c;
         }
-        let mut k = i + 8;
-        while carry != 0 {
-            if k == 16 {
-                top += carry;
-                break;
-            }
-            let (s, c) = t[k].overflowing_add(carry);
-            t[k] = s;
+        for word in t[i + 8..].iter_mut() {
+            let (s, c) = word.overflowing_add(carry);
+            *word = s;
             carry = c as u32;
-            k += 1;
         }
+        top += carry;
     }
     let mut out = [0u32; 8];
     out.copy_from_slice(&t[8..]);
-    if top != 0 || geq(&out, &mo.m) {
-        out = sub_raw(&out, &mo.m).0;
-    }
-    out
+    let (d, borrow) = sub_borrow(&out, &mo.m);
+    select(mask(nonzero(top) | (borrow ^ 1)), &d, &out)
 }
 
 fn to_mont(a: &Limbs, mo: &Modulus) -> Limbs {
@@ -411,8 +423,8 @@ fn nibble(k: &Limbs, window: usize) -> usize {
     (k[window / 8] >> (4 * (window % 8)) & 0xf) as usize
 }
 
-/// `k * point`, `k` a scalar of at most 256 bits, in windows of four bits.
-fn multiply(point: &Jacobian, k: &Limbs) -> Jacobian {
+/// `k * point` for a public `k`, in windows of four bits.
+fn multiply_vartime(point: &Jacobian, k: &Limbs) -> Jacobian {
     let mut table = [INFINITY; 16];
     table[1] = *point;
     table[2] = double(point);
@@ -434,7 +446,7 @@ fn multiply(point: &Jacobian, k: &Limbs) -> Jacobian {
 
 /// `k * G` from the tables: the low and the high half of `k` share their
 /// doublings.
-fn multiply_generator(k: &Limbs) -> Jacobian {
+fn multiply_generator_vartime(k: &Limbs) -> Jacobian {
     let mut result = INFINITY;
     for window in (0..32).rev() {
         for _ in 0..4 {
@@ -453,6 +465,186 @@ fn multiply_generator(k: &Limbs) -> Jacobian {
 }
 
 include!("p256_tables.rs");
+
+/// A point with homogeneous projective coordinates in the field's Montgomery
+/// form, for the formulas that are complete: they hold for every pair of
+/// points, the point at infinity `(0 : 1 : 0)` and a point added to itself
+/// included, so a scalar multiplication needs no branch to go round them.
+#[derive(Clone, Copy)]
+struct Projective {
+    x: Limbs,
+    y: Limbs,
+    z: Limbs,
+}
+
+const IDENTITY: Projective = Projective { x: [0; 8], y: P_R, z: [0; 8] };
+
+/// `p + q`: Renes, Costello and Batina's Algorithm 4 for `a = -3`.
+fn complete_add(p: &Projective, q: &Projective) -> Projective {
+    let t0 = fmul(&p.x, &q.x);
+    let t1 = fmul(&p.y, &q.y);
+    let t2 = fmul(&p.z, &q.z);
+    let t3 = fadd(&p.x, &p.y);
+    let t4 = fadd(&q.x, &q.y);
+    let t3 = fmul(&t3, &t4);
+    let t4 = fadd(&t0, &t1);
+    let t3 = fsub(&t3, &t4);
+    let t4 = fadd(&p.y, &p.z);
+    let x3 = fadd(&q.y, &q.z);
+    let t4 = fmul(&t4, &x3);
+    let x3 = fadd(&t1, &t2);
+    let t4 = fsub(&t4, &x3);
+    let x3 = fadd(&p.x, &p.z);
+    let y3 = fadd(&q.x, &q.z);
+    let x3 = fmul(&x3, &y3);
+    let y3 = fadd(&t0, &t2);
+    let y3 = fsub(&x3, &y3);
+    let z3 = fmul(&B_MONT, &t2);
+    let x3 = fsub(&y3, &z3);
+    let z3 = fadd(&x3, &x3);
+    let x3 = fadd(&x3, &z3);
+    let z3 = fsub(&t1, &x3);
+    let x3 = fadd(&t1, &x3);
+    let y3 = fmul(&B_MONT, &y3);
+    let t1 = fadd(&t2, &t2);
+    let t2 = fadd(&t1, &t2);
+    let y3 = fsub(&y3, &t2);
+    let y3 = fsub(&y3, &t0);
+    let t1 = fadd(&y3, &y3);
+    let y3 = fadd(&t1, &y3);
+    let t1 = fadd(&t0, &t0);
+    let t0 = fadd(&t1, &t0);
+    let t0 = fsub(&t0, &t2);
+    let t1 = fmul(&t4, &y3);
+    let t2 = fmul(&t0, &y3);
+    let y3 = fmul(&x3, &z3);
+    let y3 = fadd(&y3, &t2);
+    let x3 = fmul(&t3, &x3);
+    let x3 = fsub(&x3, &t1);
+    let z3 = fmul(&t4, &z3);
+    let t1 = fmul(&t3, &t0);
+    let z3 = fadd(&z3, &t1);
+    Projective { x: x3, y: y3, z: z3 }
+}
+
+/// `2 * p`: the same authors' Algorithm 6 for `a = -3`.
+fn complete_double(p: &Projective) -> Projective {
+    let t0 = fsqr(&p.x);
+    let t1 = fsqr(&p.y);
+    let t2 = fsqr(&p.z);
+    let t3 = fmul(&p.x, &p.y);
+    let t3 = fadd(&t3, &t3);
+    let z3 = fmul(&p.x, &p.z);
+    let z3 = fadd(&z3, &z3);
+    let y3 = fmul(&B_MONT, &t2);
+    let y3 = fsub(&y3, &z3);
+    let x3 = fadd(&y3, &y3);
+    let y3 = fadd(&x3, &y3);
+    let x3 = fsub(&t1, &y3);
+    let y3 = fadd(&t1, &y3);
+    let y3 = fmul(&x3, &y3);
+    let x3 = fmul(&x3, &t3);
+    let t3 = fadd(&t2, &t2);
+    let t2 = fadd(&t2, &t3);
+    let z3 = fmul(&B_MONT, &z3);
+    let z3 = fsub(&z3, &t2);
+    let z3 = fsub(&z3, &t0);
+    let t3 = fadd(&z3, &z3);
+    let z3 = fadd(&z3, &t3);
+    let t3 = fadd(&t0, &t0);
+    let t0 = fadd(&t3, &t0);
+    let t0 = fsub(&t0, &t2);
+    let t0 = fmul(&t0, &z3);
+    let y3 = fadd(&y3, &t0);
+    let t0 = fmul(&p.y, &p.z);
+    let t0 = fadd(&t0, &t0);
+    let z3 = fmul(&t0, &z3);
+    let x3 = fsub(&x3, &z3);
+    let z3 = fmul(&t0, &t1);
+    let z3 = fadd(&z3, &z3);
+    let z3 = fadd(&z3, &z3);
+    Projective { x: x3, y: y3, z: z3 }
+}
+
+/// 1 where the two numbers are equal, and 0 where they are not.
+#[inline(always)]
+fn equal(a: usize, b: usize) -> u32 {
+    let d = (a ^ b) as u32;
+    nonzero(d) ^ 1
+}
+
+/// Entry `n` of `table`, picked by looking at every entry.
+fn pick(table: &[Projective; 16], n: usize) -> Projective {
+    let mut out = IDENTITY;
+    for (j, entry) in table.iter().enumerate() {
+        let m = mask(equal(j, n));
+        out.x = select(m, &entry.x, &out.x);
+        out.y = select(m, &entry.y, &out.y);
+        out.z = select(m, &entry.z, &out.z);
+    }
+    out
+}
+
+/// Entry `n` of a table of the multiples `1..=15` of a point, as affine
+/// coordinates, the point at infinity for a 0, picked by looking at every
+/// entry.
+fn pick_affine(table: &[[Limbs; 2]; 15], n: usize) -> Projective {
+    let mut x = [0u32; 8];
+    let mut y = [0u32; 8];
+    for (j, entry) in table.iter().enumerate() {
+        let m = mask(equal(j + 1, n));
+        x = select(m, &entry[0], &x);
+        y = select(m, &entry[1], &y);
+    }
+    let live = mask(nonzero(n as u32));
+    Projective { x, y: select(live, &y, &P_R), z: select(live, &P_R, &[0; 8]) }
+}
+
+/// `k * point` for a secret `k` of at most 256 bits: four doublings and one
+/// addition for each of 64 windows, whatever the windows hold.
+fn multiply(point: &Projective, k: &Limbs) -> Projective {
+    let mut table = [IDENTITY; 16];
+    table[1] = *point;
+    for j in 2..16 {
+        table[j] = if j % 2 == 0 { complete_double(&table[j / 2]) } else { complete_add(&table[j - 1], point) };
+    }
+    let mut result = IDENTITY;
+    for window in (0..64).rev() {
+        for _ in 0..4 {
+            result = complete_double(&result);
+        }
+        result = complete_add(&result, &pick(&table, nibble(k, window)));
+    }
+    result
+}
+
+/// `k * G` for a secret `k` from the tables, with the low and the high half of
+/// `k` sharing their doublings.
+fn multiply_generator(k: &Limbs) -> Projective {
+    let mut result = IDENTITY;
+    for window in (0..32).rev() {
+        for _ in 0..4 {
+            result = complete_double(&result);
+        }
+        result = complete_add(&result, &pick_affine(&LOW, nibble(k, window)));
+        result = complete_add(&result, &pick_affine(&HIGH, nibble(k, window + 32)));
+    }
+    result
+}
+
+fn to_affine_projective(p: &Projective) -> Option<Point> {
+    if is_zero(&p.z) {
+        return None;
+    }
+    let zi = invert_field(&p.z);
+    let x = fmul(&p.x, &zi);
+    let y = fmul(&p.y, &zi);
+    Some(Point { x: to_bytes(&from_mont(&x, &FIELD)), y: to_bytes(&from_mont(&y, &FIELD)) })
+}
+
+fn projective(p: &Point) -> Projective {
+    Projective { x: to_mont(&from_bytes(&p.x), &FIELD), y: to_mont(&from_bytes(&p.y), &FIELD), z: FIELD.one }
+}
 
 fn to_affine(p: &Jacobian) -> Option<Point> {
     if is_zero(&p.z) {
@@ -490,7 +682,7 @@ pub fn public_key(d: &[u8; 32]) -> Option<Point> {
     if !valid_scalar(d) {
         return None;
     }
-    to_affine(&multiply_generator(&from_bytes(d)))
+    to_affine_projective(&multiply_generator(&from_bytes(d)))
 }
 
 /// The x coordinate of `d` times `peer`, which has to be on the curve.
@@ -498,13 +690,14 @@ pub fn ecdh(d: &[u8; 32], peer: &Point) -> Option<[u8; 32]> {
     if !valid_scalar(d) || !on_curve(peer) {
         return None;
     }
-    to_affine(&multiply(&affine(peer), &from_bytes(d))).map(|p| p.x)
+    to_affine_projective(&multiply(&projective(peer), &from_bytes(d))).map(|p| p.x)
 }
 
 /// `x` reduced modulo the group order, as a hash is for a signature.
 pub fn reduce_order(x: &[u8; 32]) -> [u8; 32] {
     let l = from_bytes(x);
-    to_bytes(&if geq(&l, &N) { sub_raw(&l, &N).0 } else { l })
+    let (d, borrow) = sub_borrow(&l, &N);
+    to_bytes(&select(mask(borrow), &l, &d))
 }
 
 fn order_mul(a: &Limbs, b: &Limbs) -> Limbs {
@@ -518,7 +711,7 @@ pub fn sign(d: &[u8; 32], digest: &[u8; 32], k: &[u8; 32]) -> Option<([u8; 32], 
     if !valid_scalar(d) || !valid_scalar(k) {
         return None;
     }
-    let point = to_affine(&multiply_generator(&from_bytes(k)))?;
+    let point = to_affine_projective(&multiply_generator(&from_bytes(k)))?;
     let r = from_bytes(&reduce_order(&point.x));
     if is_zero(&r) {
         return None;
@@ -547,7 +740,7 @@ pub fn verify(q: &Point, digest: &[u8; 32], r: &[u8; 32], s: &[u8; 32]) -> bool 
     let w = invert_order(&to_mont(&sl, &ORDER));
     let u1 = from_mont(&order_mul(&to_mont(&z, &ORDER), &w), &ORDER);
     let u2 = from_mont(&order_mul(&to_mont(&rl, &ORDER), &w), &ORDER);
-    let sum = add(&multiply_generator(&u1), &multiply(&affine(q), &u2));
+    let sum = add(&multiply_generator_vartime(&u1), &multiply_vartime(&affine(q), &u2));
     let Some(point) = to_affine(&sum) else { return false };
     from_bytes(&reduce_order(&point.x)) == rl
 }

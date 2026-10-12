@@ -19,6 +19,11 @@ first: an ECDSA signature of a SHA-256 hash (in DER), an HMAC-SHA256 with the
 key's 32 raw bytes, and the public key (`SubjectPublicKeyInfo`). The key itself
 is never answered, nor is a key generated or its usage set.
 
+The P-256 arithmetic takes the same steps for every secret scalar, so the
+time of a signature or a key agreement says nothing of the key or of the
+per-signature secret. The AES the TPM uses for its blobs and for parameter
+encryption looks its S-box up by secret bytes, and is not yet as careful.
+
 A key's status says what it may no longer be asked, and a lock holds until the
 next boot. Reading, generating and setting the usage are locked from the start.
 UEFI signs the records of its variable store with the key ([uefi.md](uefi.md#the-variable-store)),
