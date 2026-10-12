@@ -161,6 +161,7 @@ jobs:
             out/crypto.efi
             out/persist.efi
             out/linux-test.efi
+            out/linux-acpi-test.efi
             out/hello.efi
             out/watchdog-hang.efi
             out/watchdog-exit.efi

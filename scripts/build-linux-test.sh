@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# Build out/linux-test.efi: Debian's arm64 kernel and a busybox initramfs
-# (uefi/test-apps/linux/init) in a unified kernel image, signed with the test
-# key, which scenarios/linux.yaml boots to see the firmware from a running
-# Linux. Needs what scripts/build-uefi.sh --test-keys --test-apps does, and
-# sbsign, xz, ar, tar and cpio's gzip.
+# Build out/linux-test.efi and out/linux-acpi-test.efi: Debian's arm64 kernel
+# and a busybox initramfs (uefi/test-apps/linux/init) in a unified kernel
+# image, signed with the test key, which scenarios/linux.yaml and
+# scenarios/linux-acpi.yaml boot to see the firmware from a running Linux,
+# with the device tree and with the ACPI tables. Needs what
+# scripts/build-uefi.sh --test-keys --test-apps does, and sbsign, xz, ar, tar
+# and cpio's gzip.
 set -euo pipefail
 
 KERNEL_URL="${KERNEL_URL:-https://deb.debian.org/debian/pool/main/l/linux/linux-image-6.12.107+deb13-arm64-unsigned_6.12.107-1_arm64.deb}"
@@ -72,10 +74,13 @@ printf 'ID=test\nNAME="Test"\nPRETTY_NAME="Test OS"\nVERSION_ID=1\n' >"$root/etc
 xz -dc "$tmp"/kernel/usr/lib/modules/*/kernel/fs/efivarfs/efivarfs.ko.xz >"$root/efivarfs.ko"
 xz -dc "$tmp"/kernel/usr/lib/modules/*/kernel/drivers/watchdog/bcm2835_wdt.ko.xz >"$root/bcm2835_wdt.ko"
 mkdir -p "$root/modules"
-# The reset controller xhci-pci waits for, then what `modprobe --show-depends xhci_pci usb_storage sd_mod` gives for this kernel, in load order.
-for module in reset-raspberrypi usb-common usbcore xhci-hcd xhci-pci scsi_common scsi_mod usb-storage sd_mod; do
-  xz -dc "$tmp"/kernel/usr/lib/modules/*/kernel/drivers/*/*/"$module".ko.xz >"$root/modules/$module.ko" 2>/dev/null \
-    || xz -dc "$tmp"/kernel/usr/lib/modules/*/kernel/drivers/*/"$module".ko.xz >"$root/modules/$module.ko"
+# The reset controller xhci-pci waits for, then what `modprobe --show-depends xhci_pci usb_storage sd_mod` gives for this kernel, in load order;
+# then what the SD host and the network interface need, for the boot that describes the board with the ACPI tables.
+for module in reset-raspberrypi usb-common usbcore xhci-hcd xhci-pci scsi_common scsi_mod usb-storage sd_mod \
+    sdhci sdhci-pltfm sdhci-iproc libphy fwnode_mdio fixed_phy of_mdio mdio-bcm-unimac genet; do
+  path="$(find "$tmp"/kernel/usr/lib/modules -name "$module.ko.xz" | head -n 1)"
+  [ -n "$path" ] || { echo "this kernel has no module $module: list what its drivers need with modprobe --show-depends" >&2; exit 1; }
+  xz -dc "$path" >"$root/modules/$module.ko"
 done
 cp "$tmp/tpm-vpu/tpm_vpu.ko" "$root/tpm_vpu.ko"
 cp "$here/uefi/test-apps/linux/init" "$root/init"
@@ -85,7 +90,14 @@ chmod +x "$root/init"
 sbsign --key "$keys/db.key" --cert "$keys/db.crt" --output "$tmp/vmlinuz.signed" "$tmp"/kernel/boot/vmlinuz-* 2>/dev/null
 printf 'ID=test\nNAME="Test"\nPRETTY_NAME="Test OS"\nVERSION_ID=1\n' >"$tmp/osrel"
 printf 'console=ttyAMA0,115200 earlycon=pl011,0xfe201000 rdinit=/init panic=-1 ignore_loglevel printk.devkmsg=on maxcpus=2' >"$tmp/cmdline"
-"$here/scripts/mkuki.py" "$tmp/stub/usr/lib/systemd/boot/efi/linuxaa64.efi.stub" "$tmp/uki.efi" \
-  --section .osrel="$tmp/osrel" --section .cmdline="$tmp/cmdline" --section .linux="$tmp/vmlinuz.signed" --section .initrd="$tmp/initrd.gz"
-sbsign --key "$keys/db.key" --cert "$keys/db.crt" --output "$out/linux-test.efi" "$tmp/uki.efi" 2>/dev/null
-ls -l "$out/linux-test.efi"
+# The same kernel and initramfs twice: told to describe the board with its
+# device tree, as it does by default and with two cores, and with the ACPI
+# tables (acpi=on) and all four.
+for name in linux-test linux-acpi-test; do
+  cp "$tmp/cmdline" "$tmp/cmdline.$name"
+  [ "$name" = linux-test ] || sed -i 's/ maxcpus=2/ acpi=on/' "$tmp/cmdline.$name"
+  "$here/scripts/mkuki.py" "$tmp/stub/usr/lib/systemd/boot/efi/linuxaa64.efi.stub" "$tmp/uki.efi" \
+    --section .osrel="$tmp/osrel" --section .cmdline="$tmp/cmdline.$name" --section .linux="$tmp/vmlinuz.signed" --section .initrd="$tmp/initrd.gz"
+  sbsign --key "$keys/db.key" --cert "$keys/db.crt" --output "$out/$name.efi" "$tmp/uki.efi" 2>/dev/null
+  ls -l "$out/$name.efi"
+done
