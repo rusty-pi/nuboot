@@ -8,7 +8,9 @@ board's device tree, and starts the ARM in them:
 
 1. It puts `pi4-uefi.bin` at ARM physical 0, where the cores come out of
    reset, and the device tree at `0xF0_0000` with `/memory@0` filled in from
-   the board's SDRAM. The ARM gets everything below `0x3EC0_0000`, where the
+   the board's SDRAM, a `vpu-tpm` node ([os-image.md](os-image.md)) and the
+   Ethernet controller's `local-mac-address`: `02:` and five bytes of a hash of
+   the board's serial number, the same at every boot. The ARM gets everything below `0x3EC0_0000`, where the
    VPU firmware's own memory starts, and all the memory above 1 GiB.
 2. `pi4-uefi.bin` (`uefi/stub/`) starts with an armstub: each core sets up
    the local timer, the generic timer, the GIC and EL3's controls, and drops
@@ -276,7 +278,8 @@ pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed b
 - `pi4-uefi.bin` is linked at 0 and the payload at `0x100_0000`; neither is
   relocatable.
 - The device tree is Raspberry Pi's for the Pi 4B whatever the board, with
-  nothing filled in but `/memory@0`.
+  nothing filled in but `/memory@0`, the TPM's node and the Ethernet address,
+  which is not the one Raspberry Pi's firmware gives the board.
 - Nothing sets the ARM's clock.
 - Nothing reads `BootOrder`: the boot is always the removable-media path.
 - `dbx` holds image hashes only; a certificate in it is ignored.

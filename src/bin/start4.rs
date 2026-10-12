@@ -102,11 +102,13 @@ fn firmware_main() -> ! {
         if handover::present() { handover::sdram_mib() } else { 0 },
     );
     usb::bring_up(&board);
-    let started = match arm::start(ARM_IMAGE, ARM_TREE) {
+    let started = match arm::start(ARM_IMAGE, ARM_TREE, board.serial) {
         Ok(started) => {
             info!("arm", "ARM started in UEFI";
                 image_bytes = started.image_bytes, tree = format_args!("{:#x}", arm::TREE_ADDR),
-                tree_bytes = started.tree_bytes, memory_mib = started.memory_mib);
+                tree_bytes = started.tree_bytes, memory_mib = started.memory_mib,
+                ethernet = format_args!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", started.ethernet[0], started.ethernet[1],
+                    started.ethernet[2], started.ethernet[3], started.ethernet[4], started.ethernet[5]));
             true
         }
         Err(arm::Error::Tree) => {

@@ -88,29 +88,54 @@ pub struct Started {
     pub image_bytes: usize,
     pub tree_bytes: usize,
     pub memory_mib: u64,
+    pub ethernet: [u8; 6],
 }
 
-/// Put `image` at ARM physical 0 and `tree`, with the board's memory filled
-/// in, at [`TREE_ADDR`], then let the cores out of reset.
-pub fn start(image: &[u8], tree: &[u8]) -> Result<Started, Error> {
+const ETHERNET_NODE: &[&[u8]] = &[b"", b"scb", b"ethernet@7d580000"];
+
+/// The address the network interface gets, which is the same at every boot of
+/// a board: locally administered and unicast, from the board's serial number.
+pub fn ethernet_address(serial: u32) -> [u8; 6] {
+    let mut message = [0u8; 32];
+    let label = b"pi4-server-firmware ethernet";
+    message[..label.len()].copy_from_slice(label);
+    message[label.len()..label.len() + 4].copy_from_slice(&serial.to_le_bytes());
+    let digest = crate::sha256::digest(&message[..label.len() + 4]);
+    [0x02, digest[0], digest[1], digest[2], digest[3], digest[4]]
+}
+
+/// Put `image` at ARM physical 0 and `tree`, with the board's memory and
+/// network address filled in, at [`TREE_ADDR`], then let the cores out of
+/// reset.
+pub fn start(image: &[u8], tree: &[u8], serial: u32) -> Result<Started, Error> {
     let total = if handover::present() { handover::sdram_mib() as u64 } else { 1024 } << 20;
     let mut reg = [0u8; MEMORY_REG_MAX];
     let reg_len = memory_reg(total, &mut reg);
-    // The TPM's node goes in first, into the second half of the window, and
-    // the memory's `reg` is set as the tree is copied from there to where it
-    // belongs.
-    let staged = fdt::copy_with_node(
+    let ethernet = ethernet_address(serial);
+    // The tree is copied through the two halves of its window, each copy with
+    // one change: the TPM's node, the network address, and the memory's `reg`.
+    let half = TREE_MAX / 2;
+    let second = TREE_ADDR + half as u32;
+    let with_tpm = fdt::copy_with_node(
         tree,
-        arm_memory(TREE_ADDR + TREE_MAX as u32 / 2, TREE_MAX / 2),
+        arm_memory(TREE_ADDR, half),
         &[b""],
         b"vpu-tpm",
         &[(b"compatible", TPM_COMPATIBLE)],
     )
     .ok_or(Error::Tree)?;
-    let staged: &[u8] = arm_memory(TREE_ADDR + TREE_MAX as u32 / 2, staged);
+    let with_tpm: &[u8] = arm_memory(TREE_ADDR, with_tpm);
+    let with_address = match fdt::copy_with_new_property(with_tpm, arm_memory(second, half), ETHERNET_NODE, b"local-mac-address", &ethernet) {
+        Some(len) => len,
+        None => {
+            arm_memory(second, with_tpm.len()).copy_from_slice(with_tpm);
+            with_tpm.len()
+        }
+    };
+    let with_address: &[u8] = arm_memory(second, with_address);
     let tree_bytes = fdt::copy_with_property(
-        staged,
-        arm_memory(TREE_ADDR, TREE_MAX / 2),
+        with_address,
+        arm_memory(TREE_ADDR, half),
         &[b"", b"memory@0"],
         b"reg",
         &reg[..reg_len],
@@ -132,5 +157,5 @@ pub fn start(image: &[u8], tree: &[u8]) -> Result<Started, Error> {
         .map(|r| u32::from_be_bytes([r[8], r[9], r[10], r[11]]) as u64)
         .sum::<u64>()
         >> 20;
-    Ok(Started { image_bytes: image.len(), tree_bytes, memory_mib })
+    Ok(Started { image_bytes: image.len(), tree_bytes, memory_mib, ethernet })
 }

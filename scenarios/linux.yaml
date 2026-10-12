@@ -50,6 +50,8 @@ milestones:
     line: "linux test: pcr 11 extended"
   - why: "The kernel reads the firmware's event log through the TPM it registered."
     line: "linux test: event log present"
+  - why: "The device tree the OS has gives the network interface an address, locally administered and unicast."
+    line: "linux test: ethernet address 02"
   - why: "systemd-boot told the OS it is the loader."
     line: "linux test: LoaderInfo systemd-boot"
   - why: "systemd-stub told the OS it is the stub, and which entry was started."
