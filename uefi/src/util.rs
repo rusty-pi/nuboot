@@ -59,19 +59,73 @@ pub fn now_us() -> u64 {
 /// model that skips such loops, where one polling the system timer's
 /// registers runs instruction by instruction.
 pub fn counter_us() -> u64 {
-    let (count, freq): (u64, u64);
-    unsafe {
-        core::arch::asm!("isb", "mrs {0}, CNTPCT_EL0", out(reg) count);
-        core::arch::asm!("mrs {0}, CNTFRQ_EL0", out(reg) freq);
+    let freq = frequency();
+    let count = ticks();
+    count / freq * 1_000_000 + count % freq * 1_000_000 / freq
+}
+
+/// The generic timer's count.
+pub fn ticks() -> u64 {
+    let count: u64;
+    unsafe { core::arch::asm!("isb", "mrs {0}, CNTPCT_EL0", out(reg) count) };
+    count
+}
+
+/// The generic timer's ticks in a second.
+pub fn frequency() -> u64 {
+    let freq: u64;
+    unsafe { core::arch::asm!("mrs {0}, CNTFRQ_EL0", out(reg) freq) };
+    freq.max(1)
+}
+
+/// The ticks of `us` microseconds.
+pub fn ticks_of(us: u64) -> u64 {
+    let freq = frequency();
+    us / 1_000_000 * freq + us % 1_000_000 * freq / 1_000_000
+}
+
+/// A moment, in the generic timer's ticks: what a loop that waits for it
+/// compares the count with and does nothing else.
+#[derive(Clone, Copy)]
+pub struct Deadline(u64);
+
+impl Deadline {
+    pub fn after_us(us: u64) -> Deadline {
+        Deadline(ticks().saturating_add(ticks_of(us)))
     }
-    (count as u128 * 1_000_000 / freq.max(1) as u128) as u64
+
+    pub fn passed(&self) -> bool {
+        ticks() >= self.0
+    }
+
+    /// Microseconds to go, none once it has passed.
+    pub fn left_us(&self) -> u64 {
+        let now = ticks();
+        if now >= self.0 { 0 } else { (self.0 - now) / (frequency() / 1_000_000).max(1) }
+    }
+}
+
+/// Spin until the count reaches `until`. The loop's only moving register is
+/// the ticks left, which falls to zero the way a timeout does: a model that
+/// parks a core in a loop like that can skip the wait.
+fn spin_until(until: u64) {
+    unsafe {
+        core::arch::asm!(
+            "2:",
+            "isb",
+            "mrs {now}, cntpct_el0",
+            "subs {left}, {until}, {now}",
+            "b.hi 2b",
+            until = in(reg) until,
+            now = out(reg) _,
+            left = out(reg) _,
+            options(nomem, nostack),
+        );
+    }
 }
 
 pub fn delay_us(us: u64) {
-    let until = counter_us() + us;
-    while counter_us() < until {
-        core::hint::spin_loop();
-    }
+    spin_until(Deadline::after_us(us).0);
 }
 
 /// How long `wait_for` waits between checks.
@@ -79,16 +133,15 @@ pub const POLL_US: u64 = 20;
 
 /// Wait up to `timeout_us` for `done`; whether it came true.
 pub fn wait_for(timeout_us: u64, mut done: impl FnMut() -> bool) -> bool {
-    let until = counter_us() + timeout_us;
+    let until = Deadline::after_us(timeout_us);
     loop {
         if done() {
             return true;
         }
-        let now = counter_us();
-        if now >= until {
+        if until.passed() {
             return done();
         }
-        delay_us(POLL_US.min(until - now));
+        delay_us(POLL_US.min(until.left_us()));
     }
 }
 
@@ -156,14 +209,26 @@ pub fn upper(c: u16) -> u16 {
     if (b'a' as u16..=b'z' as u16).contains(&c) { c - 32 } else { c }
 }
 
-/// The CRC-32 the EFI tables carry.
+/// The CRC-32 the EFI tables carry, a byte at a time.
 pub fn crc32(data: &[u8]) -> u32 {
+    const TABLE: [u32; 256] = {
+        let mut table = [0u32; 256];
+        let mut n = 0;
+        while n < 256 {
+            let mut c = n as u32;
+            let mut k = 0;
+            while k < 8 {
+                c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+                k += 1;
+            }
+            table[n] = c;
+            n += 1;
+        }
+        table
+    };
     let mut crc = !0u32;
     for &b in data {
-        crc ^= b as u32;
-        for _ in 0..8 {
-            crc = (crc >> 1) ^ (0xEDB8_8320 & (!(crc & 1)).wrapping_add(1));
-        }
+        crc = TABLE[((crc ^ b as u32) & 0xff) as usize] ^ (crc >> 8);
     }
     !crc
 }

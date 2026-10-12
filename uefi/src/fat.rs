@@ -44,6 +44,10 @@ pub struct Fs {
     label: [u8; 11],
     /// The 4 KiB of the FAT read last: its offset and its bytes.
     cache: (u64, Vec<u8>),
+    /// Where a read of a chain stopped: the chain's first cluster, the index
+    /// of the cluster it stopped in and that cluster. The next read of the
+    /// chain from there on goes on from it, not from the start.
+    walk: (u32, u64, u32),
 }
 
 /// A directory entry, or the root directory.
@@ -109,9 +113,11 @@ impl Fs {
 
     /// Read `buf.len()` bytes from `pos` of the chain starting at `first`.
     fn read_chain(&mut self, first: u32, pos: u64, buf: &mut [u8]) -> Result<(), ()> {
-        let mut c = first;
-        for _ in 0..pos / self.cluster_size {
+        let target = pos / self.cluster_size;
+        let (mut c, mut index) = if self.walk.0 == first && self.walk.1 <= target { (self.walk.2, self.walk.1) } else { (first, 0) };
+        while index < target {
             c = self.next(c).ok_or(())?;
+            index += 1;
         }
         let mut skip = pos % self.cluster_size;
         let mut done = 0usize;
@@ -123,6 +129,7 @@ impl Fs {
                 match self.next(c) {
                     Some(n) if n == c + 1 => {
                         c = n;
+                        index += 1;
                         len += self.cluster_size;
                     }
                     _ => break,
@@ -134,8 +141,10 @@ impl Fs {
             skip = 0;
             if done < buf.len() {
                 c = self.next(c).ok_or(())?;
+                index += 1;
             }
         }
+        self.walk = (first, index, c);
         Ok(())
     }
 
@@ -310,6 +319,7 @@ pub fn mount(vol: &'static Volume) {
         fsinfo: if kind == Kind::Fat32 { w(48) } else { 0 },
         label,
         cache: (0, Vec::new()),
+        walk: (0, 0, 0),
     }));
     debug!("fat", "file system found"; clusters = clusters, cluster_size = fs.cluster_size,
         path = crate::devpath::Text(&vol.path));
@@ -767,6 +777,7 @@ impl Fs {
     fn store_fat(&mut self, old: &[u8], new: &[u8]) -> Result<(), efi::Status> {
         const PIECE: usize = 512;
         self.cache = (0, Vec::new());
+        self.walk = (0, 0, 0);
         let mut at = 0;
         while at < new.len() {
             let end = (at + PIECE).min(new.len());
@@ -872,6 +883,7 @@ impl Fs {
             at = end;
         }
         self.cache = (0, Vec::new());
+        self.walk = (0, 0, 0);
         Ok(())
     }
 

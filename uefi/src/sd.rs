@@ -156,9 +156,9 @@ impl Sd {
         let hcs = if v2 { 1 << 30 } else { 0 };
         // A card that does not answer ACMD41 at all is no card.
         let mut ocr = sd.app_command(41, hcs | 0x00ff_8000, R3)?[0];
-        let until = crate::util::counter_us() + 1_000_000;
+        let until = crate::util::Deadline::after_us(1_000_000);
         while ocr & (1 << 31) == 0 {
-            if crate::util::counter_us() > until {
+            if until.passed() {
                 return Err(Error::Timeout);
             }
             crate::util::delay_us(10_000);

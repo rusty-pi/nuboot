@@ -319,14 +319,14 @@ impl Xhci {
     }
 
     fn wait_event(&mut self, timeout_us: u64, want: impl Fn(&[u32; 4]) -> bool) -> Result<[u32; 4], Error> {
-        let until = counter_us() + timeout_us;
+        let until = crate::util::Deadline::after_us(timeout_us);
         loop {
             while let Some(e) = self.next_event() {
                 if want(&e) {
                     return Ok(e);
                 }
             }
-            if counter_us() > until {
+            if until.passed() {
                 return Err(Error::Timeout);
             }
             delay_us(POLL_US);

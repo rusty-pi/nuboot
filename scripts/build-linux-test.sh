@@ -67,7 +67,7 @@ chmod +x "$root/init"
 
 sbsign --key "$keys/db.key" --cert "$keys/db.crt" --output "$tmp/vmlinuz.signed" "$tmp"/kernel/boot/vmlinuz-* 2>/dev/null
 printf 'ID=test\nNAME="Test"\nPRETTY_NAME="Test OS"\nVERSION_ID=1\n' >"$tmp/osrel"
-printf 'console=ttyAMA0,115200 earlycon=pl011,0xfe201000 rdinit=/init panic=-1 ignore_loglevel printk.devkmsg=on' >"$tmp/cmdline"
+printf 'console=ttyAMA0,115200 earlycon=pl011,0xfe201000 rdinit=/init panic=-1 ignore_loglevel printk.devkmsg=on maxcpus=2' >"$tmp/cmdline"
 "$here/scripts/mkuki.py" "$tmp/stub/usr/lib/systemd/boot/efi/linuxaa64.efi.stub" "$tmp/uki.efi" \
   --section .osrel="$tmp/osrel" --section .cmdline="$tmp/cmdline" --section .linux="$tmp/vmlinuz.signed" --section .initrd="$tmp/initrd.gz"
 sbsign --key "$keys/db.key" --cert "$keys/db.crt" --output "$out/linux-test.efi" "$tmp/uki.efi" 2>/dev/null
