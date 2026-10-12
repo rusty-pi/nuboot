@@ -156,15 +156,18 @@ fn answer(bus: u32, runtime: bool) {
                 for (n, byte) in guid.iter_mut().enumerate() {
                     *byte = (word(value + 4 + n as u32 / 4) >> (8 * (n % 4))) as u8;
                 }
-                let total = 16 + name_bytes.next_multiple_of(4) + data_bytes;
-                let status = if name_bytes <= 512 && data_bytes <= varstore::MAX_RECORD && total <= room as usize {
-                    let scratch = store_buffer();
+                let status = if name_bytes <= 512 && data_bytes <= varstore::MAX_SIGNED_DATA {
                     let data_at = name_bytes.next_multiple_of(4);
-                    for (n, byte) in scratch[..data_at + data_bytes].iter_mut().enumerate() {
-                        *byte = (word(value + 8 + n as u32 / 4) >> (8 * (n % 4))) as u8;
+                    if 32 + data_at + data_bytes <= room as usize && data_at + data_bytes <= store_buffer().len() {
+                        let scratch = store_buffer();
+                        for (n, byte) in scratch[..data_at + data_bytes].iter_mut().enumerate() {
+                            *byte = (word(value + 8 + n as u32 / 4) >> (8 * (n % 4))) as u8;
+                        }
+                        let (name, data) = scratch.split_at(data_at);
+                        store_status(varstore::persist(kind, attributes, &guid, &name[..name_bytes], &data[..data_bytes]))
+                    } else {
+                        1
                     }
-                    let (name, data) = scratch.split_at(data_at);
-                    store_status(varstore::persist(kind, attributes, &guid, &name[..name_bytes], &data[..data_bytes]))
                 } else {
                     1
                 };
@@ -232,7 +235,8 @@ fn answer(bus: u32, runtime: bool) {
                 }
                 let mut der = [0u8; 72];
                 let (status, len) = match if length == 32 { crypto::sign(id, &hash, &mut der) } else { Err(crypto::ERR_EINVAL) } {
-                    Ok(len) => (0, len),
+                    Ok(len) if 8 + len <= room as usize => (0, len),
+                    Ok(_) => (crypto::ERROR | crypto::ERR_EINVAL, 0),
                     Err(code) => (crypto::ERROR | code, 0),
                 };
                 set(value, status);

@@ -32,3 +32,7 @@ milestones:
     line: "runtime test: the deleted variable is gone ok"
   - why: "The signed update took effect at the boot after."
     line: "runtime test: db holds the certificate the signed update added ok"
+  - why: "The VPU signed the OS's deletion of SecureBoot, which asked for it over the mailbox itself, and it did not take effect."
+    line: "runtime test: SecureBoot is still there ok"
+  - why: "The OS's deletion of a variable the boot chain keeps hidden from it, made by creating one of the same name, did not take effect either."
+    line: "runtime test: the hidden variable is still there ok"

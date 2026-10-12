@@ -30,6 +30,8 @@ pub const DELETE: u32 = 2;
 /// The most a record is: UEFI keeps variables of up to 16 KiB.
 pub const MAX_RECORD: usize = 20 * 1024;
 const MAX_NAME_UNITS: usize = 256;
+/// The most data the VPU signs for the OS.
+pub const MAX_SIGNED_DATA: usize = 16 * 1024;
 
 const NV: u32 = 1;
 const BS: u32 = 2;
@@ -83,8 +85,67 @@ fn first_erased(from: u32, end: u32) -> u32 {
     end
 }
 
-/// Each record of the active bank: its start and its header, in order, and
-/// the end of the log.
+/// The length of the intact record at `at`, in a bank that ends at `end`: its
+/// framing, sizes and SHA-256 are the ones UEFI checks.
+fn record_len(at: u32, end: u32) -> Option<u32> {
+    let mut head = [0u8; RECORD_HEADER];
+    if at.checked_add(RECORD_HEADER as u32)? > end {
+        return None;
+    }
+    spi_flash::read(at, &mut head);
+    let total = u32_at(&head, 4) as usize;
+    if u32_at(&head, 0) != RECORD_MAGIC
+        || total < RECORD_HEADER + DIGEST
+        || total > MAX_RECORD
+        || total % 4 != 0
+        || at as usize + total > end as usize
+    {
+        return None;
+    }
+    let content = RECORD_HEADER as u64 + 2 * u32_at(&head, 48) as u64 + u32_at(&head, 52) as u64 + u32_at(&head, 56) as u64;
+    if content > (total - DIGEST) as u64 {
+        return None;
+    }
+    let mut hash = Sha256::new();
+    let mut chunk = [0u8; 128];
+    let mut done = 0;
+    while done < total - DIGEST {
+        let n = (total - DIGEST - done).min(chunk.len());
+        spi_flash::read(at + done as u32, &mut chunk[..n]);
+        hash.update(&chunk[..n]);
+        done += n;
+    }
+    let mut stored = [0u8; DIGEST];
+    spi_flash::read(at + (total - DIGEST) as u32, &mut stored);
+    (hash.finish() == stored).then_some(total as u32)
+}
+
+/// The first intact record at or after `from`: what comes after a record that
+/// is not, such as one cut short by a power loss.
+fn find_record(from: u32, end: u32) -> Option<u32> {
+    let mut at = from.next_multiple_of(4);
+    let mut chunk = [0u8; 256];
+    while at + 8 <= end {
+        let n = (end - at).min(chunk.len() as u32) as usize;
+        spi_flash::read(at, &mut chunk[..n]);
+        let mut i = 0;
+        while i + 8 <= n {
+            if u32_at(&chunk, i) == RECORD_MAGIC && record_len(at + i as u32, end).is_some() {
+                return Some(at + i as u32);
+            }
+            i += 4;
+        }
+        if n < 12 {
+            break;
+        }
+        at += (n as u32 - 4) & !3;
+    }
+    None
+}
+
+/// Each intact record of the active bank: its start and its header, in order,
+/// and the end of the log. A record that is not intact is stepped over to the
+/// next one that is, as UEFI does when it reads the bank.
 fn walk(mut each: impl FnMut(u32, &[u8; RECORD_HEADER])) -> Option<Tail> {
     let seqs = [bank_header(0), bank_header(1)];
     let bank = match (seqs[0], seqs[1]) {
@@ -101,19 +162,20 @@ fn walk(mut each: impl FnMut(u32, &[u8; RECORD_HEADER])) -> Option<Tail> {
         if u32_at(&head, 0) == 0xffff_ffff {
             break;
         }
-        let total = u32_at(&head, 4) as usize;
-        if u32_at(&head, 0) != RECORD_MAGIC
-            || total < RECORD_HEADER + DIGEST
-            || total > MAX_RECORD
-            || total % 4 != 0
-            || at as usize + total > end as usize
-        {
-            at = first_erased(at + 4, end);
-            break;
+        match record_len(at, end) {
+            Some(total) => {
+                spi_flash::read(at, &mut head);
+                each(at, &head);
+                at += total;
+            }
+            None => match find_record(at + 4, end) {
+                Some(next) => at = next,
+                None => {
+                    at = first_erased(at + 4, end);
+                    break;
+                }
+            },
         }
-        spi_flash::read(at, &mut head);
-        each(at, &head);
-        at += total as u32;
     }
     Some(Tail { bank, seq: seqs[bank].unwrap_or(0), at })
 }
@@ -126,7 +188,7 @@ fn next_sequence() -> u64 {
         let signed = u32_at(head, 56) as usize == SIGNATURE && u32_at(head, 12) & AUTH == 0;
         if signed {
             let seq = u64::from_le_bytes(head[32..40].try_into().unwrap());
-            next = next.max(seq + 1);
+            next = next.max(seq.saturating_add(1));
         }
     });
     next
@@ -204,18 +266,19 @@ static mut RECORD: [u8; MAX_RECORD] = [0; MAX_RECORD];
 
 /// Sign and append a write of a variable no signature guards: a non-volatile
 /// variable the OS can read, or the deletion of one. `name` is UCS-2, as
-/// bytes.
+/// bytes. The signature is of the runtime domain, which UEFI accepts for these
+/// attributes and no others: what the OS asks the VPU to sign is the OS's own
+/// say, never a firmware variable's.
 pub fn persist(kind: u32, attributes: u32, guid: &[u8; 16], name: &[u8], data: &[u8]) -> Result<(), Error> {
     let units = name.len() / 2;
     if !(kind == SET || kind == DELETE)
         || name.len() % 2 != 0
         || units == 0
         || units > MAX_NAME_UNITS
-        || attributes & NV == 0
-        || attributes & BS == 0
-        || attributes & RT == 0
-        || attributes & AUTH != 0
+        || name.chunks_exact(2).any(|unit| unit == [0, 0])
+        || attributes != NV | BS | RT
         || (kind == DELETE && !data.is_empty())
+        || data.len() > MAX_SIGNED_DATA
     {
         return Err(Error::Refused);
     }
@@ -244,11 +307,13 @@ pub fn persist(kind: u32, attributes: u32, guid: &[u8; 16], name: &[u8], data: &
     record[data_at..data_at + data.len()].copy_from_slice(data);
 
     let mut digest = Sha256::new();
-    digest.update(b"pi4-server-firmware variable store record v2");
+    digest.update(b"pi4-server-firmware runtime variable record v1");
     digest.update(&kind.to_le_bytes());
     digest.update(&attributes.to_le_bytes());
     digest.update(guid);
     digest.update(&time);
+    digest.update(&(units as u32).to_le_bytes());
+    digest.update(&(data.len() as u32).to_le_bytes());
     digest.update(name);
     digest.update(data);
     let (r, s) = keystore::device_sign(&digest.finish()).map_err(|_| Error::NoDeviceKey)?;

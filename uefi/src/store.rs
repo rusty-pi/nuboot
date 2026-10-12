@@ -108,21 +108,6 @@ fn bank_header(bank: usize) -> Option<u32> {
     (u32_at(&head, 0) == BANK_MAGIC).then(|| u32_at(&head, 4))
 }
 
-/// The first page at or after `from` that is erased, so a record cut short
-/// by a power loss is stepped over.
-fn first_erased(from: u32, end: u32) -> u32 {
-    let mut at = from.next_multiple_of(4);
-    let mut page = [0u8; PAGE];
-    while at + PAGE as u32 <= end {
-        spiflash::read(at, &mut page);
-        if page.iter().all(|&b| b == 0xff) {
-            return at;
-        }
-        at += PAGE as u32;
-    }
-    end
-}
-
 /// Whether the store reaches a flash that answers.
 pub fn available() -> bool {
     STATE.get().ready
@@ -131,10 +116,10 @@ pub fn available() -> bool {
 /// Read the active bank's records, oldest first.
 pub fn load() -> Vec<Record> {
     let state = STATE.get();
-    let mut out = Vec::new();
+    let mut out;
     if !spiflash::present() {
         warn!("store", "no flash answers, variables stay in memory");
-        return out;
+        return Vec::new();
     }
     let seqs = [bank_header(0), bank_header(1)];
     let bank = match (seqs[0], seqs[1]) {
@@ -147,44 +132,85 @@ pub fn load() -> Vec<Record> {
             state.seq = 0;
             state.tail = 0;
             info!("store", "flash store is empty");
-            return out;
+            return Vec::new();
         }
     };
-    let start = BANKS[bank] + BANK_HEADER;
-    let end = BANKS[bank] + BANK;
-    let mut at = start;
-    let mut head = [0u8; 8];
-    while at + 8 <= end {
-        spiflash::read(at, &mut head);
-        if u32_at(&head, 0) == 0xffff_ffff {
-            break;
-        }
-        let total = u32_at(&head, 4) as usize;
-        let record = (u32_at(&head, 0) == RECORD_MAGIC && total <= MAX_RECORD && at as usize + total <= end as usize && total % 4 == 0)
-            .then(|| {
-                let mut b = alloc::vec![0u8; total];
-                spiflash::read(at, &mut b);
-                Record::decode(&b)
-            })
-            .flatten();
-        match record {
-            Some(r) => {
-                at += total as u32;
-                out.push(r);
-            }
-            None => {
-                warn!("store", "record unreadable, log ends here"; at = at);
-                at = first_erased(at + 4, end);
-                break;
-            }
-        }
-    }
+    let mut image = alloc::vec![0xffu8; BANK as usize];
+    spiflash::read(BANKS[bank], &mut image);
+    let (records, tail, damaged) = parse(&image);
+    out = records;
+    let used = tail as u32 - BANK_HEADER;
     state.ready = true;
     state.bank = bank;
     state.seq = seqs[bank].unwrap_or(0);
-    state.tail = at;
-    info!("store", "flash store loaded"; records = out.len(), bank = bank, used = at - start);
+    state.tail = BANKS[bank] + tail as u32;
+    info!("store", "flash store loaded"; records = out.len(), bank = bank, used = used, damaged = damaged);
+    if damaged {
+        warn!("store", "a record was unreadable, the store moves to the other bank without it");
+        let other = 1 - bank;
+        let seq = state.seq.wrapping_add(1).max(1);
+        match write_bank(other, seq, &out) {
+            Some(tail) => *state = State { ready: true, bank: other, seq, tail },
+            None => warn!("store", "the store did not move, what is after the damage is read again at the next boot"),
+        }
+    }
     out
+}
+
+/// The records of a bank's image in order, where the log ends in it, and
+/// whether a record in it was unreadable. A record that is not intact is
+/// stepped over to the next one that is: what the VPU appended after a write
+/// cut short by a power loss is still there.
+fn parse(image: &[u8]) -> (Vec<Record>, usize, bool) {
+    let mut out = Vec::new();
+    let mut damaged = false;
+    let mut at = BANK_HEADER as usize;
+    while at + 8 <= image.len() {
+        if u32_at(image, at) == 0xffff_ffff {
+            break;
+        }
+        match record_at(image, at) {
+            Some((record, total)) => {
+                at += total;
+                out.push(record);
+            }
+            None => {
+                damaged = true;
+                warn!("store", "record unreadable"; at = at);
+                match (at + 4..image.len().saturating_sub(8)).step_by(4).find(|&p| record_at(image, p).is_some()) {
+                    Some(next) => at = next,
+                    None => {
+                        at = first_erased_in(image, at + 4);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    (out, at, damaged)
+}
+
+fn record_at(image: &[u8], at: usize) -> Option<(Record, usize)> {
+    if u32_at(image, at) != RECORD_MAGIC {
+        return None;
+    }
+    let total = u32_at(image, at + 4) as usize;
+    if total % 4 != 0 || total > MAX_RECORD || at.checked_add(total)? > image.len() {
+        return None;
+    }
+    Some((Record::decode(&image[at..at + total])?, total))
+}
+
+/// The first page at or after `from` of `image` that is erased.
+fn first_erased_in(image: &[u8], from: usize) -> usize {
+    let mut at = from.next_multiple_of(4);
+    while at + PAGE <= image.len() {
+        if image[at..at + PAGE].iter().all(|&b| b == 0xff) {
+            return at;
+        }
+        at += PAGE;
+    }
+    image.len()
 }
 
 fn write_bank(bank: usize, seq: u32, records: &[Record]) -> Option<u32> {

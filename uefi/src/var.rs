@@ -12,7 +12,7 @@ use core::ffi::c_void;
 use r_efi::efi;
 
 use crate::util::{Global, W, wstr};
-use crate::{debug, info, p256, pkcs7, secure, store, warn};
+use crate::{debug, error, info, p256, pkcs7, secure, store, warn};
 
 struct Var {
     name: Vec<u16>,
@@ -227,14 +227,29 @@ static PLAIN_SEQ: Global<u64> = Global::new(0);
 /// The most a sealed record holds.
 const MAX_SEALED: usize = 16 * 1024;
 
-/// What a record is signed over: everything but the signature.
-fn digest(r: &store::Record) -> [u8; 32] {
+/// Who made a sealed record: this firmware, before the OS had the board, or
+/// the VPU, at the OS's request. The VPU signs what the OS asks, so what it
+/// signs is the OS's word, and carries the OS's limits.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Origin {
+    Firmware,
+    Runtime,
+}
+
+const FIRMWARE_LABEL: &[u8] = b"pi4-server-firmware variable store record v3";
+const RUNTIME_LABEL: &[u8] = b"pi4-server-firmware runtime variable record v1";
+
+/// What a record is signed over: everything but the signature, each length
+/// before what it measures.
+fn digest(r: &store::Record, origin: Origin) -> [u8; 32] {
     let mut message = Vec::new();
-    message.extend_from_slice(b"pi4-server-firmware variable store record v2");
+    message.extend_from_slice(if origin == Origin::Firmware { FIRMWARE_LABEL } else { RUNTIME_LABEL });
     message.extend_from_slice(&r.kind.to_le_bytes());
     message.extend_from_slice(&r.attributes.to_le_bytes());
     message.extend_from_slice(&r.guid);
     message.extend_from_slice(&r.time);
+    message.extend_from_slice(&(r.name.len() as u32).to_le_bytes());
+    message.extend_from_slice(&(r.data.len() as u32).to_le_bytes());
     for c in &r.name {
         message.extend_from_slice(&c.to_le_bytes());
     }
@@ -242,10 +257,14 @@ fn digest(r: &store::Record) -> [u8; 32] {
     crate::sha256::digest(&message)
 }
 
-/// Whether the device key signed `r`: its `auth` is `r || s`.
-fn signed_by(r: &store::Record, public: &p256::Point) -> bool {
-    let (Some(rs), Some(ss)) = (r.auth.get(..32), r.auth.get(32..64)) else { return false };
-    r.auth.len() == 64 && p256::verify(public, &digest(r), rs.try_into().unwrap(), ss.try_into().unwrap())
+/// Who the device key signed `r` for, if it did: its `auth` is `r || s`.
+fn signed_by(r: &store::Record, public: &p256::Point) -> Option<Origin> {
+    let (rs, ss) = (r.auth.get(..32)?, r.auth.get(32..64)?);
+    if r.auth.len() != 64 {
+        return None;
+    }
+    let (rs, ss): ([u8; 32], [u8; 32]) = (rs.try_into().ok()?, ss.try_into().ok()?);
+    [Origin::Firmware, Origin::Runtime].into_iter().find(|&origin| p256::verify(public, &digest(r, origin), &rs, &ss))
 }
 
 /// `SetVariable` for a variable no signature guards. `replayed` is the
@@ -258,6 +277,9 @@ fn write_plain(
     replayed: Option<store::Record>,
 ) -> efi::Status {
     let existing = find(name, &guid);
+    if existing.is_some_and(|i| VARS.get()[i].fixed) {
+        return efi::Status::WRITE_PROTECTED;
+    }
     let delete = attributes & !APPEND == 0 || (bytes.is_empty() && attributes & APPEND == 0);
     if delete {
         let Some(i) = existing else { return efi::Status::NOT_FOUND };
@@ -353,7 +375,7 @@ fn sealed(kind: u32, attributes: u32, guid: &efi::Guid, name: &[u16], data: &[u8
         auth: Vec::new(),
     };
     if DEVICE.get().is_some() {
-        let (r, s) = crate::mailbox::device_sign(&digest(&record))?;
+        let (r, s) = crate::mailbox::device_sign(&digest(&record, Origin::Firmware))?;
         record.auth = [r, s].concat();
     }
     Some(record)
@@ -450,7 +472,9 @@ fn write_key(name: &[u16], guid: efi::Guid, attributes: u32, buf: &[u8], persist
         auth: auth.descriptor.to_vec(),
     };
     let seq = *NEXT.get();
-    let mut history = if append { var.history.clone() } else { Vec::new() };
+    // What was written to `KEK` stays: a later write of `db` or `dbx` was
+    // checked against the keys it held then, and is checked so again.
+    let mut history = if append || is(name, "KEK") { var.history.clone() } else { Vec::new() };
     history.push((seq, record.clone()));
     if persist && !commit(i, &record, &history) {
         return efi::Status::DEVICE_ERROR;
@@ -489,7 +513,10 @@ fn commit(index: usize, record: &store::Record, history: &[(u64, store::Record)]
 /// The OS has the board: nothing signs for it from here on.
 fn lock() {
     *DEVICE.get() = None;
-    crate::mailbox::lock_device_key();
+    if !crate::mailbox::lock_device_key() {
+        error!("var", "the device key is not locked, the board is not handed to the OS");
+        crate::util::halt()
+    }
 }
 
 /// Apply what the flash store holds to the built-in keys and the variables:
@@ -524,15 +551,19 @@ fn replay_plain(r: store::Record) {
         return;
     };
     let seq = u64::from_le_bytes(r.time[..8].try_into().unwrap());
-    if !signed_by(&r, &public) {
+    let Some(origin) = signed_by(&r, &public) else {
         warn!("var", "stored variable ignored: the device key did not sign it"; name = W(&r.name));
         return;
-    }
+    };
     if seq < *PLAIN_SEQ.get() {
         warn!("var", "stored variable ignored: older than one before it"; name = W(&r.name), seq = seq);
         return;
     }
-    *PLAIN_SEQ.get() = seq + 1;
+    if origin == Origin::Runtime && !runtime_may_replay(&r) {
+        warn!("var", "stored variable ignored: not the OS's to write"; name = W(&r.name));
+        return;
+    }
+    *PLAIN_SEQ.get() = seq.saturating_add(1);
     let guid = efi::Guid::from_bytes(&r.guid);
     let (name, attributes, data) = (r.name.clone(), r.attributes, r.data.clone());
     let status = if r.kind == store::DELETE {
@@ -542,6 +573,24 @@ fn replay_plain(r: store::Record) {
     };
     if status != efi::Status::SUCCESS {
         warn!("var", "stored variable not restored"; name = W(&name), status = status.as_usize());
+    }
+}
+
+/// What the OS may write through the VPU: a variable that is theirs, that is,
+/// one that has the attributes it was written with, or none yet. Never a
+/// firmware variable, and never one the boot chain keeps hidden from the OS.
+fn runtime_may_replay(r: &store::Record) -> bool {
+    const NV_BS_RT: u32 = NV | BS | RT;
+    if r.attributes != NV_BS_RT || !(r.kind == store::SET || r.kind == store::DELETE) {
+        return false;
+    }
+    let guid = efi::Guid::from_bytes(&r.guid);
+    match find(&r.name, &guid) {
+        Some(i) => {
+            let v = &VARS.get()[i];
+            !v.fixed && v.attributes == NV_BS_RT
+        }
+        None => r.kind == store::SET,
     }
 }
 

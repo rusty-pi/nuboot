@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "store-tamper"
-description: "A board with its device private key fused (a test key, not a board's) whose flash store was written from outside: only the records that are sealed and in sequence, and not behind a torn one, come back."
+description: "A board with its device private key fused (a test key, not a board's) whose flash store was written from outside: only the records that are sealed and in sequence come back, a damaged one is stepped over, and what the OS had the VPU sign is read only for a variable of its own."
 
 boot:
   eeprom: "../out/pieeprom-tamper.bin"
@@ -30,7 +30,13 @@ milestones:
     line: "tamper test: Forged absent"
   - why: "A sealed record numbered below the ones before it, put back from an older copy, is ignored."
     line: "tamper test: Stale absent"
-  - why: "A record whose digest does not match ends the log."
+  - why: "A record whose digest does not match is not read."
     line: "tamper test: Torn absent"
-  - why: "Whatever follows it is not read."
-    line: "tamper test: AfterTorn absent"
+  - why: "The one after it is."
+    line: "tamper test: AfterTorn present"
+  - why: "The OS's deletion of a variable the firmware keeps hidden from it, signed by the VPU, is ignored."
+    line: "tamper test: Hidden present"
+  - why: "A variable of the OS's own, signed by the VPU, comes back."
+    line: "tamper test: RuntimeOk present"
+  - why: "The OS's deletion of SecureBoot, signed by the VPU, is ignored."
+    line: "tamper test: SecureBoot present"

@@ -35,7 +35,10 @@ SET = 1
 ATTRIBUTES = 0x1 | 0x2 | 0x4
 GUID = uuid.UUID("5d0f3a58-1c0e-4d1b-9a44-0123456789ab").bytes_le
 ROWS = [0xC0DE2001, 0xC0DE3112, 0xC0DE4223, 0xC0DE5334, 0xC0DE6445, 0xC0DE7556, 0xC0DE8667, 0xC0DE9778]
-LABEL = b"pi4-server-firmware variable store record v2"
+LABEL = b"pi4-server-firmware variable store record v3"
+RUNTIME_LABEL = b"pi4-server-firmware runtime variable record v1"
+DELETE = 2
+GLOBAL = uuid.UUID("8be4df61-93ca-11d2-aa0d-00e098032b8c").bytes_le
 
 
 def device_key():
@@ -48,15 +51,15 @@ def sign(digest):
     return r.to_bytes(32, "big") + s.to_bytes(32, "big")
 
 
-def record(name, data, seq, seal=True, torn=False, guid=GUID, attributes=ATTRIBUTES):
+def record(name, data, seq, seal=True, torn=False, guid=GUID, attributes=ATTRIBUTES, kind=SET, label=LABEL):
     time = struct.pack("<Q", seq) + bytes(8)
     utf16 = name.encode("utf-16-le")
-    signed = LABEL + struct.pack("<II", SET, attributes) + guid + time + utf16 + data
+    signed = label + struct.pack("<II", kind, attributes) + guid + time + struct.pack("<II", len(name), len(data)) + utf16 + data
     mac = sign(hashlib.sha256(signed).digest()) if seal else bytes(64)
     body_len = 60 + len(utf16) + len(data) + len(mac)
     padded = -(-body_len // 4) * 4
     total = padded + 32
-    out = struct.pack("<IIII", RECORD_MAGIC, total, SET, attributes) + guid + time
+    out = struct.pack("<IIII", RECORD_MAGIC, total, kind, attributes) + guid + time
     out += struct.pack("<III", len(name), len(data), len(mac)) + utf16 + data + mac
     out += bytes(padded - len(out))
     digest = hashlib.sha256(out).digest()
@@ -104,6 +107,12 @@ def main():
             record("Stale", b"stale", 0),
             record("Torn", b"torn", 3, torn=True),
             record("AfterTorn", b"after", 4),
+            # What the OS had the VPU sign: a variable of its own is read, and
+            # the deletion of a hidden one and of a firmware one is not.
+            record("Hidden", b"hidden", 5, attributes=0x1 | 0x2),
+            record("Hidden", b"", 6, attributes=ATTRIBUTES, kind=DELETE, label=RUNTIME_LABEL),
+            record("RuntimeOk", b"ok", 7, attributes=ATTRIBUTES, label=RUNTIME_LABEL),
+            record("SecureBoot", b"", 8, guid=GLOBAL, attributes=ATTRIBUTES, kind=DELETE, label=RUNTIME_LABEL),
         ]
     log = b"".join(records)
     head = struct.pack("<II", BANK_MAGIC, 1)

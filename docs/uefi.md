@@ -132,10 +132,15 @@ log in two banks of 20 KiB from `0x74000`, and come back at the next boot.
   attributes, name, value and a counter. A record whose signature does not verify, or
   whose counter is not above the one before it, is ignored. A variable is
   at most 16 KiB.
+- A record is intact when its framing and SHA-256 are. One that is not, such as
+  a write a power loss cut short, is stepped over to the next intact one, and
+  the store moves to the other bank without it at that boot.
 
-The OS can write the flash, but it can only drop records, never add or
-reorder them: it cannot sign, since the firmware locks the device key's signing at
-`ExitBootServices`. Dropping the
+The OS can write the flash, and can drop records, but not make one: the
+device key signs for it only through the VPU's runtime tag, in a signature
+domain UEFI accepts for a variable of the OS's own and nothing else (below).
+UEFI forbids the device key to sign and to HMAC at `ExitBootServices`, and
+stops the boot when the VPU does not say it is locked. Dropping the
 newest record of a variable returns it to its previous value. Where the flash
 does not answer, or no device private key is fused, there is no signature and a
 variable other than `KEK`, `db` and `dbx` lasts until reset. Writing a whole new
@@ -149,17 +154,27 @@ their table, and tell the VPU over the mailbox, on a channel of their own
 back to disturb it: the VPU answers in the message's own buffer.
 
 - A non-volatile variable no signature guards is signed by the VPU with the
-  device key, as UEFI signs the ones it writes, and appended to the flash store,
-  with the sequence number the next record needs. A board with no device key
-  keeps the write in the table until reset.
+  device key and appended to the flash store, with the sequence number the next
+  record needs. The VPU signs, in a domain of its own, only a write or a
+  deletion with the attributes non-volatile, boot services and runtime, a name
+  without a NUL and at most 16 KiB of value: what the OS asks it to sign is the
+  OS's word. At the next boot UEFI takes such a record only for a variable the
+  OS owns, one that the table holds with those attributes, or none. A
+  `SecureBoot`, `PK` or other variable the firmware keeps, or one the boot
+  chain keeps from the OS (non-volatile without runtime access, such as shim's
+  MOK lists and the update records), is left as it is. A board with no device
+  key keeps the write in the table until reset.
 - A write of `KEK`, `db` or `dbx` is a signed update (what `efi-updatevar` and
   fwupd's `uefi-db`, `uefi-dbx` and `uefi-kek` plugins write). The runtime
   services cannot check the signature, so they append the record as it is, and
   UEFI checks it against `PK` and the `KEK`s at the next boot like every stored
   write. The table keeps the old value until then; the update takes effect at
   the restart fwupd asks for.
-- A bank of the store that is full takes no more until UEFI compacts it at the
-  next boot, and the write is then the table's only.
+- A write the VPU does not take, such as one into a bank that is full until
+  UEFI compacts it at the next boot, returns `EFI_OUT_OF_RESOURCES` or
+  `EFI_DEVICE_ERROR`, and the variable lasts until reset. A non-volatile variable
+  has the attributes non-volatile, boot services and runtime access, and at most
+  16 KiB, or the write is refused.
 
 ### The test build
 

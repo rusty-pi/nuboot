@@ -297,10 +297,11 @@ fn post(tag: u32, len: usize) -> Option<u32> {
 }
 
 /// Have the VPU sign and store a change of a non-volatile variable no
-/// signature guards: `data` is what it holds now, none for a deletion.
-fn persist(kind: u32, attributes: u32, guid: &efi::Guid, name: &[u16], data: *const u8, len: usize) {
-    if attributes & NV == 0 || len > PERSIST_MAX || name.len() * 2 > PERSIST_NAME_MAX || name.is_empty() {
-        return;
+/// signature guards: `data` is what it holds now, none for a deletion. The
+/// variable stays in the table whatever the answer.
+fn persist(kind: u32, attributes: u32, guid: &efi::Guid, name: &[u16], data: *const u8, len: usize) -> efi::Status {
+    if attributes & NV == 0 {
+        return efi::Status::SUCCESS;
     }
     let out = value();
     out[0..4].copy_from_slice(&kind.to_le_bytes());
@@ -314,7 +315,14 @@ fn persist(kind: u32, attributes: u32, guid: &efi::Guid, name: &[u16], data: *co
     let at = 32 + (name.len() * 2).next_multiple_of(4);
     out[32 + name.len() * 2..at].fill(0);
     unsafe { core::ptr::copy_nonoverlapping(data, out.as_mut_ptr().add(at), len) };
-    post(TAG_STORE_PERSIST, at + len);
+    match post(TAG_STORE_PERSIST, at + len) {
+        Some(0) => efi::Status::SUCCESS,
+        // No device key to sign with: the variable lasts until reset.
+        Some(3) => efi::Status::SUCCESS,
+        Some(4) => efi::Status::OUT_OF_RESOURCES,
+        Some(1) | Some(2) => efi::Status::INVALID_PARAMETER,
+        _ => efi::Status::DEVICE_ERROR,
+    }
 }
 
 /// A write of `KEK`, `db` or `dbx`, the value `bytes` that `SetVariable` was
@@ -445,8 +453,7 @@ pub extern "efiapi" fn set_variable(
     if delete {
         let Some(e) = existing else { return efi::Status::NOT_FOUND };
         put(e.at + 14, &(e.flags | DELETED).to_le_bytes());
-        persist(DELETE, e.attributes, &guid, name, [].as_ptr(), 0);
-        return efi::Status::SUCCESS;
+        return persist(DELETE, e.attributes, &guid, name, [].as_ptr(), 0);
     }
     if attributes & AUTH != 0 {
         return efi::Status::WRITE_PROTECTED;
@@ -454,12 +461,15 @@ pub extern "efiapi" fn set_variable(
     if attributes & BS == 0 || attributes & RT == 0 || size > MAX_VARIABLE {
         return efi::Status::INVALID_PARAMETER;
     }
+    let kept = if append { existing.as_ref().map_or(0, |e| e.data_len) } else { 0 };
+    if attributes & NV != 0 && (attributes != NV | BS | RT || kept + size > PERSIST_MAX || name.len() * 2 > PERSIST_NAME_MAX) {
+        return efi::Status::INVALID_PARAMETER;
+    }
     if let Some(e) = &existing {
         if !append && e.attributes != attributes {
             return efi::Status::INVALID_PARAMETER;
         }
     }
-    let kept = if append { existing.as_ref().map_or(0, |e| e.data_len) } else { 0 };
     if !reserve(entry_size(name.len(), kept + size)) {
         return efi::Status::OUT_OF_RESOURCES;
     }
@@ -475,10 +485,10 @@ pub extern "efiapi" fn set_variable(
     if let Some(e) = old {
         put(e.at + 14, &(e.flags | DELETED).to_le_bytes());
     }
-    if let Some(e) = find(name, &guid) {
-        persist(SET, attributes, &guid, name, unsafe { base().add(e.data_at()) }, e.data_len);
+    match find(name, &guid) {
+        Some(e) => persist(SET, attributes, &guid, name, unsafe { base().add(e.data_at()) }, e.data_len),
+        None => efi::Status::SUCCESS,
     }
-    efi::Status::SUCCESS
 }
 
 pub extern "efiapi" fn query_variable_info(

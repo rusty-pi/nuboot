@@ -22,6 +22,7 @@ const ANSWER_US: u64 = 200_000;
 const TPM_ANSWER_US: u64 = 5_000_000;
 
 const TAG_EXTEND_BOOT_MEASUREMENT: u32 = 0x0003_00a1;
+const TAG_CRYPTO_KEY_STATUS: u32 = 0x0003_0090;
 const TAG_CRYPTO_SET_KEY_STATUS: u32 = 0x0003_8090;
 const TAG_CRYPTO_SIGN: u32 = 0x0003_0091;
 const TAG_CRYPTO_PUBLIC_KEY: u32 = 0x0003_0093;
@@ -246,9 +247,17 @@ pub fn device_sign(digest: &[u8; 32]) -> Option<([u8; 32], [u8; 32])> {
 }
 
 /// Forbid the device key to sign and to HMAC until the next boot: the OS has
-/// the board.
-pub fn lock_device_key() {
-    crypto_call(TAG_CRYPTO_SET_KEY_STATUS, &[DEVICE_KEY, SIGN_LOCKED | HMAC_LOCKED], 8);
+/// the board. Whether the VPU says the key is locked.
+pub fn lock_device_key() -> bool {
+    for _ in 0..3 {
+        crypto_call(TAG_CRYPTO_SET_KEY_STATUS, &[DEVICE_KEY, SIGN_LOCKED | HMAC_LOCKED], 8);
+        let locked = crypto_call(TAG_CRYPTO_KEY_STATUS, &[DEVICE_KEY], 4)
+            .is_some_and(|answer| answer[0] & (SIGN_LOCKED | HMAC_LOCKED) == SIGN_LOCKED | HMAC_LOCKED);
+        if locked {
+            return true;
+        }
+    }
+    false
 }
 
 /// Extend a PCR on the VPU.

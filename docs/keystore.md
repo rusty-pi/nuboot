@@ -23,7 +23,9 @@ A key's status says what it may no longer be asked, and a lock holds until the
 next boot. Reading, generating and setting the usage are locked from the start.
 UEFI signs the records of its variable store with the key ([uefi.md](uefi.md#the-variable-store)),
 and locks signing and HMAC at `ExitBootServices`, because an OS that could sign
-any hash could sign a record. A board without a fused private key answers
+any hash could sign a record. The VPU's own tag for the runtime services signs
+for the OS in a domain UEFI takes only for the OS's own variables
+([uefi.md](uefi.md#variables-the-os-writes)). A board without a fused private key answers
 `KEY_NOT_SET`, and its variables stay in memory.
 
 ## The boot key
