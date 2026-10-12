@@ -47,7 +47,10 @@ unit that unlocks a disk with the TPM there needs.
 With Secure Boot on, a kernel in lockdown loads only signed modules. DKMS
 signs what it builds with the key in `/etc/dkms/framework.conf` (`mok_signing_key`
 and `mok_certificate`), and the kernel has to trust that certificate: enrol it
-as a MOK, or sign with a key the image's kernel already trusts.
+as a MOK, sign with a key the image's kernel already trusts, or, when the image
+boots without shim, so that there is no MOK, put the certificate in `db`
+([uefi.md](uefi.md#updating-the-keys)): the kernel takes the certificates of
+`db` into its platform keyring and loads a module signed by one of them.
 
 `scenarios/linux.yaml` boots Debian's 6.12 arm64 kernel under Secure Boot with
 the module built by `scripts/build-linux-test.sh` and signed with a key in `db`:
