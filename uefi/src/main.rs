@@ -15,6 +15,7 @@ extern crate alloc;
 #[path = "../../src/log.rs"]
 pub mod log;
 
+mod acpi;
 mod block;
 mod capsule;
 mod conio;
@@ -180,6 +181,7 @@ extern "C" fn pi4_main(tree_addr: u64) -> ! {
     let console = conio::install();
     tables::init(console, con_in, con_out);
     tables::install_table(tables::DTB_GUID, tree_addr as *mut c_void);
+    acpi::init(&tree);
     rng::install();
     tcg2::init();
     esrt::init();

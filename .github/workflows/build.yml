@@ -184,6 +184,20 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The ACPI tables on the host: their links and checksums, and the ACPICA
+  # tools' disassembly and recompilation of the DSDT.
+  acpi:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install acpica-tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends acpica-tools
+      - name: Test
+        run: scripts/test-acpi.sh
+
   # Every `scenarios/*.yaml` is a job, so a new scenario needs no edit here.
   # The TPM's code on the host: its crypto against reference vectors, and the
   # whole TPM driven by tpm2-tools and systemd-cryptenroll over the

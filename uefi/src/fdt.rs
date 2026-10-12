@@ -85,6 +85,35 @@ impl Fdt {
     }
 }
 
+impl Fdt {
+    /// The address of the `/reserved-memory` child whose name starts with
+    /// `prefix`.
+    pub fn reserved_base(&self, prefix: &[u8]) -> Option<u64> {
+        let (mut address_cells, mut size_cells) = (2, 1);
+        let mut base = None;
+        self.walk(|path, name, value| match (path, name) {
+            ([_, b"reserved-memory"], b"#address-cells") => address_cells = cells(value),
+            ([_, b"reserved-memory"], b"#size-cells") => size_cells = cells(value),
+            ([_, b"reserved-memory", node], b"reg") if node.starts_with(prefix) => {
+                reg(value, address_cells, size_cells, |at, _| base = Some(at))
+            }
+            _ => {}
+        });
+        base
+    }
+
+    /// The first `N` bytes of the property `name` of the node at `path`.
+    pub fn bytes<const N: usize>(&self, path: &[&[u8]], name: &[u8]) -> Option<[u8; N]> {
+        let mut found = None;
+        self.walk(|at, prop, value| {
+            if at == path && prop == name {
+                found = value.get(..N).and_then(|b| b.try_into().ok());
+            }
+        });
+        found
+    }
+}
+
 /// A `reg` value as (address, size) pairs.
 pub fn reg(value: &[u8], address_cells: usize, size_cells: usize, mut f: impl FnMut(u64, u64)) {
     let cell = |b: &[u8]| b.chunks_exact(4).fold(0u64, |v, c| v << 32 | u32::from_be_bytes(c.try_into().unwrap()) as u64);

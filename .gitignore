@@ -16,3 +16,4 @@
 /tools/tpm-vpu/modules.order
 /keys
 /tools/tpm-sim/target
+/tools/acpi-check/target
