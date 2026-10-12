@@ -43,6 +43,7 @@ pub mod stc;
 pub mod sync;
 pub mod timer;
 pub mod tpm2;
+pub mod tpm_crb;
 pub mod usb;
 pub mod varstore;
 pub mod vl805;

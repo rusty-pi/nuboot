@@ -15,6 +15,8 @@ pub mod rsa;
 pub mod sha256;
 #[path = "../../../src/tpm2.rs"]
 pub mod tpm2;
+#[path = "../../../src/tpm_crb.rs"]
+pub mod tpm_crb;
 
 /// The firmware's log macros, which take their arguments and write nothing.
 #[macro_export]

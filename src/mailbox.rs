@@ -29,6 +29,9 @@ const CHANNEL_PROPERTY: u32 = 8;
 /// its messages are answered in the buffer and not on mailbox 0, where the
 /// OS's own driver takes whatever arrives for its requests.
 const CHANNEL_RUNTIME: u32 = 7;
+/// The doorbell of the TPM's command response buffer ([`crate::tpm_crb`]): a
+/// command is waiting in it. Nothing is answered on mailbox 0.
+const CHANNEL_TPM: u32 = 6;
 const RESPONSE: u32 = 0x8000_0000;
 const CODE_ERROR: u32 = 0x8000_0001;
 /// The largest buffer walked, so a bad size word cannot run off into memory.
@@ -91,6 +94,9 @@ pub fn serve(timeout_us: u32) {
             answer(message & !0xf, false);
         } else if channel == CHANNEL_RUNTIME {
             answer(message & !0xf, true);
+            continue;
+        } else if channel == CHANNEL_TPM {
+            arm::crb().answer();
             continue;
         } else {
             warn!("mailbox", "request on a channel this firmware does not serve";
