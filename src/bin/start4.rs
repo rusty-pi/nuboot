@@ -86,6 +86,7 @@ static mut MONITOR_STACK: [u32; MONITOR_STACK_WORDS] = [0; MONITOR_STACK_WORDS];
 fn firmware_main() -> ! {
     let main_stack = unsafe { stack::Stack::paint_running(&raw mut __stack_bottom, &raw const __stack_top) };
     console::init();
+    pi4_server_firmware::spi_flash::set_divider(pi4_server_firmware::spi_flash::PLL_DIVIDER);
     announce();
     take_over_watchdog();
 

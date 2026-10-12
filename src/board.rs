@@ -26,6 +26,35 @@ pub enum Pmics {
     Unknown,
 }
 
+/// The BCM2711 silicon revision, as the VPU's `version` value gives it:
+/// `0x0400_0162` on C0, `0x0400_0161` on B0.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Stepping {
+    B0,
+    C0,
+}
+
+const VERSION_C0: u32 = 0x0400_0162;
+
+core::arch::global_asm!(
+    ".pushsection .text.vpu_version, \"ax\"",
+    ".globl vpu_version",
+    "vpu_version:",
+    "    version r0",
+    "    rts",
+    ".popsection",
+);
+
+unsafe extern "C" {
+    /// This core's `version` value (core 1 has bit 16 set as well).
+    pub safe fn vpu_version() -> u32;
+}
+
+pub fn stepping() -> Stepping {
+    const CORE_1: u32 = 1 << 16;
+    if vpu_version() & !CORE_1 == VERSION_C0 { Stepping::C0 } else { Stepping::B0 }
+}
+
 /// The identity rows the SDRAM bring-up needs.
 #[derive(Clone, Copy)]
 pub struct Board {

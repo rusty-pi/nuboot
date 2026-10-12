@@ -36,3 +36,9 @@ pub fn fill(buf: &mut [u8]) -> bool {
     }
     true
 }
+
+/// Leave the block's interrupts off, as start4 does just before the ARM
+/// starts.
+pub fn quiesce() {
+    mmio::write(BASE + 0x1c, 0);
+}

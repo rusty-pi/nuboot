@@ -28,9 +28,9 @@ for:
 Out of scope: HATs, IPv6 and ACPI (the operating system gets a device tree).
 
 > [!NOTE]
-> This is the start of the firmware, not a usable one: it brings up the SDRAM,
-> starts the ARM in UEFI and runs its threads, but has not booted an operating
-> system yet, and it has run only in pimu.
+> This is an early firmware. On a Raspberry Pi 4B rev 1.5 (`d03115`) it starts
+> the ARM in UEFI, which boots Debian's arm64 kernel off the SD card; USB and the
+> other boards are tested only in pimu ([Tested](#tested)).
 
 ## What it does
 
@@ -70,27 +70,31 @@ From the boot ROM to the threads that run for as long as the board is up:
 
 ## Tested
 
-✅ boots in [pimu](https://github.com/rusty-pi/pimu) · ➖ not tried
+✅ tested (in [pimu](https://github.com/rusty-pi/pimu), or on a board) · ❌ tried and does not work yet · ➖ not tried
 
 | | pimu | Pi 4B | Pi 400 | CM4 |
 |---|---|---|---|---|
 | `start4.elf` started by the stock EEPROM bootloader from SD | ✅ | ➖ | ➖ | ➖ |
+| `start4.elf` started by the stock EEPROM bootloader from the network (TFTP) | ➖ | ✅ | ➖ | ➖ |
 | `start4.elf` started from a USB drive | ✅ | ➖ | ➖ | ➖ |
 | Signed boot: `start4.elf` out of a `boot.img` the EEPROM's key signed, one signed by another key refused | ✅ | ➖ | ➖ | ➖ |
-| Console log, board identity, threads | ✅ | ➖ | ➖ | ➖ |
+| Console log, board identity, threads | ✅ | ✅ | ➖ | ➖ |
 | Boot watchdog: a hang in UEFI resets the board, `ExitBootServices` hands it to the OS | ✅ | ➖ | ➖ | ➖ |
 | Pi 4B rev 1.4 (`d03114`) and rev 1.2 (`c03112`) | ✅ | ➖ | ➖ | ➖ |
-| ARM started in UEFI: SD card, a signed EFI application | ✅ | ➖ | ➖ | ➖ |
+| ARM started in UEFI: SD card, a signed EFI application | ✅ | ✅ | ➖ | ➖ |
 | Secure Boot: Ubuntu's shim and GRUB run, an image not signed by a key in `db` is refused | ✅ | ➖ | ➖ | ➖ |
-| USB: VL805 firmware from the EEPROM, an EFI application off a USB drive | ✅ | ➖ | ➖ | ➖ |
+| USB: VL805 firmware from the EEPROM, an EFI application off a USB drive | ✅ | ❌ | ➖ | ➖ |
 | Property mailbox: `NOTIFY_XHCI_RESET` reloads the VL805's firmware | ✅ | ➖ | ➖ | ➖ |
 | TPM 2.0 on the VPU (PCRs, properties, random numbers) behind `EFI_TCG2_PROTOCOL`, shim measuring into it, firmware and board measured into PCRs 0 and 1 | ✅ | ➖ | ➖ | ➖ |
 | systemd-boot and systemd-stub (a unified kernel image) measuring into the TPM | ✅ | ➖ | ➖ | ➖ |
 | Firmware updates: a signed capsule on the card staged as `tryboot.img`, started under the bootloader's tryboot, committed once it reaches the OS and dropped when it does not; an EEPROM update the stock bootloader makes from the capsule's `pieeprom.upd`, with the variable store saved and put back | ✅ | ➖ | ➖ | ➖ |
 | The firmware cryptography service: the fused key signs and HMACs for UEFI, gives its public key, never itself, and is locked from the OS | ✅ | ➖ | ➖ | ➖ |
-| Linux 6.12 (Debian's arm64 kernel in a signed unified kernel image, started by systemd-boot): its loader variables are there, Secure Boot reads as on and the kernel locks down, `efivarfs` and the ESRT read, a variable is written and is there after the OS resets the board, `tools/tpm-vpu` (signed with a key in `db`) gives `/dev/tpm0` with the PCRs and the event log | ✅ | ➖ | ➖ | ➖ |
+| Linux 6.12 (Debian's arm64 kernel in a signed unified kernel image, started by systemd-boot): its loader variables are there, Secure Boot reads as on and the kernel locks down, `efivarfs` and the ESRT read, `tools/tpm-vpu` (signed with a key in `db`) gives `/dev/tpm0` with the PCRs and the event log | ✅ | ✅ | ➖ | ➖ |
+| Linux 6.12 as above: a variable is written and is there after the OS resets the board | ✅ | ➖ | ➖ | ➖ |
 | Variables the OS writes through the runtime services, a signed `db` update among them, kept across a reset | ✅ | ➖ | ➖ | ➖ |
 | A boot key from the fused private key, handed over once, nothing of it left in the VPU's memory | ✅ | ➖ | ➖ | ➖ |
+
+The Pi 4B column is a rev 1.5 (`d03115`).
 
 ## Building
 
