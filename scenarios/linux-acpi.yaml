@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "linux-acpi"
-description: "The same Debian arm64 kernel as in the linux scenario, told to describe the board with the ACPI tables (acpi=on) in place of the device tree: its own TPM driver (tpm_crb, no module of ours) finds the TPM on the VPU through the TPM2 table, and its first process looks at the TPM, the Secure Boot variables, the ESRT and `bootctl status` as it does there, and at a variable it writes and finds again after it resets the board."
+description: "The same Debian arm64 kernel as in the linux scenario, told to describe the board with the ACPI tables (acpi=on) in place of the device tree: its own TPM driver (tpm_crb, no module of ours) finds the TPM on the VPU through the TPM2 table, its generic xHCI driver finds the USB controller behind the PCIe root complex through the DSDT, and its first process looks at the TPM, the Secure Boot variables, the ESRT, `bootctl status` and the USB stick as it does there, and at a variable it writes and finds again after it resets the board."
 
 boot:
   eeprom: "../out/stock-pieeprom.bin"
@@ -20,6 +20,9 @@ boot:
       EFI/BOOT/BOOTAA64.EFI: "../out/systemd-bootaa64.efi"
       EFI/Linux/linux-acpi-test.efi: "../out/linux-acpi-test.efi"
       loader/loader.conf: { inline: "timeout 0\nconsole-mode keep\n" }
+  usb:
+    files:
+      usb-test.txt: { inline: "a stick on the VL805\n" }
   until: "linux test: done"
   wall_secs: 3000
 
@@ -76,6 +79,14 @@ milestones:
     line: "linux test: sd card "
   - why: "The kernel's driver for the network interface (genet) takes the BCM6E4E device, with the address the DSDT gives it: the one the device tree has, locally administered and unicast."
     line: "linux test: ethernet address 02"
+  - why: "The kernel's generic xHCI driver takes the USB controller the DSDT describes as a platform device, with nothing of the PCIe root complex described, and finds the interrupt line the DSDT gives it."
+    line: "xhci-hcd PNP0D10:00: new USB bus registered, assigned bus number 1"
+  - why: "The controller's interrupts reach the kernel: the root hub finds the VL805's own hub on its USB 2 side."
+    line: "usb 1-1: New USB device found, idVendor=2109"
+  - why: "The controller's DMA reaches memory the IORT and the container's _DMA allow: the stick on its SuperSpeed port answers SCSI commands."
+    line: "sd 0:0:0:0: [sda] Attached SCSI removable disk"
+  - why: "The stick's first sector reads back through the controller, as a partitioned disk."
+    line: "linux test: usb disk boot signature 55aa"
   - why: "The OS can write a variable."
     line: "linux test: variable written"
   - why: "The OS resets the board, and the variable it wrote is there at the next boot: the VPU signed and kept the write."

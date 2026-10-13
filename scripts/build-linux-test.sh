@@ -75,9 +75,9 @@ xz -dc "$tmp"/kernel/usr/lib/modules/*/kernel/fs/efivarfs/efivarfs.ko.xz >"$root
 xz -dc "$tmp"/kernel/usr/lib/modules/*/kernel/drivers/watchdog/bcm2835_wdt.ko.xz >"$root/bcm2835_wdt.ko"
 mkdir -p "$root/modules"
 # The reset controller xhci-pci waits for, then what `modprobe --show-depends xhci_pci usb_storage sd_mod` gives for this kernel, in load order;
-# then what the SD host and the network interface need, for the boot that describes the board with the ACPI tables.
+# then what the SD host, the network interface and the platform xHCI driver need, for the boot that describes the board with the ACPI tables.
 for module in reset-raspberrypi usb-common usbcore xhci-hcd xhci-pci scsi_common scsi_mod usb-storage sd_mod \
-    sdhci sdhci-pltfm sdhci-iproc libphy fwnode_mdio fixed_phy of_mdio mdio-bcm-unimac genet; do
+    sdhci sdhci-pltfm sdhci-iproc libphy fwnode_mdio fixed_phy of_mdio mdio-bcm-unimac genet xhci-plat-hcd; do
   path="$(find "$tmp"/kernel/usr/lib/modules -name "$module.ko.xz" | head -n 1)"
   [ -n "$path" ] || { echo "this kernel has no module $module: list what its drivers need with modprobe --show-depends" >&2; exit 1; }
   xz -dc "$path" >"$root/modules/$module.ko"
