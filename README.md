@@ -115,7 +115,7 @@ From the boot ROM to the threads that run for as long as the board is up:
 | The flash variable store has room for the OS's writes after a boot: a bank the OS filled with the variables it replaced is started afresh with what the variables still need, and the OS writes again | ✅ | ✅ | ➖ | ➖ |
 | A shutdown through the runtime services, after `ExitBootServices`, ends in the bootloader's halt | ✅ | ➖ | ➖ | ➖ |
 | A boot key from the fused private key, handed over once, nothing of it left in the VPU's memory | ✅ | ➖ | ➖ | ➖ |
-| Wake-on-LAN: the OS powers the board off, the VPU waits on the Ethernet port, a magic packet boots the board | ✅ | ➖ | ➖ | ➖ |
+| Wake-on-LAN: the OS powers the board off, the VPU waits on the Ethernet port, a magic packet boots the board | ✅ | ✅ | ➖ | ➖ |
 
 The Pi 4B column is a rev 1.5 (`d03115`).
 
