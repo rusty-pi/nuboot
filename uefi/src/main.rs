@@ -181,7 +181,6 @@ extern "C" fn pi4_main(tree_addr: u64) -> ! {
     let console = conio::install();
     tables::init(console, con_in, con_out);
     tables::install_table(tables::DTB_GUID, tree_addr as *mut c_void);
-    acpi::init(&tree);
     rng::install();
     tcg2::init();
     esrt::init();
@@ -190,6 +189,7 @@ extern "C" fn pi4_main(tree_addr: u64) -> ! {
 
     sd::init();
     xhci::init();
+    acpi::init(&tree, xhci::registers_base());
 
     tcg2::separators();
     capsule::scan();

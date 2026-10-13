@@ -12,7 +12,7 @@ use acpi::tables::{self, Machine};
 pub const BASE: u64 = 0xfbf7_e000;
 
 pub fn sample() -> Machine {
-    Machine { tpm: Some(0x3ebf_f000), ethernet: Some([0x02, 0x11, 0x22, 0x33, 0x44, 0x55]), cores: 4 }
+    Machine { tpm: Some(0x3ebf_f000), ethernet: Some([0x02, 0x11, 0x22, 0x33, 0x44, 0x55]), xhci: Some(0x6_0200_0000), cores: 4 }
 }
 
 /// One table of the block, found the way an operating system finds it.

@@ -25,7 +25,7 @@ fn the_rsdp_leads_to_every_table() {
     assert_eq!(rsdp[15], 2);
     assert_eq!(block.rsdp % 16, 0);
     let signatures: Vec<String> = walk(&block, BASE).into_iter().map(|t| t.signature).collect();
-    assert_eq!(signatures, ["XSDT", "FACP", "DSDT", "APIC", "GTDT", "SPCR", "PPTT", "TPM2"]);
+    assert_eq!(signatures, ["XSDT", "FACP", "DSDT", "APIC", "GTDT", "SPCR", "PPTT", "TPM2", "IORT"]);
 }
 
 #[test]
@@ -46,6 +46,36 @@ fn the_tables_leave_out_the_tpm_when_the_vpu_has_none() {
     let found = walk(&block, BASE);
     assert!(found.iter().all(|t| t.signature != "TPM2"));
     assert!(!found.iter().find(|t| t.signature == "DSDT").unwrap().bytes.windows(8).any(|w| w == b"MSFT0101"));
+}
+
+#[test]
+fn the_tables_leave_out_the_usb_controller_when_the_board_has_none() {
+    let machine = tables::Machine { xhci: None, ..sample() };
+    let found = walk(&tables::assemble(&machine, BASE), BASE);
+    assert!(found.iter().all(|t| t.signature != "IORT"));
+    let dsdt = &found.iter().find(|t| t.signature == "DSDT").unwrap().bytes;
+    assert!(!dsdt.windows(8).any(|w| w == b"PNP0D10\0"));
+    assert!(!dsdt.windows(4).any(|w| w == b"SCB0"));
+}
+
+#[test]
+fn the_iort_limits_the_usb_controller_to_the_bottom_2_gib_by_the_path_the_dsdt_gives_it() {
+    let found = walk(&block(), BASE);
+    let iort = &table(&found, "IORT").bytes;
+    assert_eq!(iort[8], 0);
+    assert_eq!(u32::from_le_bytes(iort[36..40].try_into().unwrap()), 1, "one node");
+    let nodes = u32::from_le_bytes(iort[40..44].try_into().unwrap()) as usize;
+    assert_eq!(nodes, 48);
+    let node = &iort[nodes..];
+    assert_eq!(node[0], 1, "a named component");
+    let length = u16::from_le_bytes(node[1..3].try_into().unwrap()) as usize;
+    assert_eq!(length % 4, 0);
+    assert_eq!(nodes + length, iort.len());
+    assert_eq!(u32::from_le_bytes(node[8..12].try_into().unwrap()), 0, "no ID mappings");
+    assert_eq!(node[28], 31, "the address size limit");
+    let name = &node[29..length];
+    assert_eq!(&name[..16], b"\\_SB_.SCB0.XHC0\0");
+    assert!(name[16..].iter().all(|b| *b == 0));
 }
 
 #[test]
@@ -160,7 +190,10 @@ fn iasl_disassembles_every_table() {
         }
     }
     let dsl = std::fs::read_to_string(dir.join("DSDT.dsl")).unwrap();
-    for needed in ["ACPI0007", "ARMH0011", "BRCME88C", "BCM6E4E", "rgmii-rxid", "sdhci-caps-mask", "MSFT0101", "PRP0001", "6bbf6cab-5463-4714-b7cd-f0203c0368d4"] {
+    for needed in [
+        "ACPI0007", "ARMH0011", "BRCME88C", "BCM6E4E", "rgmii-rxid", "sdhci-caps-mask", "MSFT0101", "PRP0001",
+        "6bbf6cab-5463-4714-b7cd-f0203c0368d4", "ACPI0004", "PNP0D10", "_DMA", "SCB0", "XHC0",
+    ] {
         assert!(dsl.contains(needed), "DSDT has no {needed}:\n{dsl}");
     }
     let compiled = Command::new(&iasl).arg(dir.join("DSDT.dsl")).output().unwrap();

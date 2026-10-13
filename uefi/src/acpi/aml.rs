@@ -40,6 +40,7 @@ const DWORD_ACCESS: u8 = 3;
 
 const MEMORY32_FIXED: u8 = 0x86;
 const EXTENDED_INTERRUPT: u8 = 0x89;
+const QWORD_ADDRESS_SPACE: u8 = 0x8a;
 const END_TAG: u8 = 0x79;
 
 pub fn integer(value: u64) -> Bytes {
@@ -204,6 +205,35 @@ pub fn memory32(base: u32, length: u32) -> Bytes {
     let mut d = alloc::vec![MEMORY32_FIXED, 9, 0, 1];
     d.extend(base.to_le_bytes());
     d.extend(length.to_le_bytes());
+    d
+}
+
+/// What a memory range in a resource template is for.
+#[derive(Clone, Copy)]
+pub enum Role {
+    /// Registers the device uses.
+    Consumed,
+    /// What a container offers the devices in it: the memory they address,
+    /// or the registers they sit at.
+    Produced,
+}
+
+/// A range of memory with fixed ends, not cacheable, read-write and without
+/// translation, in the 64-bit address space descriptor.
+pub fn qword_memory(role: Role, base: u64, length: u64) -> Bytes {
+    const BODY_LENGTH: u16 = 43;
+    const MEMORY: u8 = 0;
+    const MIN_FIXED: u8 = 1 << 2;
+    const MAX_FIXED: u8 = 1 << 3;
+    const CONSUMER: u8 = 1;
+    const READ_WRITE: u8 = 1;
+    let consumed = matches!(role, Role::Consumed) as u8 * CONSUMER;
+    let mut d = alloc::vec![QWORD_ADDRESS_SPACE];
+    d.extend(BODY_LENGTH.to_le_bytes());
+    d.extend([MEMORY, MIN_FIXED | MAX_FIXED | consumed, READ_WRITE]);
+    for field in [0, base, base + length - 1, 0, length] {
+        d.extend(field.to_le_bytes());
+    }
     d
 }
 

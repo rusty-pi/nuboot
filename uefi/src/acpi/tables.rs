@@ -13,6 +13,8 @@ pub struct Machine {
     pub tpm: Option<u64>,
     /// The address of the network interface, when the VPU gives it one.
     pub ethernet: Option<[u8; 6]>,
+    /// Where the USB controller's registers are, when the board has one.
+    pub xhci: Option<u64>,
     /// How many cores the tables enable.
     pub cores: u32,
 }
@@ -72,6 +74,15 @@ const SDHCI_DMA_CAPABILITIES: u64 = 0x0058_0000;
 const GENET: u32 = 0xfd58_0000;
 const GENET_SIZE: u32 = 0x10000;
 const GENET_GSIVS: [u32; 2] = [189, 190];
+
+/// The VL805's registers are one page of its first BAR, and it raises the
+/// root complex's INTA line, which the interrupt controller has as SPI 143.
+const XHCI_SIZE: u64 = 0x1000;
+const XHCI_GSIV: u32 = 175;
+/// Bus addresses from 0 up to 2 GiB are memory; above them is the window the
+/// controller's own registers are in.
+const XHCI_DMA_BITS: u8 = 31;
+const XHCI_PATH: &[u8] = b"\\_SB_.SCB0.XHC0\0";
 
 struct Table {
     bytes: Vec<u8>,
@@ -299,6 +310,34 @@ fn tpm2(crb: u64) -> Vec<u8> {
     t.finish()
 }
 
+/// How much memory the USB controller reaches, which an OS needs at the start
+/// of its boot, before it reads the DSDT.
+fn iort() -> Vec<u8> {
+    const NAMED_COMPONENT: u8 = 1;
+    const NODES: u32 = HEADER as u32 + 12;
+    const NODE_FIXED: usize = 29;
+    let node_length = (NODE_FIXED + XHCI_PATH.len()).next_multiple_of(4);
+    let mut t = Table::new(b"IORT", 0, 1);
+    t.u32(1);
+    t.u32(NODES);
+    t.u32(0);
+    t.u8(NAMED_COMPONENT);
+    t.u16(node_length as u16);
+    t.u8(0);
+    t.u32(0);
+    t.u32(0);
+    t.u32(0);
+    t.u32(0);
+    t.u32(0);
+    t.u8(0);
+    t.u16(0);
+    t.u8(0);
+    t.u8(XHCI_DMA_BITS);
+    t.bytes.extend(XHCI_PATH);
+    t.zeros(node_length - NODE_FIXED - XHCI_PATH.len());
+    t.finish()
+}
+
 fn processor(core: u32) -> Bytes {
     const NAMES: [&str; 4] = ["CPU0", "CPU1", "CPU2", "CPU3"];
     aml::device(NAMES[core as usize], &[
@@ -397,11 +436,37 @@ fn ethernet(address: Option<[u8; 6]>) -> Bytes {
     ])
 }
 
+/// The USB controller as a platform xHCI device, in a container that says
+/// what memory it reaches. The OS's generic xHCI driver takes it; UEFI has
+/// brought the PCIe link up and put its registers in the root complex's window.
+fn usb(registers: u64) -> Bytes {
+    use aml::Role::{Consumed, Produced};
+    aml::device("SCB0", &[
+        aml::name("_HID", &aml::string("ACPI0004")),
+        aml::name("_UID", &aml::integer(0)),
+        aml::name("_CCA", &aml::integer(0)),
+        aml::name("_CRS", &aml::resources(&[aml::qword_memory(Produced, registers, XHCI_SIZE)])),
+        aml::name("_DMA", &aml::resources(&[aml::qword_memory(Produced, 0, 1 << XHCI_DMA_BITS)])),
+        aml::device("XHC0", &[
+            aml::name("_HID", &aml::string("PNP0D10")),
+            aml::name("_UID", &aml::integer(0)),
+            aml::name("_CCA", &aml::integer(0)),
+            aml::name("_CRS", &aml::resources(&[
+                aml::qword_memory(Consumed, registers, XHCI_SIZE),
+                aml::interrupts(&[XHCI_GSIV], false),
+            ])),
+        ]),
+    ])
+}
+
 fn dsdt(machine: &Machine) -> Vec<u8> {
     let mut devices: Vec<Bytes> = (0..machine.cores).map(processor).collect();
     devices.extend([console(), power_manager(), sd_host(), ethernet(machine.ethernet)]);
     if let Some(crb) = machine.tpm {
         devices.push(tpm(crb));
+    }
+    if let Some(registers) = machine.xhci {
+        devices.push(usb(registers));
     }
     let mut t = Table::new(b"DSDT", 2, 1);
     t.bytes.extend(aml::root_scope("_SB", &devices));
@@ -457,7 +522,7 @@ fn replace(block: &mut [u8], at: usize, bytes: &[u8]) {
 /// is, so the tables that point at others go in first and are written again
 /// once the others have their places.
 pub fn assemble(machine: &Machine, base: u64) -> Block {
-    let count = 5 + machine.tpm.is_some() as usize;
+    let count = 5 + machine.tpm.is_some() as usize + machine.xhci.is_some() as usize;
     let mut block = Vec::new();
     let rsdp_at = place(&mut block, &rsdp(0));
     let xsdt_at = place(&mut block, &xsdt(&alloc::vec![0; count]));
@@ -470,6 +535,9 @@ pub fn assemble(machine: &Machine, base: u64) -> Block {
     entries.push(place(&mut block, &pptt(machine.cores)));
     if let Some(crb) = machine.tpm {
         entries.push(place(&mut block, &tpm2(crb)));
+    }
+    if machine.xhci.is_some() {
+        entries.push(place(&mut block, &iort()));
     }
     let address = |at: usize| base + at as u64;
 
