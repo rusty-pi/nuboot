@@ -83,6 +83,8 @@ for module in reset-raspberrypi usb-common usbcore xhci-hcd xhci-pci scsi_common
   xz -dc "$path" >"$root/modules/$module.ko"
 done
 cp "$tmp/tpm-vpu/tpm_vpu.ko" "$root/tpm_vpu.ko"
+"${CROSS}gcc" -static -O2 -o "$root/bin/rmvar" "$here/uefi/test-apps/linux/rmvar.c"
+"${CROSS}strip" "$root/bin/rmvar"
 cp "$here/uefi/test-apps/linux/init" "$root/init"
 chmod +x "$root/init"
 "$here/scripts/mkinitramfs.py" "$root" "$tmp/initrd.gz"

@@ -70,3 +70,5 @@ milestones:
     line: "linux test: variable written"
   - why: "The OS resets the board, and the variable it wrote is there at the next boot: the VPU signed and kept the write."
     line: "linux test: variable survived the reset 07000000010203"
+  - why: "The OS deletes the variable it wrote, which is what keeps the run repeatable on a board whose flash holds the variable store."
+    line: "linux test: variable removed"

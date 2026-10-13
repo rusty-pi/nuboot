@@ -82,6 +82,7 @@ usb
 TEST=6b1c0a52-3a7e-4d1f-9a0b-112233445566
 if [ -e /sys/firmware/efi/efivars/LinuxTest-$TEST ]; then
     say "variable survived the reset $(var LinuxTest $TEST)"
+    rmvar /sys/firmware/efi/efivars/LinuxTest-$TEST && say "variable removed"
 else
     printf '\007\000\000\000\001\002\003' > /sys/firmware/efi/efivars/LinuxTest-$TEST && say "variable written"
     say "variable reads $(var LinuxTest $TEST)"
