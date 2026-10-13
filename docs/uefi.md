@@ -206,11 +206,12 @@ log in two banks of 20 KiB from `0x74000`, and come back at the next boot.
   boot starts from the built-in keys and checks each stored write again against
   the keys as they were when it was made.
 - Every other non-volatile variable (boot entries, shim's MOK list) is stored
-  with a signature, the device private key's ECDSA P-256 signature
-  ([keystore.md](keystore.md#the-firmware-cryptography-service)) over its
-  attributes, name, value and a counter. A record whose signature does not verify, or
-  whose counter is not above the one before it, is ignored. A variable is
-  at most 16 KiB.
+  with a seal: the device private key's HMAC-SHA256
+  ([keystore.md](keystore.md#the-firmware-cryptography-service)) of the SHA-256
+  of its attributes, name, value and a counter, which the VPU computes, so the
+  key never reaches the ARM. A record whose seal does not match, or whose
+  counter is not above the one before it, is ignored. A variable is at most
+  16 KiB.
 - A record is intact when its framing and SHA-256 are. One that is not, such as
   a write a power loss cut short, is stepped over to the next intact one, and
   the store moves to the other bank without it at that boot.
@@ -223,12 +224,12 @@ log in two banks of 20 KiB from `0x74000`, and come back at the next boot.
   records.
 
 The OS can write the flash, and can drop records, but not make one: the
-device key signs for it only through the VPU's runtime tag, in a signature
-domain UEFI accepts for a variable of the OS's own and nothing else (below).
-UEFI forbids the device key to sign and to HMAC at `ExitBootServices`, and
-stops the boot when the VPU does not say it is locked. Dropping the
-newest record of a variable returns it to its previous value. Where the flash
-does not answer, or no device private key is fused, there is no signature and a
+device key seals for it only through the VPU's runtime tag, in a domain UEFI
+accepts for a variable of the OS's own and nothing else (below). UEFI forbids
+the device key to sign and to HMAC at `ExitBootServices`, and stops the boot
+when the VPU does not say it is locked. Dropping the newest record of a
+variable returns it to its previous value. Where the flash does not answer, or
+no device private key is fused, there is no seal and a
 variable other than `KEK`, `db` and `dbx` lasts until reset. Writing a whole new
 `pieeprom.bin` clears the store.
 
@@ -239,11 +240,11 @@ their table, and tell the VPU over the mailbox, on a channel of their own
 (7) that the OS's mailbox driver does not listen on, so that nothing is posted
 back to disturb it: the VPU answers in the message's own buffer.
 
-- A non-volatile variable no signature guards is signed by the VPU with the
+- A non-volatile variable no signature guards is sealed by the VPU with the
   device key and appended to the flash store, with the sequence number the next
-  record needs. The VPU signs, in a domain of its own, only a write or a
+  record needs. The VPU seals, in a domain of its own, only a write or a
   deletion with the attributes non-volatile, boot services and runtime, a name
-  without a NUL and at most 16 KiB of value: what the OS asks it to sign is the
+  without a NUL and at most 16 KiB of value: what the OS asks it to seal is the
   OS's word. At the next boot UEFI takes such a record only for a variable the
   OS owns, one that the table holds with those attributes, or none. A
   `SecureBoot`, `PK` or other variable the firmware keeps, or one the boot

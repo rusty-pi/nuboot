@@ -31,9 +31,6 @@ mod fat;
 mod fdt;
 mod image;
 mod mailbox;
-#[path = "../../src/p256.rs"]
-#[allow(dead_code)]
-mod p256;
 mod mem;
 mod proto;
 mod pkcs7;

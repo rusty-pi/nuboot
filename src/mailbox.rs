@@ -190,7 +190,7 @@ fn answer(bus: u32, runtime: bool) {
                 for (n, byte) in guid.iter_mut().enumerate() {
                     *byte = (word(value + 4 + n as u32 / 4) >> (8 * (n % 4))) as u8;
                 }
-                let status = if name_bytes <= 512 && data_bytes <= varstore::MAX_SIGNED_DATA {
+                let status = if name_bytes <= 512 && data_bytes <= varstore::MAX_SEALED_DATA {
                     let data_at = name_bytes.next_multiple_of(4);
                     if 32 + data_at + data_bytes <= room as usize && data_at + data_bytes <= store_buffer().len() {
                         let scratch = store_buffer();

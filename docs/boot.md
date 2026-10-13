@@ -134,5 +134,5 @@ they are signed with ([uefi.md](uefi.md#secure-boot)).
   `0x000300a3` carries a command, `0x000300a1` extends a PCR) and the
   one-time boot key (tag `0x000300a0`) and the device key's signatures, HMACs and
   public key (`0x0003008e` to `0x00030095`, [keystore.md](keystore.md#the-firmware-cryptography-service)),
-  and, on channel 7 for the runtime services, the store's `0x000300a6` (append a record as it is) and `0x000300a7` (sign and append a variable's write), and no other tag. None returns a fuse.
+  and, on channel 7 for the runtime services, the store's `0x000300a6` (append a record as it is) and `0x000300a7` (seal and append a variable's write), and no other tag. None returns a fuse.
 - Nothing sets the ARM's clock.

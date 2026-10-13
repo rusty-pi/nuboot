@@ -24,8 +24,7 @@ const TPM_ANSWER_US: u64 = 5_000_000;
 const TAG_EXTEND_BOOT_MEASUREMENT: u32 = 0x0003_00a1;
 const TAG_CRYPTO_KEY_STATUS: u32 = 0x0003_0090;
 const TAG_CRYPTO_SET_KEY_STATUS: u32 = 0x0003_8090;
-const TAG_CRYPTO_SIGN: u32 = 0x0003_0091;
-const TAG_CRYPTO_PUBLIC_KEY: u32 = 0x0003_0093;
+const TAG_CRYPTO_HMAC_SHA256: u32 = 0x0003_0092;
 /// The device private key's id in the firmware cryptography service.
 const DEVICE_KEY: u32 = 1;
 const SIGN_LOCKED: u32 = 1 << 10;
@@ -203,47 +202,20 @@ fn word_bytes(words: &[u32], len: usize) -> alloc::vec::Vec<u8> {
     words.iter().flat_map(|w| w.to_le_bytes()).take(len).collect()
 }
 
-/// The device private key's public key, if one is fused.
-pub fn device_public() -> Option<crate::p256::Point> {
-    let answer = crypto_call(TAG_CRYPTO_PUBLIC_KEY, &[0, DEVICE_KEY], 8 + 512)?;
-    if answer[0] != 0 {
-        return None;
-    }
-    let der = word_bytes(&answer[2..], answer[1] as usize);
-    let point = der.get(der.len().checked_sub(65)?..)?;
-    (point[0] == 4).then(|| crate::p256::Point { x: point[1..33].try_into().unwrap(), y: point[33..65].try_into().unwrap() })
-}
-
-/// `(r, s)`, the device key's ECDSA signature of `digest`.
-pub fn device_sign(digest: &[u8; 32]) -> Option<([u8; 32], [u8; 32])> {
+/// `HMAC-SHA256(device key, message)`, the key as its 32 raw bytes, if a key is
+/// fused and the VPU answers.
+pub fn device_hmac(message: &[u8; 32]) -> Option<[u8; 32]> {
     let mut request = [0u32; 11];
     request[1] = DEVICE_KEY;
     request[2] = 32;
-    for (w, bytes) in request[3..].iter_mut().zip(digest.chunks_exact(4)) {
+    for (w, bytes) in request[3..].iter_mut().zip(message.chunks_exact(4)) {
         *w = u32::from_le_bytes(bytes.try_into().unwrap());
     }
-    let answer = crypto_call(TAG_CRYPTO_SIGN, &request, 8 + 128)?;
-    if answer[0] != 0 {
+    let answer = crypto_call(TAG_CRYPTO_HMAC_SHA256, &request, 12 + 32)?;
+    if answer[0] != 0 || answer[1] != 32 {
         return None;
     }
-    let der = word_bytes(&answer[2..], answer[1] as usize);
-    let integer = |at: usize| -> Option<([u8; 32], usize)> {
-        if *der.get(at)? != 2 {
-            return None;
-        }
-        let len = *der.get(at + 1)? as usize;
-        let value = der.get(at + 2..at + 2 + len)?;
-        let value = &value[value.len().saturating_sub(32)..];
-        let mut out = [0u8; 32];
-        out[32 - value.len()..].copy_from_slice(value);
-        Some((out, at + 2 + len))
-    };
-    if der.first() != Some(&0x30) {
-        return None;
-    }
-    let (r, next) = integer(2)?;
-    let (s, _) = integer(next)?;
-    Some((r, s))
+    word_bytes(&answer[2..], 32).try_into().ok()
 }
 
 /// Forbid the device key to sign and to HMAC until the next boot: the OS has

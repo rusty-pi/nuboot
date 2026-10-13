@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "persist"
-description: "A board with its device private key fused (a test key, not a board's): an EFI application exits boot services and writes through the runtime services a non-volatile variable, an append to it, a deletion and a signed update of db, then resets. The VPU signs and appends the variable writes to the flash store and appends the db update as it is. After the reset the variables are as written, and UEFI has checked the db update against KEK and applied it."
+description: "A board with its device private key fused (a test key, not a board's): an EFI application exits boot services and writes through the runtime services a non-volatile variable, an append to it, a deletion and a signed update of db, then resets. The VPU seals and appends the variable writes to the flash store and appends the db update as it is. After the reset the variables are as written, and UEFI has checked the db update against KEK and applied it."
 
 boot:
   eeprom: "../out/stock-pieeprom.bin"
@@ -34,7 +34,7 @@ milestones:
     line: "runtime test: the deleted variable is gone ok"
   - why: "The signed update took effect at the boot after."
     line: "runtime test: db holds the certificate the signed update added ok"
-  - why: "The VPU signed the OS's deletion of SecureBoot, which asked for it over the mailbox itself, and it did not take effect."
+  - why: "The VPU sealed the OS's deletion of SecureBoot, which asked for it over the mailbox itself, and it did not take effect."
     line: "runtime test: SecureBoot is still there ok"
   - why: "The OS's deletion of a variable the boot chain keeps hidden from it, made by creating one of the same name, did not take effect either."
     line: "runtime test: the hidden variable is still there ok"
