@@ -54,12 +54,14 @@ jobs:
       # scripts/mkstore.py (with python3-cryptography) signs the variable store
       # records the scenarios start from,
       # scripts/mkbootimg.py the signed boot.img (with mtools and dosfstools),
-      # and scripts/build-uefi.sh signs the test applications with sbsign.
-      - name: Install Python and sbsigntool
+      # scripts/build-uefi.sh signs the test applications with sbsign, and
+      # scripts/build-linux-test.sh builds the initramfs's helper with the
+      # cross compiler and its C library.
+      - name: Install Python, sbsigntool and the cross compiler
         run: |
-          command -v python3 >/dev/null && command -v sbsign >/dev/null && command -v mcopy >/dev/null && command -v aarch64-linux-gnu-gcc >/dev/null && exit 0
+          command -v python3 >/dev/null && command -v sbsign >/dev/null && command -v mcopy >/dev/null && command -v aarch64-linux-gnu-gcc >/dev/null && [ -e /usr/aarch64-linux-gnu/include/stdio.h ] && exit 0
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3 python3-cryptography sbsigntool openssl mtools dosfstools make gcc-aarch64-linux-gnu
+          sudo apt-get install -y --no-install-recommends python3 python3-cryptography sbsigntool openssl mtools dosfstools make gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 
       # The action brings rustup itself, which a self-hosted runner has only
       # once something has installed it; the toolchain built with is the one

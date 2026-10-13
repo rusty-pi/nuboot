@@ -5,7 +5,8 @@
 # scenarios/linux-acpi.yaml boot to see the firmware from a running Linux,
 # with the device tree and with the ACPI tables. Needs what
 # scripts/build-uefi.sh --test-keys --test-apps does, and sbsign, xz, ar, tar
-# and cpio's gzip.
+# and cpio's gzip, and off an aarch64 host aarch64-linux-gnu-gcc with its C
+# library, which build the TPM module and the initramfs's helper.
 set -euo pipefail
 
 KERNEL_URL="${KERNEL_URL:-https://deb.debian.org/debian/pool/main/l/linux/linux-image-6.12.107+deb13-arm64-unsigned_6.12.107-1_arm64.deb}"
