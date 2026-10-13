@@ -272,7 +272,7 @@ fn memory_reg(total: u64, out: &mut [u8; MEMORY_REG_MAX]) -> usize {
 }
 
 pub enum Error {
-    /// The built-in device tree is not one, or has no `/memory@0` `reg`.
+    /// The built-in device tree is not one, or has no `/memory@0` `reg` or no `/reserved-memory`.
     Tree,
 }
 
@@ -302,7 +302,7 @@ pub fn ethernet_address(serial: u32) -> [u8; 6] {
 const REVISION_PROPERTY: &[u8] = b"rusty-pi,board-revision";
 
 /// The serial number as a device tree string: eight hex digits, as the
-/// bootloader names the board (`serial 69738888`), and the NUL.
+/// bootloader names the board (`serial 1a2b3c4d`), and the NUL.
 fn serial_text(serial: u32) -> [u8; 9] {
     let mut text = [0u8; 9];
     for (i, digit) in text[..8].iter_mut().enumerate() {

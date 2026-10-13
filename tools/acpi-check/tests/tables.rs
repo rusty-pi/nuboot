@@ -40,6 +40,13 @@ fn every_table_checks_out() {
 }
 
 #[test]
+fn the_block_has_the_same_length_wherever_it_is_laid_out() {
+    // The firmware sizes the block with one address and fills it with another.
+    assert_eq!(tables::assemble(&sample(), 0).bytes.len(), block().bytes.len());
+    assert_eq!(tables::assemble(&sample(), 0xffff_f000).bytes.len(), block().bytes.len());
+}
+
+#[test]
 fn the_tables_leave_out_the_tpm_when_the_vpu_has_none() {
     let machine = tables::Machine { tpm: None, ..sample() };
     let block = tables::assemble(&machine, BASE);
@@ -124,6 +131,8 @@ fn the_tpm_table_names_the_control_area_and_the_acpi_start() {
     let found = walk(&block(), BASE);
     let tpm2 = &table(&found, "TPM2").bytes;
     assert_eq!(tpm2.len(), 64);
+    assert_eq!(tpm2[8], 4, "revision 4, which has the platform class at offset 36");
+    assert_eq!(u16::from_le_bytes([tpm2[36], tpm2[37]]), 1);
     assert_eq!(u64::from_le_bytes(tpm2[40..48].try_into().unwrap()), 0x3ebf_f040);
     assert_eq!(u32::from_le_bytes(tpm2[48..52].try_into().unwrap()), 8);
 }

@@ -26,7 +26,7 @@ for:
   and committed once it has reached the OS ([docs/updates.md](docs/updates.md)).
 
 Out of scope: HATs and IPv6. The operating system gets a device tree, and ACPI
-tables when it asks for them ([docs/uefi.md](docs/uefi.md#acpi)).
+tables when it asks for them or has no device tree ([docs/uefi.md](docs/uefi.md#acpi)).
 
 > [!NOTE]
 > This is an early firmware. On a Raspberry Pi 4B rev 1.5 (`d03115`) it starts

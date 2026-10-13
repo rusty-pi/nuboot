@@ -37,7 +37,7 @@ defines and the kernel has long had a driver for (`CONFIG_TCG_CRB`, built in on
 Debian), so there is no module to build, sign or keep in step with a kernel.
 
 What else the tables describe is in [uefi.md](uefi.md#acpi): the four cores, the
-interrupt controller and timers, the PL011 console, the SD host, the network
+interrupt controller and timers, the SBSA UART console, the SD host, the network
 interface, the USB controller, the random number generator, the temperature
 sensor (as the thermal zone `acpitz`) and the power manager, whose watchdog the
 kernel's `bcm2835-pm` driver provides through the `compatible` property the

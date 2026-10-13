@@ -44,6 +44,10 @@ pub fn init(tree: &fdt::Fdt, xhci: Option<u64>) {
     let block = tables::assemble(&machine, at as u64);
     unsafe { core::ptr::copy_nonoverlapping(block.bytes.as_ptr(), at, size) };
     let rsdp = at as u64 + block.rsdp as u64;
-    efi_tables::install_table(ACPI_20_TABLE_GUID, rsdp as *mut c_void);
+    let status = efi_tables::install_table(ACPI_20_TABLE_GUID, rsdp as *mut c_void);
+    if status.is_error() {
+        warn!("acpi", "the tables were not offered"; status = Hex(status.as_usize()));
+        return;
+    }
     info!("acpi", "tables ready"; rsdp = Hex(rsdp), bytes = size, crb = Hex(machine.tpm.unwrap_or(0)), xhci = Hex(machine.xhci.unwrap_or(0)), cores = machine.cores);
 }

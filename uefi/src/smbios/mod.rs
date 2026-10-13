@@ -41,12 +41,13 @@ fn midr() -> u64 {
 /// Offer the tables, for the memory the board has: a power of two in MiB, as
 /// the chips are, from what the memory map holds.
 pub fn init(tree: &fdt::Fdt) {
-    let model = text(tree, b"model");
+    let revision = tree.bytes::<4>(ROOT, REVISION).map(u32::from_be_bytes);
+    let model = revision.and_then(tables::product_name).map_or_else(|| text(tree, b"model"), |name| name.to_vec());
     let serial = text(tree, b"serial-number");
     let board = tables::Board {
         model: &model,
         serial: &serial,
-        revision: tree.bytes::<4>(ROOT, REVISION).map(u32::from_be_bytes),
+        revision,
         cores: CORES,
         ram_mib: (mem::map().total_mib() as u32).next_power_of_two(),
         midr: midr(),
@@ -60,6 +61,10 @@ pub fn init(tree: &fdt::Fdt) {
     };
     let block = tables::assemble(&board, at as u64);
     unsafe { core::ptr::copy_nonoverlapping(block.as_ptr(), at, size) };
-    efi_tables::install_table(SMBIOS3_TABLE_GUID, at as *mut c_void);
+    let status = efi_tables::install_table(SMBIOS3_TABLE_GUID, at as *mut c_void);
+    if status.is_error() {
+        warn!("smbios", "the tables were not offered"; status = Hex(status.as_usize()));
+        return;
+    }
     info!("smbios", "tables ready"; entry = Hex(at as u64), bytes = size, serial = core::str::from_utf8(&serial).unwrap_or(""));
 }

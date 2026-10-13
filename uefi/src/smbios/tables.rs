@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 
 /// What the tables say that the board and the firmware decide.
 pub struct Board<'a> {
-    /// The board as its maker names it: the device tree's `model`.
+    /// The board as its maker names it.
     pub model: &'a [u8],
     pub serial: &'a [u8],
     /// The revision code, `0xd03115` on a 4B rev 1.5.
@@ -19,6 +19,25 @@ pub struct Board<'a> {
     pub firmware_version: &'a [u8],
     pub firmware_time: u32,
 }
+
+/// What the board is, by the type its revision code carries; the device tree
+/// the ARM gets is the 4B's whatever the board.
+pub fn product_name(revision: u32) -> Option<&'static [u8]> {
+    const NEW_STYLE: u32 = 1 << 23;
+    if revision & NEW_STYLE == 0 {
+        return None;
+    }
+    match (revision >> 4) & 0xff {
+        0x11 => Some(b"Raspberry Pi 4 Model B"),
+        0x13 => Some(b"Raspberry Pi 400"),
+        0x14 => Some(b"Compute Module 4"),
+        0x15 => Some(b"Compute Module 4S"),
+        _ => None,
+    }
+}
+
+/// The rate the ARM runs at, which this firmware sets.
+const CLOCK_MHZ: u16 = 600;
 
 const MAKER: &[u8] = b"Raspberry Pi Ltd";
 const FAMILY: &[u8] = b"Raspberry Pi 4";
@@ -204,6 +223,8 @@ fn structures(board: &Board) -> Vec<u8> {
         .text(0x10, CORE)
         .byte(0x18, 0x41)
         .byte(0x19, 6)
+        .word(0x14, CLOCK_MHZ)
+        .word(0x16, CLOCK_MHZ)
         .word(0x1a, NOT_PROVIDED)
         .word(0x1c, NOT_PROVIDED)
         .word(0x1e, NOT_PROVIDED)

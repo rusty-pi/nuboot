@@ -24,7 +24,7 @@ pub fn sample() -> Machine {
 pub fn smbios_sample() -> smbios::tables::Board<'static> {
     smbios::tables::Board {
         model: b"Raspberry Pi 4 Model B",
-        serial: b"69738888",
+        serial: b"1a2b3c4d",
         revision: Some(0xd03115),
         cores: 4,
         ram_mib: 8192,

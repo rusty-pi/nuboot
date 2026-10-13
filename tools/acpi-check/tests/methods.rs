@@ -99,10 +99,10 @@ fn the_start_method_gives_up_when_the_mailbox_stays_full() {
 /// as ACPI has it, with 0 for no sample.
 fn decikelvin(word: u32) -> u64 {
     let count = (word & 0x3ff) as u64;
-    if word & 0x1_0400 == 0 || count > 410_040 / 487 {
+    if word & 0x1_0400 == 0 {
         return 0;
     }
-    (410_040 - 487 * count) / 100 + 2732
+    (410_040 + 273_200 - 487 * count) / 100
 }
 
 fn temperature(fill: u8) -> Option<Vec<String>> {
@@ -112,8 +112,9 @@ fn temperature(fill: u8) -> Option<Vec<String>> {
 #[test]
 fn the_thermal_zone_reads_the_temperature_the_sensor_gives_and_has_a_critical_limit_and_a_polling_period() {
     // A fill of 0x01 makes the word 0x01010101: a count of 257 that is valid by
-    // bit 16 alone. 0x55 makes 0x55555555: a count of 341 valid by bit 10.
-    for fill in [0x01u8, 0x55] {
+    // bit 16 alone. 0x55 makes 0x55555555: a count of 341 valid by bit 10. 0xff
+    // is a count of 1023, 88 degrees below zero, which is still a temperature.
+    for fill in [0x01u8, 0x55, 0xff] {
         let word = u32::from_le_bytes([fill; 4]);
         let Some(found) = temperature(fill) else { return };
         assert_ne!(decikelvin(word), 0);
@@ -122,11 +123,7 @@ fn the_thermal_zone_reads_the_temperature_the_sensor_gives_and_has_a_critical_li
 }
 
 #[test]
-fn the_thermal_zone_has_no_temperature_without_a_valid_sample_or_with_a_count_it_cannot_convert() {
-    // 0x00 has no valid bit; 0xff is a count of 1023, past where the line meets
-    // zero degrees.
-    for fill in [0x00u8, 0xff] {
-        let Some(found) = temperature(fill) else { return };
-        assert_eq!(found[0], "0x0000000000000000", "fill {fill:#x}: {found:?}");
-    }
+fn the_thermal_zone_has_no_temperature_without_a_valid_sample() {
+    let Some(found) = temperature(0x00) else { return };
+    assert_eq!(found[0], "0x0000000000000000", "{found:?}");
 }

@@ -85,6 +85,8 @@ else
     done
 fi
 insmod /modules/iproc-rng200.ko 2>&1 || say "module iproc-rng200: failed"
+insmod /modules/bcm2835_wdt.ko 2>&1 || say "module bcm2835_wdt: failed"
+say "watchdog $(cat /sys/class/watchdog/watchdog0/identity 2>&1)"
 usb
 thermal() {
     zone=/sys/class/thermal/thermal_zone0
@@ -111,7 +113,11 @@ dmi() {
     [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) say "dmi serial is eight hex digits" ;;
     *) say "dmi serial $serial" ;;
     esac
-    say "dmi firmware $(cat $id/bios_vendor 2>&1) $(cat $id/bios_version 2>&1)"
+    version=$(cat $id/bios_version 2>&1)
+    case "$version" in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) say "dmi firmware $(cat $id/bios_vendor 2>&1) built from a commit" ;;
+    *) say "dmi firmware version $version" ;;
+    esac
     say "dmi chassis type $(cat $id/chassis_type 2>&1)"
     say "dmi uuid $(cat $id/product_uuid 2>&1 | tr -d - | wc -c) characters"
     say "dmi memory $(od -An -tu2 -j12 -N2 /sys/firmware/dmi/entries/17-0/raw 2>&1 | tr -d ' ') MiB"

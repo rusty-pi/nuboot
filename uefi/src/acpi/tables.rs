@@ -321,7 +321,7 @@ fn pptt(cores: u32) -> Vec<u8> {
 
 fn tpm2(crb: u64) -> Vec<u8> {
     const SERVER_PLATFORM: u16 = 1;
-    let mut t = Table::new(b"TPM2", 3, 1);
+    let mut t = Table::new(b"TPM2", 4, 1);
     t.u16(SERVER_PLATFORM);
     t.u16(0);
     t.u64(crb + CRB_CONTROL_AREA);
@@ -368,10 +368,13 @@ fn processor(core: u32) -> Bytes {
 
 /// The temperature sensor as a thermal zone, which the OS has as `acpitz`
 /// with no driver of this board's. A reading is 0 kelvin when the sensor has no
-/// valid sample, or one colder than it can tell from the count.
+/// valid sample.
 fn thermal_zone() -> Bytes {
     let count = aml::local1();
-    let millicelsius = aml::subtract(&aml::integer(TEMPERATURE_OFFSET), &aml::multiply(&count, &aml::integer(TEMPERATURE_SLOPE)));
+    let millikelvin_less_a_count_of_slopes = aml::subtract(
+        &aml::integer(TEMPERATURE_OFFSET + 100 * FREEZING_DECIKELVIN),
+        &aml::multiply(&count, &aml::integer(TEMPERATURE_SLOPE)),
+    );
     aml::thermal_zone("TZ00", &[
         aml::operation_region("AVSM", AVS_RESULT, 4),
         aml::dword_fields("AVSM", &[("SNS_", 0)]),
@@ -379,8 +382,7 @@ fn thermal_zone() -> Bytes {
             aml::store(&aml::named("SNS_"), &aml::local0()),
             aml::bit_and_into(&aml::local0(), &aml::integer(AVS_COUNT), &count),
             aml::when(&aml::equal(&aml::bit_and(&aml::local0(), &aml::integer(AVS_VALID)), &aml::integer(0)), &[aml::ret(&aml::integer(0))]),
-            aml::when(&aml::greater(&count, &aml::integer(TEMPERATURE_OFFSET / TEMPERATURE_SLOPE)), &[aml::ret(&aml::integer(0))]),
-            aml::ret(&aml::add(&aml::divide(&millicelsius, &aml::integer(100)), &aml::integer(FREEZING_DECIKELVIN))),
+            aml::ret(&aml::divide(&millikelvin_less_a_count_of_slopes, &aml::integer(100))),
         ]),
         aml::method("_CRT", 0, false, &[aml::ret(&aml::integer(CRITICAL_DECIKELVIN))]),
         aml::method("_TZP", 0, false, &[aml::ret(&aml::integer(THERMAL_POLL))]),
@@ -450,7 +452,7 @@ fn power_manager() -> Bytes {
 fn random_number_generator() -> Bytes {
     aml::device("RNG0", &[
         aml::name("_HID", &aml::string("PRP0001")),
-        aml::name("_UID", &aml::integer(0)),
+        aml::name("_UID", &aml::integer(1)),
         aml::name("_CRS", &aml::resources(&[aml::memory32(RNG, RNG_SIZE)])),
         aml::properties(&[("compatible", Value::Text("brcm,bcm2711-rng200"))]),
     ])

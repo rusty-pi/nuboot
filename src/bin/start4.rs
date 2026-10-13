@@ -93,7 +93,7 @@ fn firmware_main() -> ! {
     let board = Board::read();
     match thermal::start() {
         Some(millicelsius) => info!("thermal", "temperature sensor running";
-            celsius = format_args!("{}.{}", millicelsius / 1000, millicelsius % 1000 / 100)),
+            celsius = format_args!("{}{}.{}", if millicelsius < 0 { "-" } else { "" }, millicelsius.abs() / 1000, millicelsius.abs() % 1000 / 100)),
         None => warn!("thermal", "temperature sensor gave no sample"),
     }
     measure::platform(
@@ -118,7 +118,7 @@ fn firmware_main() -> ! {
             true
         }
         Err(arm::Error::Tree) => {
-            error!("arm", "the built-in device tree has no /memory@0 reg, not starting the ARM");
+            error!("arm", "the built-in device tree has no /memory@0 reg or no /reserved-memory, not starting the ARM");
             false
         }
     };

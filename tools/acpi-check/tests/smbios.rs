@@ -96,14 +96,14 @@ fn the_system_is_the_board_with_its_serial_number_and_a_uuid_that_stays() {
     assert_eq!(system.text(4), "Raspberry Pi Ltd");
     assert_eq!(system.text(5), "Raspberry Pi 4 Model B");
     assert_eq!(system.text(6), "d03115");
-    assert_eq!(system.text(7), "69738888");
+    assert_eq!(system.text(7), "1a2b3c4d");
     assert_eq!(system.text(0x1a), "Raspberry Pi 4");
     let uuid = system.bytes[8..24].to_vec();
     assert_eq!(uuid[7] >> 4, 8, "version 8, in the field SMBIOS stores little-endian");
     assert_eq!(uuid[8] >> 6, 2, "the RFC variant");
     let again = structures(&tables::assemble(&board(), 0x5000));
     assert_eq!(of_type(&again, 1).bytes[8..24], uuid[..]);
-    let other = structures(&tables::assemble(&Board { serial: b"69738889", ..board() }, 0));
+    let other = structures(&tables::assemble(&Board { serial: b"1a2b3c4e", ..board() }, 0));
     assert_ne!(of_type(&other, 1).bytes[8..24], uuid[..]);
 }
 
@@ -112,7 +112,7 @@ fn the_board_and_the_enclosure_agree_on_what_they_are() {
     let found = structures(&tables::assemble(&board(), 0));
     let baseboard = of_type(&found, 2);
     assert_eq!(baseboard.text(5), "Raspberry Pi 4 Model B");
-    assert_eq!(baseboard.text(7), "69738888");
+    assert_eq!(baseboard.text(7), "1a2b3c4d");
     assert_eq!(u16::from_le_bytes([baseboard.bytes[0xb], baseboard.bytes[0xc]]), of_type(&found, 3).handle);
     assert_eq!(of_type(&found, 3).bytes[5], 0x22, "an embedded PC");
 }
@@ -152,6 +152,24 @@ fn the_processor_and_the_memory_are_what_the_board_has() {
 }
 
 #[test]
+fn the_board_is_named_by_the_type_its_revision_code_carries() {
+    assert_eq!(tables::product_name(0xd03115), Some(&b"Raspberry Pi 4 Model B"[..]));
+    assert_eq!(tables::product_name(0xc03130), Some(&b"Raspberry Pi 400"[..]));
+    assert_eq!(tables::product_name(0xa03140), Some(&b"Compute Module 4"[..]));
+    assert_eq!(tables::product_name(0xb03150), Some(&b"Compute Module 4S"[..]));
+    assert_eq!(tables::product_name(0x0002), None, "an old style revision code");
+    assert_eq!(tables::product_name(0xa02082), None, "a board that is not of the 4 family");
+}
+
+#[test]
+fn the_processor_has_the_rate_the_arm_runs_at() {
+    let found = structures(&tables::assemble(&board(), 0));
+    let processor = of_type(&found, 4);
+    assert_eq!(u16::from_le_bytes([processor.bytes[0x14], processor.bytes[0x15]]), 600, "max speed");
+    assert_eq!(u16::from_le_bytes([processor.bytes[0x16], processor.bytes[0x17]]), 600, "current speed");
+}
+
+#[test]
 fn what_the_board_does_not_say_is_left_out() {
     let found = structures(&tables::assemble(&Board { serial: b"", revision: None, ..board() }, 0));
     let system = of_type(&found, 1);
@@ -182,7 +200,7 @@ fn dmidecode_reads_the_tables() {
         "UEFI is supported",
         "Manufacturer: Raspberry Pi Ltd",
         "Product Name: Raspberry Pi 4 Model B",
-        "Serial Number: 69738888",
+        "Serial Number: 1a2b3c4d",
         "Family: Raspberry Pi 4",
         "Type: Embedded PC",
         "Socket Designation: BCM2711",

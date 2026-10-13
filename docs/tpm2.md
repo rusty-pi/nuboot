@@ -126,7 +126,10 @@ out of the page, runs it, writes the response in the buffer and clears `START`.
 Where the buffer is and how long it is are the VPU's own, whatever the control
 area says when the doorbell rings; a command whose length does not fit the
 buffer gets `TPM_RC_COMMAND_SIZE`. The interface has locality 0 only, and
-nothing to cancel: a command that has started runs to its end.
+nothing to cancel: a command that has started runs to its end, and writes its
+response and clears `START` then. A command that outlasts the kernel's timeout
+(750 ms, or 2 s for the longest ones) has the kernel cancel it and send the next
+one, which that late response overwrites.
 
 ## Checks
 
