@@ -139,4 +139,5 @@ else
     sleep 60
 fi
 say "done"
+say "powering off"
 poweroff -f

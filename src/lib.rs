@@ -19,6 +19,7 @@ pub mod critical;
 pub mod eeprom;
 pub mod elf;
 pub mod fdt;
+pub mod genet;
 pub mod gpio;
 pub mod handover;
 pub mod idle;
@@ -48,6 +49,7 @@ pub mod tpm_crb;
 pub mod usb;
 pub mod varstore;
 pub mod vl805;
+pub mod wake;
 pub mod watchdog;
 
 // Both VPU cores come out of reset at the same place; bit 16 of `version` is

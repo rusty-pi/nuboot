@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "linux"
-description: "Debian's arm64 kernel, in a unified kernel image that Debian's systemd-boot starts, boots under the firmware with Secure Boot on, and its first process looks at what the firmware gave it: the kernel's own log of the EFI tables, the Secure Boot variables through efivarfs, the ESRT, the TPM on the VPU through the module in tools/tpm-vpu, `bootctl status`, the temperature sensor, the random number generator, the cores' performance monitors and the SMBIOS tables, and a variable it writes and finds again after it resets the board, and then it powers the board off. The kernel has two of the four cores (`maxcpus=2`)."
+description: "Debian's arm64 kernel, in a unified kernel image that Debian's systemd-boot starts, boots under the firmware with Secure Boot on, and its first process looks at what the firmware gave it: the kernel's own log of the EFI tables, the Secure Boot variables through efivarfs, the ESRT, the TPM on the VPU through the module in tools/tpm-vpu, `bootctl status`, the temperature sensor, the random number generator, the cores' performance monitors and the SMBIOS tables, and a variable it writes and finds again after it resets the board, and then it powers the board off, which start4.elf answers by stopping the ARM and waiting on the Ethernet port, and a magic packet from the network peer wakes the board. The kernel has two of the four cores (`maxcpus=2`)."
 
 boot:
   eeprom: "../out/stock-pieeprom.bin"
@@ -22,7 +22,8 @@ boot:
       EFI/BOOT/BOOTAA64.EFI: "../out/systemd-bootaa64.efi"
       EFI/Linux/linux-test.efi: "../out/linux-test.efi"
       loader/loader.conf: { inline: "timeout 0\nconsole-mode keep\n" }
-  until: "Halt: wake"
+  magic_packet_after: "waiting for a magic packet"
+  until: 'waking the board  reason="magic packet"'
   wall_secs: 3000
 
 milestones:
@@ -106,7 +107,9 @@ milestones:
     line: "linux test: variable removed"
   - why: "The kernel powers off through the firmware: the properties table offers ResetSystem, so the kernel has a power-off handler, which it has not without."
     line: "reboot: Power down"
-  - why: "The firmware resets the board with the halt partition in PM_RSTS, and the bootloader that starts again finds it."
-    line: "partition 63"
-  - why: "The bootloader halts there."
-    line: "Halt: wake"
+  - why: "start4.elf sees the power off through the OS's NOTIFY_REBOOT and the two writes of the firmware's ResetSystem, and takes the watchdog off before it resets the board."
+    line: "the OS powered the board off"
+  - why: "The Ethernet MAC and PHY are up at 100 Mbit/s with the magic packet detector armed."
+    line: "waiting for a magic packet  mbit_s=100 duplex=full"
+  - why: "A magic packet from the network peer, for the address the OS had, wakes the board."
+    line: 'waking the board  reason="magic packet"'

@@ -99,6 +99,9 @@ pub const H264_CTL: u32 = 0x028;
 pub const ISP_CTL: u32 = 0x030;
 pub const GEN_1C8_CTL: u32 = 0x1c8;
 pub const GEN_208_CTL: u32 = 0x208;
+/// The two generators the Ethernet MAC runs from.
+pub const GEN_1E8_CTL: u32 = 0x1e8;
+pub const GEN_210_CTL: u32 = 0x210;
 pub const SRC_PLLA_CORE: u32 = 4;
 pub const SRC_PLLC_PER: u32 = 5;
 pub const SRC_PLLD_PER: u32 = 6;
