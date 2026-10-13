@@ -213,6 +213,16 @@ fn first_erased_in(image: &[u8], from: usize) -> usize {
     image.len()
 }
 
+/// Program `bytes` at `at`, and whether they read back as they were written.
+fn program_verified(at: u32, bytes: &[u8]) -> bool {
+    if !spiflash::program(at, bytes) {
+        return false;
+    }
+    let mut back = alloc::vec![0u8; bytes.len()];
+    spiflash::read(at, &mut back);
+    back == bytes
+}
+
 fn write_bank(bank: usize, seq: u32, records: &[Record]) -> Option<u32> {
     let base = BANKS[bank];
     for sector in (0..BANK).step_by(SECTOR) {
@@ -223,7 +233,7 @@ fn write_bank(bank: usize, seq: u32, records: &[Record]) -> Option<u32> {
     let mut at = base + BANK_HEADER;
     for r in records {
         let bytes = r.encode();
-        if at as usize + bytes.len() > (base + BANK) as usize || !spiflash::program(at, &bytes) {
+        if at as usize + bytes.len() > (base + BANK) as usize || !program_verified(at, &bytes) {
             return None;
         }
         at += bytes.len() as u32;
@@ -231,7 +241,7 @@ fn write_bank(bank: usize, seq: u32, records: &[Record]) -> Option<u32> {
     let mut head = [0u8; 8];
     head[..4].copy_from_slice(&BANK_MAGIC.to_le_bytes());
     head[4..].copy_from_slice(&seq.to_le_bytes());
-    spiflash::program(base, &head).then_some(at)
+    program_verified(base, &head).then_some(at)
 }
 
 /// Start the other bank with `live`, every record the variables still need,

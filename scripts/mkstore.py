@@ -8,7 +8,9 @@ they fuse, and a record is sealed with an HMAC-SHA256 of its digest by it.
 By default the store is the tamper scenario's, with known damage in it: what a
 board's OS could do to the flash, done to it. It holds, in order: Good and Fresh, sealed and in sequence; Forged, whose seal is
 wrong; Stale, sealed but numbered below what came before it; Torn, whose
-digest does not match; and AfterTorn, sealed and in sequence, behind it.
+digest does not match; and AfterTorn, sealed and in sequence, behind it. Then what the OS had the VPU
+seal: a hidden variable's deletion, a variable of its own, SecureBoot's deletion and a record under the
+firmware's own class, FwUpdateResult.
 
 With --update the store holds one sealed record, what the firmware keeps while
 a capsule's update is under way: its state, and the version it carries. With
@@ -99,12 +101,14 @@ def main():
             record("Stale", b"stale", 0),
             record("Torn", b"torn", 3, torn=True),
             record("AfterTorn", b"after", 4),
-            # What the OS had the VPU sign: a variable of its own is read, and
-            # the deletion of a hidden one and of a firmware one is not.
+            # What the OS had the VPU seal: a variable of its own is read, and
+            # the deletion of a hidden one, of a firmware one and a record of
+            # the firmware's own are not.
             record("Hidden", b"hidden", 5, attributes=0x1 | 0x2),
             record("Hidden", b"", 6, attributes=ATTRIBUTES, kind=DELETE, label=RUNTIME_LABEL),
             record("RuntimeOk", b"ok", 7, attributes=ATTRIBUTES, label=RUNTIME_LABEL),
             record("SecureBoot", b"", 8, guid=GLOBAL, attributes=ATTRIBUTES, kind=DELETE, label=RUNTIME_LABEL),
+            record("FwUpdateResult", struct.pack("<II", 1, 0), 9, guid=FIRMWARE_CLASS, attributes=ATTRIBUTES, label=RUNTIME_LABEL),
         ]
     log = b"".join(records)
     head = struct.pack("<II", BANK_MAGIC, 1)

@@ -228,9 +228,13 @@ fn check(record: &[u8]) -> Result<(), Error> {
 }
 
 /// Append a whole record, as UEFI wrote it: framing and digest checked, and
-/// the flash read back.
+/// the flash read back. Only the record of an authenticated write (`KEK`, `db`,
+/// `dbx`) comes in this way: one without would claim a seal it has not got.
 pub fn append(record: &[u8]) -> Result<(), Error> {
     check(record)?;
+    if u32_at(record, 12) & AUTH == 0 || !matches!(u32_at(record, 8), SET | DELETE) {
+        return Err(Error::Refused);
+    }
     spi_flash::with_pins(|| append_with_pins(record))
 }
 

@@ -40,3 +40,5 @@ milestones:
     line: "tamper test: RuntimeOk present"
   - why: "The OS's deletion of SecureBoot, sealed by the VPU, is ignored."
     line: "tamper test: SecureBoot present"
+  - why: "A record under the firmware's own class that the OS had the VPU seal, which the firmware would take for the result of an update, is not read."
+    line: "tamper test: FwUpdateResult absent"

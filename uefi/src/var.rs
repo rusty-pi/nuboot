@@ -12,7 +12,7 @@ use core::ffi::c_void;
 use r_efi::efi;
 
 use crate::util::{Global, W, wstr};
-use crate::{debug, error, info, pkcs7, secure, store, warn};
+use crate::{debug, error, esrt, info, pkcs7, secure, store, warn};
 
 struct Var {
     name: Vec<u16>,
@@ -221,6 +221,9 @@ pub extern "efiapi" fn set_variable(
 /// not got the board yet. The store's records are sealed with it, and checked
 /// against it.
 static DEVICE: Global<bool> = Global::new(false);
+/// Whether the VPU failed to answer when a stored record's seal was checked: what
+/// the boot read is then not all the store holds.
+static SEAL_CHECK_FAILED: Global<bool> = Global::new(false);
 /// The sequence number the next sealed record gets: what stops an old record
 /// being put back after a newer one.
 static PLAIN_SEQ: Global<u64> = Global::new(0);
@@ -265,7 +268,10 @@ fn sealed_by(r: &store::Record) -> Option<Origin> {
         return None;
     }
     [Origin::Firmware, Origin::Runtime].into_iter().find(|&origin| {
-        let Some(seal) = crate::mailbox::device_hmac(&digest(r, origin)) else { return false };
+        let Some(seal) = crate::mailbox::device_hmac(&digest(r, origin)) else {
+            *SEAL_CHECK_FAILED.get() = true;
+            return false;
+        };
         seal.iter().zip(&r.auth).fold(0, |different, (a, b)| different | (a ^ b)) == 0
     })
 }
@@ -365,7 +371,7 @@ fn write_plain(
 /// does not seal it.
 fn sealed(kind: u32, attributes: u32, guid: &efi::Guid, name: &[u16], data: &[u8]) -> Option<store::Record> {
     let seq = *PLAIN_SEQ.get();
-    *PLAIN_SEQ.get() += 1;
+    *PLAIN_SEQ.get() = seq.checked_add(1)?;
     let mut time = [0u8; 16];
     time[..8].copy_from_slice(&seq.to_le_bytes());
     let mut record = store::Record {
@@ -549,7 +555,10 @@ pub fn load_store() {
             warn!("var", "stored write refused"; name = W(&name), status = status.as_usize());
         }
     }
-    let plain_records_were_checked = *DEVICE.get();
+    let plain_records_were_checked = *DEVICE.get() && !*SEAL_CHECK_FAILED.get();
+    if *SEAL_CHECK_FAILED.get() {
+        warn!("var", "the VPU did not answer for a stored record, the store is left as it is");
+    }
     if plain_records_were_checked {
         store::compact_when_crowded(|| live_records(usize::MAX, &[]));
     }
@@ -565,7 +574,7 @@ fn replay_plain(r: store::Record) {
         warn!("var", "stored variable ignored: the device key did not seal it"; name = W(&r.name));
         return;
     };
-    if seq < *PLAIN_SEQ.get() {
+    if seq < *PLAIN_SEQ.get() || seq == u64::MAX {
         warn!("var", "stored variable ignored: older than one before it"; name = W(&r.name), seq = seq);
         return;
     }
@@ -595,6 +604,9 @@ fn runtime_may_replay(r: &store::Record) -> bool {
         return false;
     }
     let guid = efi::Guid::from_bytes(&r.guid);
+    if guid == esrt::FIRMWARE_CLASS {
+        return false;
+    }
     match find(&r.name, &guid) {
         Some(i) => {
             let v = &VARS.get()[i];
