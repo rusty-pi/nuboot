@@ -80,9 +80,11 @@ own.
 
 The timer is the EL2 hypervisor timer (`CNTHP`, GIC interrupt 26), routed to EL2
 until `ExitBootServices`: a payload that uses either takes the beat from UEFI.
-A reset with a short count (`ResetSystem`, which Linux's `reboot` and
-`poweroff` call) within the 120 s after `ExitBootServices` is delayed if one of
-the VPU's reloads lands in the 160 µs before it fires, which is rare.
+A reset with a short count that an operating system's own driver makes within
+the 120 s after `ExitBootServices` is delayed if one of the VPU's reloads lands
+in the 160 µs before it fires, which is rare. `ResetSystem`, which Linux's
+`reboot` and `poweroff` call, asks for its count again as long as the board has
+not reset.
 
 ## Running it in pimu
 
