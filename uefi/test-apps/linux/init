@@ -56,6 +56,7 @@ usb() {
     say "usb devices $(cat /sys/bus/usb/devices/*/product 2>/dev/null | tr '\n' ',')"
     say "usb disk $(cat /sys/class/block/sda/size 2>&1) sectors"
     say "usb disk boot signature $(dd if=/dev/sda bs=1 skip=510 count=2 2>/dev/null | hexdump -ve '1/1 "%02x"')"
+    say "usb read $(dd if=/dev/sda of=/dev/null bs=1M count=64 2>&1 | tail -n 1)"
 }
 if [ $MODE = acpi ]; then
     for module in sdhci sdhci-pltfm sdhci-iproc libphy fwnode_mdio fixed_phy of_mdio mdio-bcm-unimac genet \

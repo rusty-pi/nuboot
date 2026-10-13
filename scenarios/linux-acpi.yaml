@@ -87,6 +87,8 @@ milestones:
     line: "sd 0:0:0:0: [sda] Attached SCSI removable disk"
   - why: "The stick's first sector reads back through the controller, as a partitioned disk."
     line: "linux test: usb disk boot signature 55aa"
+  - why: "A bulk read of 64 MiB through the controller, into pages the kernel picks from anywhere in memory, completes: transfers to memory above the controller's reach go through the bounce buffer."
+    line: "linux test: usb read 64+0 records out"
   - why: "The OS can write a variable."
     line: "linux test: variable written"
   - why: "The OS resets the board, and the variable it wrote is there at the next boot: the VPU signed and kept the write."
