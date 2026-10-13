@@ -29,6 +29,8 @@ global_asm!(
 .equ GICC_PMR, 0x4
 .equ GICC_IAR, 0xc
 .equ GICC_EOIR, 0x10
+// Physical IRQs routed to EL2.
+.equ HCR_EL2_IMO, 0x10
 // Eight group registers: 256 interrupts.
 .equ IGROUPR_BYTES, (8 * 4)
 
@@ -87,16 +89,7 @@ in_el2:
     mrs x6, mpidr_el1
     and x6, x6, #0x3
     cbz x6, primary
-    adr x5, spin_table
-secondary:
-    wfe
-    ldr x4, [x5, x6, lsl #3]
-    cbz x4, parked
-    mov x0, #0
-    mov x1, #0
-    mov x2, #0
-    mov x3, #0
-    br x4
+    b secondary
 
 primary:
     ldr w0, dtb_ptr32
@@ -151,35 +144,64 @@ setup_gic:
 
     .ltorg
 
-    // The ACPI parking protocol, for an operating system that starts the
-    // cores from the tables: a core woken by the software interrupt the
-    // operating system sends takes the entry point its mailbox holds, once
-    // the mailbox names it.
+    // A core that is not the primary waits here for the operating system to
+    // start it, through the spin table of the device tree or the mailbox of
+    // the ACPI tables (the parking protocol), which wakes it with a software
+    // interrupt. A core in `wfe` wakes for an interrupt it takes, so this one
+    // is routed to EL2 and unmasked while the core waits, and its vector (the
+    // current level's, at 0x280) sends the core back to look.
     .org 0x200
-parked:
-    ldr x7, =GICD
-    add x7, x7, #GICC_OFFSET
-    ldr w9, [x7, #GICC_IAR]
-    and w10, w9, #0x3ff
-    cmp w10, #1020
+    b .
+
+    .org 0x280
+irq:
+    ldr x16, =GICD
+    add x16, x16, #GICC_OFFSET
+    ldr w17, [x16, #GICC_IAR]
+    and w15, w17, #0x3ff
+    cmp w15, #1020
     b.hs 1f
-    str w9, [x7, #GICC_EOIR]
-1:  adr x8, parking_mailboxes
+    str w17, [x16, #GICC_EOIR]
+1:  adr x16, poll
+    msr elr_el2, x16
+    eret
+
+    .ltorg
+
+    .org 0x300
+secondary:
+    adr x5, spin_table
+    mov x0, #HCR_EL2_IMO
+    msr hcr_el2, x0
+    msr vbar_el2, xzr
+    isb
+poll:
+    msr daifset, #2
+    ldr x4, [x5, x6, lsl #3]
+    cbnz x4, enter
+    adr x8, parking_mailboxes
     add x8, x8, x6, lsl #4
     ldr w9, [x8]
     cmp w9, w6
-    b.ne secondary
+    b.ne wait
     ldr x4, [x8, #8]
-    cbz x4, secondary
+    cbz x4, wait
     str xzr, [x8, #8]
     mov w9, #-1
     str w9, [x8]
     dsb sy
+enter:
+    msr hcr_el2, xzr
+    isb
     mov x0, #0
     mov x1, #0
     mov x2, #0
     mov x3, #0
     br x4
+wait:
+    msr daifclr, #2
+    wfe
+    b poll
 
     .ltorg
 
