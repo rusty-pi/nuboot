@@ -108,7 +108,7 @@ From the boot ROM to the threads that run for as long as the board is up:
 | Linux 6.12 as above, started with `acpi=on` and no module: the kernel's own `tpm_crb` takes the TPM (the PCRs, the event log), the four cores start, the SD card, the network interface and the USB controller with a stick on it are there, the variable survives the reset, and the power off halts the board | ✅ | ✅ | ➖ | ➖ |
 | Linux 6.12 as above, given a device tree with nothing in it (a `.dtb` section in the unified kernel image) and no `acpi=on`: the kernel takes the ACPI tables by itself, and the TPM, the SD card, the network interface, the USB stick, the thermal zone, the SMBIOS tables and the power off are there | ✅ | ✅ | ➖ | ➖ |
 | Variables the OS writes through the runtime services, a signed `db` update among them, kept across a reset | ✅ | ✅ | ➖ | ➖ |
-| The flash variable store has room for the OS's writes after a boot: a bank the OS filled with the variables it replaced is started afresh with the variables as they were, and the OS writes as much again | ✅ | ➖ | ➖ | ➖ |
+| The flash variable store has room for the OS's writes after a boot: a bank the OS filled with the variables it replaced is started afresh with what the variables still need, and the OS writes again | ✅ | ✅ | ➖ | ➖ |
 | A shutdown through the runtime services, after `ExitBootServices`, ends in the bootloader's halt | ✅ | ➖ | ➖ | ➖ |
 | A boot key from the fused private key, handed over once, nothing of it left in the VPU's memory | ✅ | ➖ | ➖ | ➖ |
 
