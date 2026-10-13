@@ -62,6 +62,26 @@ const TPM_START_UUID: &str = "6bbf6cab-5463-4714-b7cd-f0203c0368d4";
 const PM: u32 = 0xfe10_0000;
 const PM_SIZE: u32 = 0x114;
 
+const RNG: u32 = 0xfe10_4000;
+const RNG_SIZE: u32 = 0x28;
+
+/// The temperature channel of the AVS monitor, where Linux's `bcm2711_thermal`
+/// reads it: the sample in the low ten bits, and two bits that say it is
+/// valid, of which one is enough. A sample is `TEMPERATURE_OFFSET -
+/// TEMPERATURE_SLOPE * count` millidegrees Celsius.
+const AVS_RESULT: u32 = 0xfd5d_2200;
+const AVS_VALID: u64 = 1 << 10 | 1 << 16;
+const AVS_COUNT: u64 = 0x3ff;
+const TEMPERATURE_OFFSET: u64 = 410_040;
+const TEMPERATURE_SLOPE: u64 = 487;
+/// ACPI counts temperatures in tenths of a kelvin.
+const FREEZING_DECIKELVIN: u64 = 2732;
+/// The most the SoC is rated for, 85 degrees Celsius. Nothing in this firmware
+/// slows the cores down before then, so the OS powers the board off at it.
+const CRITICAL_DECIKELVIN: u64 = FREEZING_DECIKELVIN + 850;
+/// How often the OS reads the zone, in tenths of a second.
+const THERMAL_POLL: u64 = 10;
+
 const EMMC2: u32 = 0xfe34_0000;
 const EMMC2_SIZE: u32 = 0x100;
 const EMMC2_GSIV: u32 = 158;
@@ -346,6 +366,27 @@ fn processor(core: u32) -> Bytes {
     ])
 }
 
+/// The temperature sensor as a thermal zone, which the OS has as `acpitz`
+/// with no driver of this board's. A reading is 0 kelvin when the sensor has no
+/// valid sample, or one colder than it can tell from the count.
+fn thermal_zone() -> Bytes {
+    let count = aml::local1();
+    let millicelsius = aml::subtract(&aml::integer(TEMPERATURE_OFFSET), &aml::multiply(&count, &aml::integer(TEMPERATURE_SLOPE)));
+    aml::thermal_zone("TZ00", &[
+        aml::operation_region("AVSM", AVS_RESULT, 4),
+        aml::dword_fields("AVSM", &[("SNS_", 0)]),
+        aml::method("_TMP", 0, false, &[
+            aml::store(&aml::named("SNS_"), &aml::local0()),
+            aml::bit_and_into(&aml::local0(), &aml::integer(AVS_COUNT), &count),
+            aml::when(&aml::equal(&aml::bit_and(&aml::local0(), &aml::integer(AVS_VALID)), &aml::integer(0)), &[aml::ret(&aml::integer(0))]),
+            aml::when(&aml::greater(&count, &aml::integer(TEMPERATURE_OFFSET / TEMPERATURE_SLOPE)), &[aml::ret(&aml::integer(0))]),
+            aml::ret(&aml::add(&aml::divide(&millicelsius, &aml::integer(100)), &aml::integer(FREEZING_DECIKELVIN))),
+        ]),
+        aml::method("_CRT", 0, false, &[aml::ret(&aml::integer(CRITICAL_DECIKELVIN))]),
+        aml::method("_TZP", 0, false, &[aml::ret(&aml::integer(THERMAL_POLL))]),
+    ])
+}
+
 fn console() -> Bytes {
     aml::device("URT0", &[
         aml::name("_HID", &aml::string("ARMH0011")),
@@ -401,6 +442,17 @@ fn power_manager() -> Bytes {
         aml::name("_UID", &aml::integer(0)),
         aml::name("_CRS", &aml::resources(&[aml::memory32(PM, PM_SIZE)])),
         aml::properties(&[("compatible", Value::Text("brcm,bcm2835-pm-wdt"))]),
+    ])
+}
+
+/// The hardware random number generator, as the driver the device tree's
+/// `compatible` names takes it.
+fn random_number_generator() -> Bytes {
+    aml::device("RNG0", &[
+        aml::name("_HID", &aml::string("PRP0001")),
+        aml::name("_UID", &aml::integer(0)),
+        aml::name("_CRS", &aml::resources(&[aml::memory32(RNG, RNG_SIZE)])),
+        aml::properties(&[("compatible", Value::Text("brcm,bcm2711-rng200"))]),
     ])
 }
 
@@ -461,7 +513,7 @@ fn usb(registers: u64) -> Bytes {
 
 fn dsdt(machine: &Machine) -> Vec<u8> {
     let mut devices: Vec<Bytes> = (0..machine.cores).map(processor).collect();
-    devices.extend([console(), power_manager(), sd_host(), ethernet(machine.ethernet)]);
+    devices.extend([console(), power_manager(), random_number_generator(), sd_host(), ethernet(machine.ethernet)]);
     if let Some(crb) = machine.tpm {
         devices.push(tpm(crb));
     }
@@ -470,6 +522,7 @@ fn dsdt(machine: &Machine) -> Vec<u8> {
     }
     let mut t = Table::new(b"DSDT", 2, 1);
     t.bytes.extend(aml::root_scope("_SB", &devices));
+    t.bytes.extend(aml::root_scope("_TZ", &[thermal_zone()]));
     t.finish()
 }
 

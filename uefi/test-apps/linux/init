@@ -75,11 +75,29 @@ if [ $MODE = acpi ]; then
     say "network interfaces $(ls /sys/class/net | tr '\n' ' ')"
     say "ethernet address $(cat /sys/class/net/e*/address 2>&1 | tr -d :)"
 else
-    for module in reset-raspberrypi usb-common usbcore xhci-hcd xhci-pci scsi_common scsi_mod usb-storage sd_mod; do
+    for module in reset-raspberrypi usb-common usbcore xhci-hcd xhci-pci scsi_common scsi_mod usb-storage sd_mod bcm2711_thermal; do
         insmod /modules/$module.ko 2>&1 || say "module $module: failed"
     done
 fi
+insmod /modules/iproc-rng200.ko 2>&1 || say "module iproc-rng200: failed"
 usb
+thermal() {
+    zone=/sys/class/thermal/thermal_zone0
+    say "thermal zone $(cat $zone/type 2>&1)"
+    temp=$(cat $zone/temp 2>&1)
+    if [ "$temp" -gt 10000 ] 2>/dev/null && [ "$temp" -lt 100000 ]; then say "temperature plausible"; else say "temperature $temp"; fi
+    say "critical trip $(cat $zone/trip_point_0_temp 2>&1) $(cat $zone/trip_point_0_type 2>&1)"
+}
+thermal
+hwrng=$(cat /sys/class/misc/hw_random/rng_available 2>&1)
+case "$hwrng" in
+*iproc-rng200*) say "hwrng iproc-rng200 registered" ;;
+*) say "hwrng missing: $hwrng" ;;
+esac
+echo iproc-rng200 >/sys/class/misc/hw_random/rng_current
+say "hwrng current $(cat /sys/class/misc/hw_random/rng_current 2>&1)"
+say "hwrng read $(dd if=/dev/hwrng bs=32 count=1 2>/dev/null | wc -c) bytes"
+say "pmu $(ls /sys/bus/event_source/devices | grep armv8 | tr '\n' ' ')"
 TEST=6b1c0a52-3a7e-4d1f-9a0b-112233445566
 if [ -e /sys/firmware/efi/efivars/LinuxTest-$TEST ]; then
     say "variable survived the reset $(var LinuxTest $TEST)"

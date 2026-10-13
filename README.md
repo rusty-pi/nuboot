@@ -43,7 +43,8 @@ From the boot ROM to the threads that run for as long as the board is up:
 2. `start4.elf` programs the PL011 on GPIO 14/15 for 115200 8N1 itself, so the log is on
    the serial console with no setting anywhere.
 3. Logs the firmware's commit, the board's model and revision code, the boot
-   medium, the RAM size and the bootloader's version.
+   medium, the RAM size and the bootloader's version, and starts the SoC's
+   temperature sensor, which the OS reads as a thermal zone.
 4. Beats the boot watchdog the bootloader armed, or arms one, hands it to the ARM when it
    starts, and takes it back at `ExitBootServices` until the operating
    system's driver has it, so a hang anywhere in the boot, or an ARM that
@@ -66,6 +67,7 @@ From the boot ROM to the threads that run for as long as the board is up:
 ```text
    0.267088 INFO  boot     pi4-server-firmware 1a2b3c4  board="Raspberry Pi 4 Model B" revision=d03115 pcb=1.5
    0.267218 INFO  boot     started by the EEPROM bootloader  medium=sd ram_mib=8192 bootloader=1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d
+   0.267905 INFO  thermal  temperature sensor running  celsius=43.8
    0.583645 INFO  usb      VL805 xHCI controller up  bus=1 firmware=loaded registers=0x602000000
    0.595415 INFO  arm      ARM started in UEFI  image_bytes=54910 tree=0xf00000 tree_bytes=56443 memory_mib=8108
    0.595737 INFO  sched    threads running  threads=2 tick_us=1000
@@ -100,6 +102,7 @@ From the boot ROM to the threads that run for as long as the board is up:
 | Linux 6.12 (Debian's arm64 kernel in a signed unified kernel image, started by systemd-boot): its loader variables are there, Secure Boot reads as on and the kernel locks down, `efivarfs` and the ESRT read, `tools/tpm-vpu` (signed with a key in `db`) gives `/dev/tpm0` with the PCRs and the event log | ✅ | ✅ | ➖ | ➖ |
 | Linux 6.12 as above: `bootctl status` (systemd 257) reads Secure Boot as enabled and the unified kernel image as measured | ✅ | ✅ | ➖ | ➖ |
 | Linux 6.12 as above: a variable is written and is there after the OS resets the board, and its power off halts the board in the bootloader, both through the firmware's `ResetSystem` with no watchdog module loaded | ✅ | ✅ | ➖ | ➖ |
+| Linux 6.12 as above: the temperature sensor reads as a thermal zone (`cpu-thermal` from the device tree, `acpitz` from the ACPI tables, with a critical trip), the hardware random number generator gives bytes and the cores' performance monitors register | ✅ | ✅ | ➖ | ➖ |
 | Linux 6.12 as above, started with `acpi=on` and no module: the kernel's own `tpm_crb` takes the TPM (the PCRs, the event log), the four cores start, the SD card, the network interface and the USB controller with a stick on it are there, the variable survives the reset, and the power off halts the board | ✅ | ✅ | ➖ | ➖ |
 | Variables the OS writes through the runtime services, a signed `db` update among them, kept across a reset | ✅ | ✅ | ➖ | ➖ |
 | A shutdown through the runtime services, after `ExitBootServices`, ends in the bootloader's halt | ✅ | ➖ | ➖ | ➖ |

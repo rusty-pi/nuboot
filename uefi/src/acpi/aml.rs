@@ -1,6 +1,6 @@
 //! Just enough AML to describe the board's devices: names, devices, scopes,
-//! the resource descriptors a `_CRS` holds, device properties, and the one
-//! method that starts a TPM command.
+//! the resource descriptors a `_CRS` holds, device properties, a thermal zone,
+//! and the methods that start a TPM command and read a temperature.
 
 use alloc::vec::Vec;
 
@@ -22,9 +22,14 @@ const EXT_OP: u8 = 0x5b;
 const OP_REGION: u8 = 0x80;
 const FIELD_OP: u8 = 0x81;
 const DEVICE_OP: u8 = 0x82;
+const THERMAL_ZONE_OP: u8 = 0x85;
 const STALL_OP: u8 = 0x21;
 const STORE_OP: u8 = 0x70;
+const ADD_OP: u8 = 0x72;
+const SUBTRACT_OP: u8 = 0x74;
 const INCREMENT_OP: u8 = 0x75;
+const MULTIPLY_OP: u8 = 0x77;
+const DIVIDE_OP: u8 = 0x78;
 const AND_OP: u8 = 0x7b;
 const LEQUAL_OP: u8 = 0x93;
 const LGREATER_OP: u8 = 0x94;
@@ -32,6 +37,7 @@ const IF_OP: u8 = 0xa0;
 const WHILE_OP: u8 = 0xa2;
 const RETURN_OP: u8 = 0xa4;
 const LOCAL0_OP: u8 = 0x60;
+const LOCAL1_OP: u8 = 0x61;
 const ARG0_OP: u8 = 0x68;
 const ARG2_OP: u8 = 0x6a;
 
@@ -97,6 +103,10 @@ pub fn device(name: &str, body: &[Bytes]) -> Bytes {
     package(&[EXT_OP, DEVICE_OP], &name_seg(name), &body.concat())
 }
 
+pub fn thermal_zone(name: &str, body: &[Bytes]) -> Bytes {
+    package(&[EXT_OP, THERMAL_ZONE_OP], &name_seg(name), &body.concat())
+}
+
 /// `Scope (_SB)` and the like, in the root: one segment.
 pub fn root_scope(segment: &str, body: &[Bytes]) -> Bytes {
     package(&[SCOPE_OP], &name_seg(segment), &body.concat())
@@ -158,6 +168,10 @@ pub fn local0() -> Bytes {
     alloc::vec![LOCAL0_OP]
 }
 
+pub fn local1() -> Bytes {
+    alloc::vec![LOCAL1_OP]
+}
+
 pub fn named(register: &str) -> Bytes {
     name_seg(register).to_vec()
 }
@@ -175,7 +189,28 @@ pub fn increment(target: &[u8]) -> Bytes {
 }
 
 pub fn bit_and(left: &[u8], right: &[u8]) -> Bytes {
-    [&[AND_OP][..], left, right, &[ZERO_OP]].concat()
+    bit_and_into(left, right, &[ZERO_OP])
+}
+
+pub fn bit_and_into(left: &[u8], right: &[u8], target: &[u8]) -> Bytes {
+    [&[AND_OP][..], left, right, target].concat()
+}
+
+pub fn add(left: &[u8], right: &[u8]) -> Bytes {
+    [&[ADD_OP][..], left, right, &[ZERO_OP]].concat()
+}
+
+pub fn subtract(left: &[u8], right: &[u8]) -> Bytes {
+    [&[SUBTRACT_OP][..], left, right, &[ZERO_OP]].concat()
+}
+
+pub fn multiply(left: &[u8], right: &[u8]) -> Bytes {
+    [&[MULTIPLY_OP][..], left, right, &[ZERO_OP]].concat()
+}
+
+/// The quotient, with the remainder left alone.
+pub fn divide(left: &[u8], right: &[u8]) -> Bytes {
+    [&[DIVIDE_OP][..], left, right, &[ZERO_OP, ZERO_OP]].concat()
 }
 
 pub fn store(value: &[u8], into: &[u8]) -> Bytes {

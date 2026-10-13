@@ -71,7 +71,7 @@ driver, with no module ([os-image.md](os-image.md#with-the-acpi-tables)).
 | table | holds |
 |---|---|
 | FADT | Hardware-reduced ACPI 6.3, with no PSCI: the cores start through the parking protocol |
-| MADT | The four cores and the GIC-400 |
+| MADT | The four cores, each with the interrupt of its performance monitor (`perf` works), and the GIC-400 |
 | GTDT | The generic timers |
 | SPCR | The PL011 on GPIO 14 and 15 as the console, at 115200 baud |
 | PPTT | Each core's caches (48 KiB for instructions, 32 KiB for data) and the 1 MiB they share |
@@ -87,6 +87,8 @@ The DSDT has a device for each of:
 | the console | `ARMH0011` | the PL011 driver |
 | the TPM | `MSFT0101` | `tpm_crb`; its start method writes the doorbell to the mailbox |
 | the power manager | `PRP0001`, with the `compatible` of the device tree's node | `bcm2835-pm`: the watchdog the boot watchdog is handed to ([boot.md](boot.md#boot-watchdog)) |
+| the random number generator | `PRP0001`, with the `compatible` of the device tree's node | `iproc-rng200` |
+| the temperature sensor | a thermal zone, `_TMP` reading the sensor's register and `_CRT` giving 85 °C, the SoC's rating, since nothing here slows the cores down before then | the kernel's ACPI thermal driver (`acpitz`); the VPU starts the sensor's clock, which the zone and the device tree's thermal driver both need |
 | the SD host | `BRCME88C` | `sdhci-iproc`, with the card at 3.3 V and no DMA, as this firmware's own driver runs it |
 | the network interface | `BCM6E4E` | `genet`, with the address the device tree gives it |
 | the USB controller | `PNP0D10`, in a container device (`ACPI0004`) that says what it reaches | the kernel's generic xHCI driver (`xhci-plat-hcd`) |

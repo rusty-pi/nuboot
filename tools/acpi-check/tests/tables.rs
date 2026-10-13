@@ -192,7 +192,8 @@ fn iasl_disassembles_every_table() {
     let dsl = std::fs::read_to_string(dir.join("DSDT.dsl")).unwrap();
     for needed in [
         "ACPI0007", "ARMH0011", "BRCME88C", "BCM6E4E", "rgmii-rxid", "sdhci-caps-mask", "MSFT0101", "PRP0001",
-        "6bbf6cab-5463-4714-b7cd-f0203c0368d4", "ACPI0004", "PNP0D10", "_DMA", "SCB0", "XHC0",
+        "6bbf6cab-5463-4714-b7cd-f0203c0368d4", "ACPI0004", "PNP0D10", "_DMA", "SCB0", "XHC0", "ThermalZone", "_TMP", "_CRT",
+        "brcm,bcm2711-rng200",
     ] {
         assert!(dsl.contains(needed), "DSDT has no {needed}:\n{dsl}");
     }

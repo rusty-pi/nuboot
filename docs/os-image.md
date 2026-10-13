@@ -30,7 +30,8 @@ Debian), so there is no module to build, sign or keep in step with a kernel.
 
 What else the tables describe is in [uefi.md](uefi.md#acpi): the four cores, the
 interrupt controller and timers, the PL011 console, the SD host, the network
-interface, the USB controller, and the power manager, whose watchdog the
+interface, the USB controller, the random number generator, the temperature
+sensor (as the thermal zone `acpitz`) and the power manager, whose watchdog the
 kernel's `bcm2835-pm` driver provides through the `compatible` property the
 table gives it. Reset and power off need no driver: the kernel calls the
 firmware's `ResetSystem`, with the tables or the device tree. The USB controller is a platform xHCI device, which the kernel's

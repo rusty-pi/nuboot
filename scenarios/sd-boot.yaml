@@ -20,6 +20,8 @@ milestones:
     line: "Starting start4.elf"
   - why: "The firmware logs what it runs on."
     line: "INFO  boot     pi4-server-firmware"
+  - why: "It started the temperature sensor's clock, and the sensor has a sample."
+    line: "INFO  thermal  temperature sensor running"
   - why: "It found the bootloader's handover."
     line: "medium=sd"
   - why: "It started the ARM in the UEFI firmware it carries."
