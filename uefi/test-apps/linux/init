@@ -87,7 +87,6 @@ if [ -e /sys/firmware/efi/efivars/LinuxTest-$TEST ]; then
 else
     printf '\007\000\000\000\001\002\003' > /sys/firmware/efi/efivars/LinuxTest-$TEST && say "variable written"
     say "variable reads $(var LinuxTest $TEST)"
-    insmod /bcm2835_wdt.ko
     say "resetting"
     reboot -f
     sleep 60

@@ -45,12 +45,12 @@ from `start4.elf`'s:
 |---|---|
 | Memory | An identity map: RAM below `0xFC00_0000` and from 4 to 8 GiB normal write-back, the 2 MiB at `0x20_0000` non-cacheable for DMA, the rest device. The memory map is `/memory` from the device tree, less `/memreserve/`, `/reserved-memory`, the armstub's page at 0, the tree and the firmware itself |
 | Boot services | Memory, pools, events and timers (polled; there are no interrupts), protocol handlers, `LoadImage`/`StartImage`/`Exit` for PE32+ AArch64 images, `ExitBootServices` |
-| Runtime services | `GetVariable`, `GetNextVariableName`, `SetVariable` and `QueryVariableInfo` after `ExitBootServices`, from a 128 KiB table in the firmware image, which is typed as runtime services code and data, and the mailbox's page, typed as memory-mapped I/O for the OS to map. The OS reads the variables the firmware holds with runtime access and creates or changes others, and the writes outlast a reset ([below](#variables-the-os-writes)). `PK` and the Secure Boot state refuse writes. The `EFI_RT_PROPERTIES_TABLE` lists only these four, so `SetVirtualAddressMap` is not offered and the OS maps the runtime regions where they are. Every other runtime service returns `EFI_UNSUPPORTED`; Linux resets through `bcm2835-wdt` |
+| Runtime services | `GetVariable`, `GetNextVariableName`, `SetVariable`, `QueryVariableInfo` and `ResetSystem` after `ExitBootServices`. The firmware image is typed as runtime services code and data, the variables are a 128 KiB table in it, and the mailbox's page and the power manager's are typed as memory-mapped I/O for the OS to map. The OS reads the variables the firmware holds with runtime access and creates or changes others, and the writes outlast a reset ([below](#variables-the-os-writes)). `PK` and the Secure Boot state refuse writes. `ResetSystem` writes the power manager's registers: every kind but a shutdown resets the board, and a shutdown resets it to the bootloader's halt. The `EFI_RT_PROPERTIES_TABLE` lists only these five, so `SetVirtualAddressMap` is not offered and the OS maps the runtime regions where they are. Every other runtime service returns `EFI_UNSUPPORTED` |
 | Console | `SimpleTextOutput` and `SimpleTextInput` on the PL011 at `0xFE20_1000`, with VT100 keys |
 | Storage | The SD card on EMMC2 (`0xFE34_0000`), and USB drives (bulk-only mass storage) on the VL805's root ports or behind a hub. `BlockIo`, `DiskIo`, MBR and GPT partitions, and a read-only FAT12/16/32 `SimpleFileSystem` |
 | USB | The VL805's xHCI behind the PCIe root complex, which `start4.elf` has brought up and given its firmware |
 | `EFI_RNG_PROTOCOL` | RNG200's FIFO, raw |
-| `ResetSystem` | The power manager's watchdog (`PM_RSTC`/`PM_WDOG`), halt through `PM_RSTS` |
+| `ResetSystem` | The power manager's watchdog (`PM_RSTC`/`PM_WDOG`), halt through `PM_RSTS`: partition 63, which the EEPROM bootloader halts at (and powers off at when its `POWER_OFF_ON_HALT` is set). The same after `ExitBootServices`, which is how Linux resets and powers off in both modes |
 | `SetWatchdogTimer`, `ExitBootServices` | UEFI beats the board's watchdog from the hypervisor timer's interrupt and hands it back to `start4.elf` at `ExitBootServices` ([boot.md](boot.md#boot-watchdog)) |
 | ESRT | One system firmware resource, the firmware itself, in the `EFI_SYSTEM_RESOURCE_TABLE`, with the commit's time as its version. `OsIndicationsSupported` offers file capsule delivery, and `OsIndications` takes the OS's write |
 | Device tree | Passed on to the OS as the `EFI_DTB_TABLE` configuration table |
@@ -86,7 +86,7 @@ The DSDT has a device for each of:
 | each core | `ACPI0007` | the kernel's processor driver |
 | the console | `ARMH0011` | the PL011 driver |
 | the TPM | `MSFT0101` | `tpm_crb`; its start method writes the doorbell to the mailbox |
-| the power manager | `PRP0001`, with the `compatible` of the device tree's node | `bcm2835-pm`: the watchdog the boot watchdog is handed to ([boot.md](boot.md#boot-watchdog)), and the OS's reset |
+| the power manager | `PRP0001`, with the `compatible` of the device tree's node | `bcm2835-pm`: the watchdog the boot watchdog is handed to ([boot.md](boot.md#boot-watchdog)) |
 | the SD host | `BRCME88C` | `sdhci-iproc`, with the card at 3.3 V and no DMA, as this firmware's own driver runs it |
 | the network interface | `BCM6E4E` | `genet`, with the address the device tree gives it |
 | the USB controller | `PNP0D10`, in a container device (`ACPI0004`) that says what it reaches | the kernel's generic xHCI driver (`xhci-plat-hcd`) |
@@ -107,7 +107,7 @@ transfers through a buffer below it for the rest. UEFI turns off the
 controller's MSI as the OS takes over, because a function with MSI enabled does
 not raise its interrupt line, which is all an OS on the tables has.
 
-Not described: power off, which the tables have no way to ask for.
+Reset and power off are not in the tables: the kernel takes them from the runtime services' `ResetSystem`.
 
 `scripts/test-acpi.sh` builds the table code for the host (`tools/acpi-check`)
 and checks the tables' links and checksums, then disassembles each with the

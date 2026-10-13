@@ -1,10 +1,12 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "linux"
-description: "Debian's arm64 kernel, in a unified kernel image that Debian's systemd-boot starts, boots under the firmware with Secure Boot on, and its first process looks at what the firmware gave it: the kernel's own log of the EFI tables, the Secure Boot variables through efivarfs, the ESRT, the TPM on the VPU through the module in tools/tpm-vpu, `bootctl status`, and a variable it writes and finds again after it resets the board."
+description: "Debian's arm64 kernel, in a unified kernel image that Debian's systemd-boot starts, boots under the firmware with Secure Boot on, and its first process looks at what the firmware gave it: the kernel's own log of the EFI tables, the Secure Boot variables through efivarfs, the ESRT, the TPM on the VPU through the module in tools/tpm-vpu, `bootctl status`, and a variable it writes and finds again after it resets the board, and then it powers the board off."
 
 boot:
   eeprom: "../out/stock-pieeprom.bin"
   boot_order: "0x1"
+  bootconf:
+    - "BOOT_UART=1"
   otp_row:
     - "56=0xc0de2001"
     - "57=0xc0de3112"
@@ -20,7 +22,7 @@ boot:
       EFI/BOOT/BOOTAA64.EFI: "../out/systemd-bootaa64.efi"
       EFI/Linux/linux-test.efi: "../out/linux-test.efi"
       loader/loader.conf: { inline: "timeout 0\nconsole-mode keep\n" }
-  until: "linux test: done"
+  until: "Halt: wake"
   wall_secs: 3000
 
 milestones:
@@ -72,3 +74,9 @@ milestones:
     line: "linux test: variable survived the reset 07000000010203"
   - why: "The OS deletes the variable it wrote, which is what keeps the run repeatable on a board whose flash holds the variable store."
     line: "linux test: variable removed"
+  - why: "The kernel powers off through the firmware: the properties table offers ResetSystem, so the kernel has a power-off handler, which it has not without."
+    line: "reboot: Power down"
+  - why: "The firmware resets the board with the halt partition in PM_RSTS, and the bootloader that starts again finds it."
+    line: "partition 63"
+  - why: "The bootloader halts there."
+    line: "Halt: wake"

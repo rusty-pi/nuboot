@@ -30,9 +30,10 @@ Debian), so there is no module to build, sign or keep in step with a kernel.
 
 What else the tables describe is in [uefi.md](uefi.md#acpi): the four cores, the
 interrupt controller and timers, the PL011 console, the SD host, the network
-interface, the USB controller, and the power manager, whose watchdog and reset
-the kernel's `bcm2835-pm` driver provides through the `compatible` property the
-table gives it. The USB controller is a platform xHCI device, which the kernel's
+interface, the USB controller, and the power manager, whose watchdog the
+kernel's `bcm2835-pm` driver provides through the `compatible` property the
+table gives it. Reset and power off need no driver: the kernel calls the
+firmware's `ResetSystem`, with the tables or the device tree. The USB controller is a platform xHCI device, which the kernel's
 generic driver (`CONFIG_USB_XHCI_PLATFORM`) takes; `lspci` does not list it.
 
 `scenarios/linux-acpi.yaml` boots Debian's 6.12 arm64 kernel with `acpi=on`

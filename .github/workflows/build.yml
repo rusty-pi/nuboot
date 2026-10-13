@@ -160,6 +160,7 @@ jobs:
             out/runtime-variables.efi
             out/crypto.efi
             out/persist.efi
+            out/runtime-shutdown.efi
             out/linux-test.efi
             out/linux-acpi-test.efi
             out/hello.efi

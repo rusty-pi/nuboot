@@ -80,9 +80,9 @@ own.
 
 The timer is the EL2 hypervisor timer (`CNTHP`, GIC interrupt 26), routed to EL2
 until `ExitBootServices`: a payload that uses either takes the beat from UEFI.
-A reset with a short count (Linux's `reboot`) within the 120 s after
-`ExitBootServices` is delayed if one of the VPU's reloads lands in the 160 µs
-before it fires, which is rare.
+A reset with a short count (`ResetSystem`, which Linux's `reboot` and
+`poweroff` call) within the 120 s after `ExitBootServices` is delayed if one of
+the VPU's reloads lands in the 160 µs before it fires, which is rare.
 
 ## Running it in pimu
 
@@ -110,6 +110,7 @@ pimu boot --scenario scenarios/capsule-eeprom-restore.yaml  # after it, the stor
 pimu boot --scenario scenarios/capsule-eeprom-failed.yaml   # an EEPROM update the bootloader did not make
 pimu boot --scenario scenarios/runtime-variables.yaml  # variables through the runtime services
 pimu boot --scenario scenarios/persist.yaml     # what the OS writes through them outlasts a reset
+pimu boot --scenario scenarios/shutdown.yaml    # a shutdown through them ends in the bootloader's halt
 pimu boot --scenario scenarios/crypto.yaml      # the firmware cryptography service, locked from the OS
 scripts/build-linux-test.sh && pimu boot --scenario scenarios/linux.yaml  # Debian's kernel, from its own initramfs
 pimu boot --scenario scenarios/watchdog-hang.yaml  # a hang in UEFI resets the board
