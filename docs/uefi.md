@@ -214,6 +214,13 @@ log in two banks of 20 KiB from `0x74000`, and come back at the next boot.
 - A record is intact when its framing and SHA-256 are. One that is not, such as
   a write a power loss cut short, is stepped over to the next intact one, and
   the store moves to the other bank without it at that boot.
+- A bank more than half full at boot is replaced by the other, started with
+  the records the variables still need, when that frees room: the VPU only
+  appends once UEFI is gone, and the OS's writes fail while the bank is full.
+  What the boot refused goes with what the writes replaced: a write signed by
+  keys the board does not hold, and a variable that is not the OS's. A board
+  with no device private key keeps its bank, since it read none of the plain
+  records.
 
 The OS can write the flash, and can drop records, but not make one: the
 device key signs for it only through the VPU's runtime tag, in a signature

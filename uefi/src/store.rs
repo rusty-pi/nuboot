@@ -234,6 +234,35 @@ fn write_bank(bank: usize, seq: u32, records: &[Record]) -> Option<u32> {
     spiflash::program(base, &head).then_some(at)
 }
 
+/// Start the other bank with `live`, every record the variables still need,
+/// when this one is more than half full and that leaves it room. Once UEFI is
+/// gone the VPU only appends, and the OS's writes fail when the bank is full:
+/// the boot is where room is made.
+pub fn compact_when_crowded(live: impl FnOnce() -> Vec<Record>) {
+    let state = STATE.get();
+    if !state.ready || state.seq == 0 || !spiflash::present() {
+        return;
+    }
+    let used = (state.tail - BANKS[state.bank] - BANK_HEADER) as usize;
+    if used <= (BANK - BANK_HEADER) as usize / 2 {
+        return;
+    }
+    let records = live();
+    let needed: usize = records.iter().map(|r| r.encode().len()).sum();
+    if needed >= used {
+        return;
+    }
+    let other = 1 - state.bank;
+    let seq = state.seq.wrapping_add(1).max(1);
+    match write_bank(other, seq, &records) {
+        Some(tail) => {
+            *state = State { ready: true, bank: other, seq, tail };
+            info!("store", "bank more than half full, the other started with what is still needed"; bank = other, records = records.len(), bytes = used, bytes_needed = needed);
+        }
+        None => warn!("store", "bank more than half full and the other did not take what is needed"; bytes = used, bytes_needed = needed),
+    }
+}
+
 /// Add `record` to the log. When the bank is full, `live` (every record
 /// still needed, `record` included) starts the other bank.
 pub fn append(record: &Record, live: impl FnOnce() -> Vec<Record>) -> bool {

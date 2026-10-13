@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "store-compact"
+description: "A board with its device private key fused (a test key, not a board's): an EFI application exits boot services and writes through the runtime services one variable and then another over and over, until most of the flash store's bank holds what the writes replaced, and resets. At the next boot UEFI finds the bank more than half full and starts the other with what the variables still need, and the application writes as much again, which does not fit in a bank that was not made room in."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  otp_row:
+    - "56=0xc0de2001"
+    - "57=0xc0de3112"
+    - "58=0xc0de4223"
+    - "59=0xc0de5334"
+    - "60=0xc0de6445"
+    - "61=0xc0de7556"
+    - "62=0xc0de8667"
+    - "63=0xc0de9778"
+  sd:
+    files:
+      start4.elf: "../out/start4-test.elf"
+      EFI/BOOT/BOOTAA64.EFI: "../out/store-compact.efi"
+  until: "compact test: done"
+  wall_secs: 3000
+
+milestones:
+  - why: "The first boot's writes after ExitBootServices are all taken: the bank fills with them."
+    line: "runtime test: another is written again and again, filling the bank ok"
+  - why: "UEFI finds the bank more than half full at the next boot and starts the other with the two variables, as they were last written."
+    line: "bank more than half full, the other started with what is still needed"
+  - why: "The variable written once is as it was."
+    line: "runtime test: the variable written once is still there ok"
+  - why: "The variable written over and over holds its last value."
+    line: "runtime test: the other holds what was written last ok"
+  - why: "The bank has room for as many writes as filled the one before: without the compaction, the third of them would find it full."
+    line: "runtime test: as much again is written ok"

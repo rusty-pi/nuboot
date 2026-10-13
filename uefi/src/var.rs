@@ -498,16 +498,20 @@ fn commit(index: usize, record: &store::Record, history: &[(u64, store::Record)]
         warn!("var", "no flash store, the change lasts until reset");
         return true;
     }
-    store::append(record, || {
-        let mut live: Vec<&(u64, store::Record)> = history.iter().collect();
-        for (n, v) in VARS.get().iter().enumerate() {
-            if n != index {
-                live.extend(v.history.iter());
-            }
+    store::append(record, || live_records(index, history))
+}
+
+/// Every record the variables still need, in the order they were written:
+/// `history` stands in for the one the variable at `index` has.
+fn live_records(index: usize, history: &[(u64, store::Record)]) -> Vec<store::Record> {
+    let mut live: Vec<&(u64, store::Record)> = history.iter().collect();
+    for (n, v) in VARS.get().iter().enumerate() {
+        if n != index {
+            live.extend(v.history.iter());
         }
-        live.sort_by_key(|(seq, _)| *seq);
-        live.into_iter().map(|(_, r)| r.clone()).collect()
-    })
+    }
+    live.sort_by_key(|(seq, _)| *seq);
+    live.into_iter().map(|(_, r)| r.clone()).collect()
 }
 
 /// The OS has the board: nothing signs for it from here on.
@@ -542,6 +546,10 @@ pub fn load_store() {
         if status != efi::Status::SUCCESS {
             warn!("var", "stored write refused"; name = W(&name), status = status.as_usize());
         }
+    }
+    let plain_records_were_checked = DEVICE.get().is_some();
+    if plain_records_were_checked {
+        store::compact_when_crowded(|| live_records(usize::MAX, &[]));
     }
 }
 
