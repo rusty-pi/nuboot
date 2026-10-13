@@ -22,7 +22,15 @@ acpi=on
 ```
 
 In a unified kernel image that is the `.cmdline` section; with GRUB, the
-`linux` line. The tables name the TPM as a command response buffer device
+`linux` line.
+
+A kernel that is given a device tree with nothing in it has nothing else to
+describe the board with, and takes the tables without the option. A unified
+kernel image's `.dtb` section replaces the device tree the firmware gives the
+kernel, so one that holds a root node and nothing else leaves the kernel with no
+device tree at all.
+
+The tables name the TPM as a command response buffer device
 (`MSFT0101`, with the ACPI start method), which `tpm_crb` takes
 ([tpm2.md](tpm2.md#the-command-response-buffer)): an interface the TCG
 defines and the kernel has long had a driver for (`CONFIG_TCG_CRB`, built in on

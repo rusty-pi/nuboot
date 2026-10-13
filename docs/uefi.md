@@ -67,8 +67,9 @@ The firmware also offers ACPI tables: the RSDP is the
 `EFI_ACPI_20_TABLE_GUID` configuration table, and the tables are built at every
 boot from the board and the VPU's own state. A kernel that is given both them
 and the device tree uses the device tree, and uses the tables when its command
-line says `acpi=on`. With them the OS finds the TPM on the VPU through its own
-driver, with no module ([os-image.md](os-image.md#with-the-acpi-tables)).
+line says `acpi=on` or when the device tree it is given has nothing in it. With
+them the OS finds the TPM on the VPU through its own driver, with no module
+([os-image.md](os-image.md#with-the-acpi-tables)).
 
 | table | holds |
 |---|---|

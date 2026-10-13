@@ -165,6 +165,7 @@ jobs:
             out/runtime-shutdown.efi
             out/linux-test.efi
             out/linux-acpi-test.efi
+            out/linux-no-dt-test.efi
             out/hello.efi
             out/watchdog-hang.efi
             out/watchdog-exit.efi

@@ -106,6 +106,7 @@ From the boot ROM to the threads that run for as long as the board is up:
 | Linux 6.12 as above: the SMBIOS tables name the board (`/sys/class/dmi/id`: maker, model, serial number, firmware, enclosure and a UUID), with the device tree and with the ACPI tables | ✅ | ✅ | ➖ | ➖ |
 | Linux 6.12 as above: the temperature sensor reads as a thermal zone (`cpu-thermal` from the device tree, `acpitz` from the ACPI tables, with a critical trip), the hardware random number generator gives bytes and the cores' performance monitors register | ✅ | ✅ | ➖ | ➖ |
 | Linux 6.12 as above, started with `acpi=on` and no module: the kernel's own `tpm_crb` takes the TPM (the PCRs, the event log), the four cores start, the SD card, the network interface and the USB controller with a stick on it are there, the variable survives the reset, and the power off halts the board | ✅ | ✅ | ➖ | ➖ |
+| Linux 6.12 as above, given a device tree with nothing in it (a `.dtb` section in the unified kernel image) and no `acpi=on`: the kernel takes the ACPI tables by itself, and the TPM, the SD card, the network interface, the USB stick, the thermal zone, the SMBIOS tables and the power off are there | ✅ | ✅ | ➖ | ➖ |
 | Variables the OS writes through the runtime services, a signed `db` update among them, kept across a reset | ✅ | ✅ | ➖ | ➖ |
 | A shutdown through the runtime services, after `ExitBootServices`, ends in the bootloader's halt | ✅ | ➖ | ➖ | ➖ |
 | A boot key from the fused private key, handed over once, nothing of it left in the VPU's memory | ✅ | ➖ | ➖ | ➖ |

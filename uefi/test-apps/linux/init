@@ -17,6 +17,11 @@ loader() { tail -c +5 "/sys/firmware/efi/efivars/$1-$LOADER" 2>&1 | tr -d '\000'
 say "kernel $(uname -r) is up"
 if [ -d /sys/firmware/acpi/tables ]; then MODE=acpi; else MODE=dt; fi
 say "described by $MODE"
+case " $(cat /proc/cmdline) " in
+*" acpi="*) say "command line has an acpi option" ;;
+*) say "command line has no acpi option" ;;
+esac
+say "machine model lines in the kernel log $(dmesg | grep -c 'Machine model:')"
 say "l2 cache $(cat /sys/devices/system/cpu/cpu0/cache/index2/size 2>&1)"
 dmesg | grep -E "efi: EFI v|efi: RTPROP|Kernel is locked down|efivars: Registered|Loaded X.509 cert|esrt:|efi:|ACPI:" | grep -v "linux test" | while read -r line; do say "kernel log: ${line#*] }"; done
 insmod /efivarfs.ko
