@@ -1,10 +1,15 @@
-//! The UEFI firmware's ACPI table code, compiled for the host: the real
-//! modules, so that what an operating system reads can be checked with the
-//! ACPICA tools.
+//! The UEFI firmware's ACPI and SMBIOS table code, compiled for the host: the
+//! real modules, so that what an operating system reads can be checked with
+//! the ACPICA tools and `dmidecode`.
 
 extern crate alloc;
 
 pub mod acpi;
+pub mod smbios;
+
+#[path = "../../../src/sha256.rs"]
+#[allow(dead_code)]
+pub mod sha256;
 
 use acpi::tables::{self, Machine};
 
@@ -13,6 +18,20 @@ pub const BASE: u64 = 0xfbf7_e000;
 
 pub fn sample() -> Machine {
     Machine { tpm: Some(0x3ebf_f000), ethernet: Some([0x02, 0x11, 0x22, 0x33, 0x44, 0x55]), xhci: Some(0x6_0200_0000), cores: 4 }
+}
+
+/// A board the SMBIOS tables are laid out for: a Raspberry Pi 4B rev 1.5 with 8 GB.
+pub fn smbios_sample() -> smbios::tables::Board<'static> {
+    smbios::tables::Board {
+        model: b"Raspberry Pi 4 Model B",
+        serial: b"69738888",
+        revision: Some(0xd03115),
+        cores: 4,
+        ram_mib: 8192,
+        midr: 0x410f_d083,
+        firmware_version: b"c7bd438",
+        firmware_time: 1_791_913_303,
+    }
 }
 
 /// One table of the block, found the way an operating system finds it.

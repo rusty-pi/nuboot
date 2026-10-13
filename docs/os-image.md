@@ -37,6 +37,11 @@ table gives it. Reset and power off need no driver: the kernel calls the
 firmware's `ResetSystem`, with the tables or the device tree. The USB controller is a platform xHCI device, which the kernel's
 generic driver (`CONFIG_USB_XHCI_PLATFORM`) takes; `lspci` does not list it.
 
+An OS on the tables has no device tree to read the board's model and serial
+number from: the SMBIOS tables the firmware offers give them
+(`/sys/class/dmi/id`, `dmidecode`, `hostnamectl`), whichever way the OS
+describes the board.
+
 `scenarios/linux-acpi.yaml` boots Debian's 6.12 arm64 kernel with `acpi=on`
 under Secure Boot: `tpm_crb` registers the TPM, the PCRs and the event log are
 there, and so are the SD card, the network interface and a USB stick.

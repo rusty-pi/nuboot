@@ -45,6 +45,7 @@ mod secure;
 #[path = "../../src/sha256.rs"]
 #[allow(dead_code)]
 mod sha256;
+mod smbios;
 mod spiflash;
 mod stc;
 mod store;
@@ -192,6 +193,7 @@ extern "C" fn pi4_main(tree_addr: u64) -> ! {
     sd::init();
     xhci::init();
     acpi::init(&tree, xhci::registers_base());
+    smbios::init(&tree);
 
     tcg2::separators();
     capsule::scan();

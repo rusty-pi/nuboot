@@ -58,7 +58,8 @@ From the boot ROM to the threads that run for as long as the board is up:
    have a key from the device private key ([docs/keystore.md](docs/keystore.md)).
    The OS finds that TPM through the ACPI tables UEFI builds, with its own
    driver, or through the device tree and a module
-   ([docs/os-image.md](docs/os-image.md)).
+   ([docs/os-image.md](docs/os-image.md)). UEFI describes the board in SMBIOS
+   tables too.
 6. Starts the scheduler: a service thread that answers the property mailbox
    (Linux's `NOTIFY_XHCI_RESET`, which has the VL805's firmware reloaded, and
    the TPM's commands and the boot key), and a monitor thread that reports each
@@ -102,6 +103,7 @@ From the boot ROM to the threads that run for as long as the board is up:
 | Linux 6.12 (Debian's arm64 kernel in a signed unified kernel image, started by systemd-boot): its loader variables are there, Secure Boot reads as on and the kernel locks down, `efivarfs` and the ESRT read, `tools/tpm-vpu` (signed with a key in `db`) gives `/dev/tpm0` with the PCRs and the event log | ✅ | ✅ | ➖ | ➖ |
 | Linux 6.12 as above: `bootctl status` (systemd 257) reads Secure Boot as enabled and the unified kernel image as measured | ✅ | ✅ | ➖ | ➖ |
 | Linux 6.12 as above: a variable is written and is there after the OS resets the board, and its power off halts the board in the bootloader, both through the firmware's `ResetSystem` with no watchdog module loaded | ✅ | ✅ | ➖ | ➖ |
+| Linux 6.12 as above: the SMBIOS tables name the board (`/sys/class/dmi/id`: maker, model, serial number, firmware, enclosure and a UUID), with the device tree and with the ACPI tables | ✅ | ✅ | ➖ | ➖ |
 | Linux 6.12 as above: the temperature sensor reads as a thermal zone (`cpu-thermal` from the device tree, `acpitz` from the ACPI tables, with a critical trip), the hardware random number generator gives bytes and the cores' performance monitors register | ✅ | ✅ | ➖ | ➖ |
 | Linux 6.12 as above, started with `acpi=on` and no module: the kernel's own `tpm_crb` takes the TPM (the PCRs, the event log), the four cores start, the SD card, the network interface and the USB controller with a stick on it are there, the variable survives the reset, and the power off halts the board | ✅ | ✅ | ➖ | ➖ |
 | Variables the OS writes through the runtime services, a signed `db` update among them, kept across a reset | ✅ | ✅ | ➖ | ➖ |

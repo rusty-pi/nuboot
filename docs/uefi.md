@@ -11,7 +11,8 @@ board's device tree, and starts the ARM in them:
    the board's SDRAM, a `vpu-tpm` node ([os-image.md](os-image.md)) and the
    reserved page of the TPM's command response buffer ([tpm2.md](tpm2.md#the-command-response-buffer)),
    and the Ethernet controller's `local-mac-address`: `02:` and five bytes of a hash of
-   the board's serial number, the same at every boot. The ARM gets everything below `0x3EC0_0000`, where the
+   the board's serial number, the same at every boot, and the board's `serial-number` and
+   revision code in the root. The ARM gets everything below `0x3EC0_0000`, where the
    VPU firmware's own memory starts, and all the memory above 1 GiB.
 2. `pi4-uefi.bin` (`uefi/stub/`) starts with an armstub: each core sets up
    the local timer, the generic timer, the GIC and EL3's controls, and drops
@@ -53,7 +54,8 @@ from `start4.elf`'s:
 | `ResetSystem` | The power manager's watchdog (`PM_RSTC`/`PM_WDOG`), halt through `PM_RSTS`: partition 63, which the EEPROM bootloader halts at (and powers off at when its `POWER_OFF_ON_HALT` is set). The same after `ExitBootServices`, which is how Linux resets and powers off in both modes |
 | `SetWatchdogTimer`, `ExitBootServices` | UEFI beats the board's watchdog from the hypervisor timer's interrupt and hands it back to `start4.elf` at `ExitBootServices` ([boot.md](boot.md#boot-watchdog)) |
 | ESRT | One system firmware resource, the firmware itself, in the `EFI_SYSTEM_RESOURCE_TABLE`, with the commit's time as its version. `OsIndicationsSupported` offers file capsule delivery, and `OsIndications` takes the OS's write |
-| Device tree | Passed on to the OS as the `EFI_DTB_TABLE` configuration table |
+| Device tree | Passed on to the OS as the `EFI_DTB_TABLE` configuration table. Besides the stock tree's content it has the memory, the network address, the TPM, and the board's identity: `serial-number` and `rusty-pi,board-revision` in the root |
+| SMBIOS | Version 3.1.1, as the `EFI_SMBIOS3_TABLE` configuration table, whichever way the OS describes the board: the firmware (its vendor, the commit and its date), the system (maker, the device tree's `model`, the revision code, the serial number and a UUID made from it), the board and its enclosure, the processor and the memory. `/sys/class/dmi/id`, `dmidecode`, `hostnamectl` and fwupd's hardware IDs read them, and an OS on the ACPI tables has no device tree to get the model and serial number from |
 | ACPI | The tables of the [next section](#acpi), as the `EFI_ACPI_20_TABLE_GUID` configuration table |
 | Variables | Held in RAM, with the non-volatile ones also in the flash store ([below](#the-variable-store)) |
 
@@ -110,6 +112,22 @@ controller's MSI as the OS takes over, because a function with MSI enabled does
 not raise its interrupt line, which is all an OS on the tables has.
 
 Reset and power off are not in the tables: the kernel takes them from the runtime services' `ResetSystem`.
+
+What the device tree has and the tables leave out is what the kernel's driver
+reads from the device tree only, or what the board does not offer under either
+description:
+
+- the GPIO controller, I2C, SPI and PWM: the drivers are device tree only, and
+  HATs are out of scope;
+- the PCIe root complex, whose configuration space is not ECAM: the USB
+  controller behind it is described as a device of its own, so `lspci` lists
+  nothing, and a CM4's PCIe slot has no driver on the tables;
+- Wi-Fi and Bluetooth: the chip's power switches are lines of the GPIO
+  expander, which Raspberry Pi's VPU firmware serves over the mailbox and this
+  firmware does not;
+- CPU frequency scaling, which Linux does through the VPU's clock services over
+  the same mailbox: the ARM runs at the one rate this firmware sets, 600 MHz;
+- the display, camera and audio.
 
 `scripts/test-acpi.sh` builds the table code for the host (`tools/acpi-check`)
 and checks the tables' links and checksums, then disassembles each with the

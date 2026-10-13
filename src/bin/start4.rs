@@ -108,7 +108,7 @@ fn firmware_main() -> ! {
         if handover::present() { handover::sdram_mib() } else { 0 },
     );
     usb::bring_up(&board);
-    let started = match arm::start(ARM_IMAGE, ARM_TREE, board.serial) {
+    let started = match arm::start(ARM_IMAGE, ARM_TREE, board.serial, board.revision) {
         Ok(started) => {
             info!("arm", "ARM started in UEFI";
                 image_bytes = started.image_bytes, tree = format_args!("{:#x}", arm::TREE_ADDR),

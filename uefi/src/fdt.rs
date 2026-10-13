@@ -102,6 +102,17 @@ impl Fdt {
         base
     }
 
+    /// The value of the property `name` of the node at `path`.
+    pub fn property(&self, path: &[&[u8]], name: &[u8]) -> Option<alloc::vec::Vec<u8>> {
+        let mut found = None;
+        self.walk(|at, prop, value| {
+            if at == path && prop == name {
+                found = Some(value.to_vec());
+            }
+        });
+        found
+    }
+
     /// The first `N` bytes of the property `name` of the node at `path`.
     pub fn bytes<const N: usize>(&self, path: &[&[u8]], name: &[u8]) -> Option<[u8; N]> {
         let mut found = None;

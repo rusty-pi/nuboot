@@ -297,17 +297,32 @@ pub fn ethernet_address(serial: u32) -> [u8; 6] {
     [0x02, digest[0], digest[1], digest[2], digest[3], digest[4]]
 }
 
-/// Put `image` at ARM physical 0 and `tree`, with the board's memory and
-/// network address filled in, at [`TREE_ADDR`], then let the cores out of
+/// The root property the revision code goes in, which nothing but UEFI reads
+/// (for the identity SMBIOS gives).
+const REVISION_PROPERTY: &[u8] = b"rusty-pi,board-revision";
+
+/// The serial number as a device tree string: eight hex digits, as the
+/// bootloader names the board (`serial 69738888`), and the NUL.
+fn serial_text(serial: u32) -> [u8; 9] {
+    let mut text = [0u8; 9];
+    for (i, digit) in text[..8].iter_mut().enumerate() {
+        *digit = b"0123456789abcdef"[(serial >> (28 - 4 * i) & 0xf) as usize];
+    }
+    text
+}
+
+/// Put `image` at ARM physical 0 and `tree`, with the board's memory, network
+/// address and identity filled in, at [`TREE_ADDR`], then let the cores out of
 /// reset.
-pub fn start(image: &[u8], tree: &[u8], serial: u32) -> Result<Started, Error> {
+pub fn start(image: &[u8], tree: &[u8], serial: u32, revision: u32) -> Result<Started, Error> {
     let total = if handover::present() { handover::sdram_mib() as u64 } else { 1024 } << 20;
     let mut reg = [0u8; MEMORY_REG_MAX];
     let reg_len = memory_reg(total, &mut reg);
     let ethernet = ethernet_address(serial);
     // The tree is copied through the windows of its space, each copy with one
     // change: the TPM's node, the TPM's buffer in the reserved memory, the
-    // network address, and the memory's `reg`. The last copy is at `TREE_ADDR`.
+    // network address, the board's serial number and revision, and the
+    // memory's `reg`. The last copy is at `TREE_ADDR`.
     let window = TREE_MAX / 4;
     let window_at = |n: usize| TREE_ADDR + (n * window) as u32;
     let with_tpm = fdt::copy_with_node(
@@ -336,8 +351,33 @@ pub fn start(image: &[u8], tree: &[u8], serial: u32) -> Result<Started, Error> {
         Some(len) => (window_at(1), len),
         None => (window_at(2), with_buffer),
     };
-    let tree_bytes = fdt::copy_with_property(
+    // The board's identity, where the tree has none: its serial number, which
+    // the device tree specification names, and its revision code.
+    let spare = |at: u32| if at == window_at(1) { window_at(2) } else { window_at(1) };
+    let serial_at = spare(with_address_at);
+    let (with_serial_at, with_serial) = match fdt::copy_with_new_property(
         arm_memory(with_address_at, with_address),
+        arm_memory(serial_at, window),
+        &[b""],
+        b"serial-number",
+        &serial_text(serial),
+    ) {
+        Some(len) => (serial_at, len),
+        None => (with_address_at, with_address),
+    };
+    let revision_at = spare(with_serial_at);
+    let (with_revision_at, with_revision) = match fdt::copy_with_new_property(
+        arm_memory(with_serial_at, with_serial),
+        arm_memory(revision_at, window),
+        &[b""],
+        REVISION_PROPERTY,
+        &revision.to_be_bytes(),
+    ) {
+        Some(len) => (revision_at, len),
+        None => (with_serial_at, with_serial),
+    };
+    let tree_bytes = fdt::copy_with_property(
+        arm_memory(with_revision_at, with_revision),
         arm_memory(TREE_ADDR, window),
         &[b"", b"memory@0"],
         b"reg",

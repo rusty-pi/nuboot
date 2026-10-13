@@ -187,16 +187,17 @@ jobs:
           retention-days: 7
 
   # The ACPI tables on the host: their links and checksums, and the ACPICA
-  # tools' disassembly and recompilation of the DSDT.
+  # tools' disassembly and recompilation of the DSDT; and the SMBIOS tables,
+  # which dmidecode reads.
   acpi:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - name: Install acpica-tools
+      - name: Install acpica-tools and dmidecode
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends acpica-tools
+          sudo apt-get install -y --no-install-recommends acpica-tools dmidecode
       - name: Test
         run: scripts/test-acpi.sh
 

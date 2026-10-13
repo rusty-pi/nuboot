@@ -98,6 +98,24 @@ echo iproc-rng200 >/sys/class/misc/hw_random/rng_current
 say "hwrng current $(cat /sys/class/misc/hw_random/rng_current 2>&1)"
 say "hwrng read $(dd if=/dev/hwrng bs=32 count=1 2>/dev/null | wc -c) bytes"
 say "pmu $(ls /sys/bus/event_source/devices | grep armv8 | tr '\n' ' ')"
+dmi() {
+    id=/sys/class/dmi/id
+    say "dmi product $(cat $id/sys_vendor 2>&1) $(cat $id/product_name 2>&1)"
+    serial=$(cat $id/product_serial 2>&1)
+    case "$serial" in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) say "dmi serial is eight hex digits" ;;
+    *) say "dmi serial $serial" ;;
+    esac
+    say "dmi firmware $(cat $id/bios_vendor 2>&1) $(cat $id/bios_version 2>&1)"
+    say "dmi chassis type $(cat $id/chassis_type 2>&1)"
+    say "dmi uuid $(cat $id/product_uuid 2>&1 | tr -d - | wc -c) characters"
+    say "dmi memory $(od -An -tu2 -j12 -N2 /sys/firmware/dmi/entries/17-0/raw 2>&1 | tr -d ' ') MiB"
+}
+dmi
+if [ $MODE = dt ]; then
+    say "device tree model $(tr -d '\000' </sys/firmware/devicetree/base/model)"
+    [ "$(tr -d '\000' </sys/firmware/devicetree/base/serial-number)" = "$serial" ] && say "device tree serial is the dmi serial"
+fi
 TEST=6b1c0a52-3a7e-4d1f-9a0b-112233445566
 if [ -e /sys/firmware/efi/efivars/LinuxTest-$TEST ]; then
     say "variable survived the reset $(var LinuxTest $TEST)"
