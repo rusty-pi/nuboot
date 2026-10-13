@@ -75,6 +75,7 @@ driver, with no module ([os-image.md](os-image.md#with-the-acpi-tables)).
 | GTDT | The generic timers |
 | SPCR | The PL011 on GPIO 14 and 15 as the console, at 115200 baud |
 | PPTT | Each core's caches (48 KiB for instructions, 32 KiB for data) and the 1 MiB they share |
+| IORT | How much memory the USB controller reaches: the lower 2 GiB |
 | TPM2 | The TPM on the VPU, as a command response buffer device with the ACPI start method ([tpm2.md](tpm2.md#the-command-response-buffer)) |
 | DSDT | The devices below |
 
@@ -88,14 +89,25 @@ The DSDT has a device for each of:
 | the power manager | `PRP0001`, with the `compatible` of the device tree's node | `bcm2835-pm`: the watchdog the boot watchdog is handed to ([boot.md](boot.md#boot-watchdog)), and the OS's reset |
 | the SD host | `BRCME88C` | `sdhci-iproc`, with the card at 3.3 V and no DMA, as this firmware's own driver runs it |
 | the network interface | `BCM6E4E` | `genet`, with the address the device tree gives it |
+| the USB controller | `PNP0D10`, in a container device (`ACPI0004`) that says what it reaches | the kernel's generic xHCI driver (`xhci-plat-hcd`) |
 
 The secondary cores wait in the armstub on the spin table the device tree names
 and on a mailbox for each core, the ACPI parking protocol's: the OS writes the
 core's number and an entry point there and sends software interrupt 0, which
 wakes the core, and the core takes the entry point.
 
-Not described: USB, so an OS on the tables uses the SD card or the network;
-and power off, which the tables have no way to ask for.
+The USB controller, the VL805 behind the PCIe root complex, is a platform
+xHCI device: UEFI has brought the link up, given the controller its firmware
+and put its registers in the root complex's window, and the tables name that
+address and the interrupt line the root complex raises for it, so the OS needs
+no driver for the root complex. The controller reaches the lower 2 GiB of
+memory, from the container's `_DMA` and from the IORT, which the kernel reads
+early enough to keep the memory a driver asks for in reach and to copy
+transfers through a buffer below it for the rest. UEFI turns off the
+controller's MSI as the OS takes over, because a function with MSI enabled does
+not raise its interrupt line, which is all an OS on the tables has.
+
+Not described: power off, which the tables have no way to ask for.
 
 `scripts/test-acpi.sh` builds the table code for the host (`tools/acpi-check`)
 and checks the tables' links and checksums, then disassembles each with the

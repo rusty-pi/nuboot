@@ -30,14 +30,14 @@ Debian), so there is no module to build, sign or keep in step with a kernel.
 
 What else the tables describe is in [uefi.md](uefi.md#acpi): the four cores, the
 interrupt controller and timers, the PL011 console, the SD host, the network
-interface, and the power manager, whose watchdog and reset the kernel's
-`bcm2835-pm` driver provides through the `compatible` property the table gives
-it. The board's USB controller is not described, so an OS on the tables uses
-the SD card or the network.
+interface, the USB controller, and the power manager, whose watchdog and reset
+the kernel's `bcm2835-pm` driver provides through the `compatible` property the
+table gives it. The USB controller is a platform xHCI device, which the kernel's
+generic driver (`CONFIG_USB_XHCI_PLATFORM`) takes; `lspci` does not list it.
 
 `scenarios/linux-acpi.yaml` boots Debian's 6.12 arm64 kernel with `acpi=on`
 under Secure Boot: `tpm_crb` registers the TPM, the PCRs and the event log are
-there, and so are the SD card and the network interface.
+there, and so are the SD card, the network interface and a USB stick.
 
 ## With the device tree
 
