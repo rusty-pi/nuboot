@@ -68,13 +68,40 @@ done
 mkdir -p "$out"
 
 # The built-in keys: PI4_PK_CERT, PI4_KEK_CERT and PI4_DB_CERT name DER
-# certificates, which is all a build needs; without them keys/ is generated.
-if [[ -z "${PI4_PK_CERT:-}" || -z "${PI4_KEK_CERT:-}" || -z "${PI4_DB_CERT:-}" ]]; then
+# certificates, which is all a build needs; without any of them keys/ is
+# generated. Naming only some is an error: it would be replaced by generated
+# keys that nobody holds a signing key for.
+named=0
+for var in PI4_PK_CERT PI4_KEK_CERT PI4_DB_CERT; do
+  [[ -z "${!var:-}" ]] || named=$((named + 1))
+done
+if [[ $named == 0 ]]; then
   "$here/scripts/genkeys.sh"
   PI4_PK_CERT="$here/keys/pk.der"
   PI4_KEK_CERT="$here/keys/kek.der"
   PI4_DB_CERT="$here/keys/db.der"
+elif [[ $named != 3 ]]; then
+  echo "error: PI4_PK_CERT, PI4_KEK_CERT and PI4_DB_CERT go together: name all three or none" >&2
+  exit 1
 fi
+# Each is a DER certificate, the three differ, and a real build's are not the
+# test key's; say which they are.
+declare -A seen=()
+for var in PI4_PK_CERT PI4_KEK_CERT PI4_DB_CERT; do
+  der="${!var}"
+  openssl x509 -inform DER -in "$der" -noout 2>/dev/null || { echo "error: $var=$der is not a DER certificate" >&2; exit 1; }
+  fingerprint="$(openssl x509 -inform DER -in "$der" -noout -fingerprint -sha256 | sed 's/.*=//; s/://g')"
+  if [[ -n "${seen[$fingerprint]:-}" ]]; then
+    echo "error: $var and ${seen[$fingerprint]} are the same certificate" >&2
+    exit 1
+  fi
+  seen[$fingerprint]="$var"
+  if [[ $test_keys == 0 ]] && openssl x509 -inform DER -in "$der" -noout -subject | grep -q 'test key'; then
+    echo "error: $var=$der is a test key, which a real build does not trust" >&2
+    exit 1
+  fi
+  echo "$var sha256 $fingerprint"
+done
 
 # The test key: a self-signed certificate the test build puts in db.
 keys="$out/test-keys"
@@ -112,11 +139,19 @@ symbol() {
   llvm nm "$1" | awk -v name="$2" '$3 == name { print "0x" $1 }'
 }
 
+# The standard library is built from rust-src. Give where rustup keeps it the
+# name the prebuilt one has, as scripts/rustc-vc4.sh does for the VPU: the image
+# must not say, or depend on, where it was built. This replaces the rustflags
+# of uefi/.cargo/config.toml, whose -Zfixed-x18 it repeats.
+sysroot="$(cd "$here/uefi" && rustc --print sysroot)"
+commit="$(cd "$here/uefi" && rustc -vV | sed -n 's/^commit-hash: //p')"
+export CARGO_TARGET_AARCH64_UNKNOWN_NONE_RUSTFLAGS="-Zfixed-x18 --remap-path-prefix=$sysroot/lib/rustlib/src/rust=/rustc/$commit"
+
 (cd "$here/uefi" &&
   FIRMWARE_COMMIT="$(git -C "$here" rev-parse --short=7 HEAD 2>/dev/null || echo 0000000)" \
   PI4_UEFI_TEST_CERT="$test_cert" \
   PI4_PK_CERT="$PI4_PK_CERT" PI4_KEK_CERT="$PI4_KEK_CERT" PI4_DB_CERT="$PI4_DB_CERT" \
-    cargo build --release "${cargo_args[@]}")
+    cargo build --locked --release "${cargo_args[@]}")
 elf="$here/uefi/target/aarch64-unknown-none/release/pi4-uefi"
 llvm objcopy -O binary "$elf" "$out/pi4-uefi$suffix-payload.bin"
 xz -c --format=raw --arm64 --lzma1="$LZMA_OPTS" "$out/pi4-uefi$suffix-payload.bin" >"$out/pi4-uefi$suffix-payload.lzma"
@@ -127,7 +162,7 @@ xz -c --format=raw --arm64 --lzma1="$LZMA_OPTS" "$out/pi4-uefi$suffix-payload.bi
   PI4_UEFI_LEN="$(stat -c %s "$out/pi4-uefi$suffix-payload.bin")" \
   PI4_UEFI_BASE="$(symbol "$elf" _start)" \
   PI4_UEFI_END="$(symbol "$elf" _end)" \
-    cargo build --release)
+    cargo build --locked --release)
 llvm objcopy -O binary "$here/uefi/stub/target/aarch64-unknown-none/release/pi4-uefi-stub" "$out/pi4-uefi$suffix.bin"
 echo "out/pi4-uefi$suffix-payload.bin: $(stat -c %s "$out/pi4-uefi$suffix-payload.bin") bytes"
 echo "out/pi4-uefi$suffix.bin: $(stat -c %s "$out/pi4-uefi$suffix.bin") bytes"
@@ -158,6 +193,7 @@ done
 "$here/scripts/mkcapsule.py" "$keys/db.key" "$keys/db.crt" 1 "$out/capsule-old.cap"
 "$here/scripts/mkcapsule.py" "$keys/db.key" "$keys/db.crt" 0x7fffffff --corrupt "$out/capsule-corrupt.cap"
 "$here/scripts/mkcapsule.py" "$keys/stranger.key" "$keys/stranger.crt" 0x7fffffff "$out/capsule-stranger.cap"
+"$here/scripts/mkcapsule.py" "$keys/db.key" "$keys/db.crt" 0x7fffffff --class eeprom --header-class firmware "$out/capsule-relabeled.cap"
 head -c 300 /dev/urandom >"$out/capsule-junk.cap"
 
 hello="$here/uefi/test-apps/hello"
@@ -193,7 +229,6 @@ sign "$rt/target/aarch64-unknown-uefi/release/shutdown.efi" "$out/runtime-shutdo
 st="$here/uefi/test-apps/store"
 (cd "$st" && cargo build --release --target aarch64-unknown-uefi)
 sign "$st/target/aarch64-unknown-uefi/release/enroll.efi" "$out/store-enroll.efi"
-"$here/scripts/mkcapsule.py" "$keys/db.key" "$keys/db.crt" 0x7fffffff --class eeprom --header-class firmware "$out/capsule-relabeled.cap"
 sign "$st/target/aarch64-unknown-uefi/release/tamper.efi" "$out/store-tamper.efi"
 sbsign --key "$keys/x.key" --cert "$keys/x.crt" --output "$out/store-enrolled.efi" \
   "$st/target/aarch64-unknown-uefi/release/enrolled.efi" 2>/dev/null
