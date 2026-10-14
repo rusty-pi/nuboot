@@ -44,8 +44,9 @@ HMAC-SHA256(private key, "pi4-server-firmware boot key v1" || mask || the select
 ```
 
 overwrites everything the computation touched and writes the zeros out of the
-VPU's caches to SDRAM. It answers once. A board without a fused private key
-answers nothing, and so does an empty mask.
+VPU's caches to SDRAM, and the copy of the answer the mailbox kept to parse
+the request from. It answers once. A board without a fused private key
+answers nothing, and so does a mask that names a register that does not exist.
 
 - An empty mask binds it to nothing: the key is
   `HMAC-SHA256(private key, label || 0)`, one stable key per board, whatever
