@@ -13,6 +13,10 @@
 #
 #   out/hello.efi     uefi/test-apps/hello: checks a few of the firmware's
 #                     services and says what it found
+#   out/otp-probe.efi uefi/test-apps/otp-probe: for a board, not a scenario:
+#                     reads OTP rows from the ARM at EL0, EL1 and EL2 the way the
+#                     VPU does, and says whether the secret ones are zero, never
+#                     what they hold
 #   out/watchdog-hang.efi, out/watchdog-exit.efi
 #                     uefi/test-apps/watchdog: hang in boot services, and
 #                     exit them as an OS loader does
@@ -200,6 +204,10 @@ hello="$here/uefi/test-apps/hello"
 (cd "$hello" && rustup target add aarch64-unknown-uefi >/dev/null &&
   cargo build --release --target aarch64-unknown-uefi)
 sign "$hello/target/aarch64-unknown-uefi/release/hello.efi" "$out/hello.efi"
+
+probe="$here/uefi/test-apps/otp-probe"
+(cd "$probe" && cargo build --release --target aarch64-unknown-uefi)
+sign "$probe/target/aarch64-unknown-uefi/release/otp-probe.efi" "$out/otp-probe.efi"
 
 wd="$here/uefi/test-apps/watchdog"
 (cd "$wd" && cargo build --release --target aarch64-unknown-uefi)
