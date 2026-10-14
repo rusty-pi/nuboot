@@ -92,10 +92,10 @@ fn stand_by() -> ! {
     }
     cm::slow_vpu();
     cm::stop_idle_generators();
-    if expander::set_power_led(false) {
-        info!("wake", "the power LED is off");
-    } else {
-        warn!("wake", "the GPIO expander does not answer, leaving the power LED on");
+    match expander::power_led_off() {
+        Some(pins) => info!("wake", "the power LED is off";
+            direction = pins.direction, output = pins.output, high_z = pins.high_z),
+        None => warn!("wake", "the GPIO expander does not answer, leaving the power LED on"),
     }
     gpio::set_function(WAKE_GPIO, gpio::INPUT);
     gpio::set_pull(WAKE_GPIO, gpio::Pull::Up);
@@ -126,7 +126,7 @@ fn halt(reason: &str) -> ! {
 }
 
 fn reset() -> ! {
-    expander::set_power_led(true);
+    expander::power_led_restore();
     console::drain();
     watchdog::arm_ticks(RESET_TICKS);
     crate::halt()
