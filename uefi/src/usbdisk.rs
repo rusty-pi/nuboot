@@ -10,6 +10,9 @@ use crate::{debug, info, warn};
 
 /// The largest run one `READ(10)` moves, through the drive's DMA buffer.
 const BUFFER: usize = 256 * 1024;
+/// How long a drive has to answer "ready" in all: no further probe is made
+/// after it.
+const READY_BUDGET_US: u64 = 10_000_000;
 
 pub struct UsbDisk {
     slot: u32,
@@ -76,9 +79,13 @@ impl UsbDisk {
     }
 
     fn ready(&mut self) -> bool {
+        let started = crate::util::counter_us();
         for _ in 0..20 {
             if self.scsi(&[0; 6], 0).is_ok() {
                 return true;
+            }
+            if crate::util::counter_us() - started > READY_BUDGET_US {
+                break;
             }
             // REQUEST SENSE clears the unit attention a fresh drive reports.
             let _ = self.scsi(&[0x03, 0, 0, 0, 18, 0], 18);

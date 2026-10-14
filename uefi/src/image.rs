@@ -15,6 +15,9 @@ use crate::mem::{self, PAGE};
 use crate::util::Global;
 use crate::{debug, info, proto, warn};
 
+/// The most of a file `LoadImage` reads to run it.
+const MAX_LOADED: usize = 256 * 1024 * 1024;
+
 const SUBSYSTEM_APPLICATION: u16 = 10;
 const SUBSYSTEM_BOOT_DRIVER: u16 = 11;
 const SUBSYSTEM_RUNTIME_DRIVER: u16 = 12;
@@ -292,7 +295,7 @@ pub fn load(parent: efi::Handle, path: *const u8, source: Option<&[u8]>) -> Resu
             if name.is_empty() {
                 return Err(efi::Status::NOT_FOUND);
             }
-            owned = Some(crate::fat::read_file(h, &name)?);
+            owned = Some(crate::fat::read_file(h, &name, MAX_LOADED)?);
             device = h;
             file_path = rest.to_vec();
         }
