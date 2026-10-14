@@ -25,6 +25,10 @@ for:
   resources, and a signed capsule that fwupd stages is applied as a tryboot
   and committed once it has reached the OS ([docs/updates.md](docs/updates.md)).
 
+- **Wake-on-LAN.** The VPU firmware stays up after the OS powers the board
+  off, and a magic packet for the board's address boots it
+  ([docs/boot.md](docs/boot.md#wake-on-lan)).
+
 Out of scope: HATs and IPv6. The operating system gets a device tree, and ACPI
 tables when it asks for them or has no device tree ([docs/uefi.md](docs/uefi.md#acpi)).
 
@@ -111,6 +115,7 @@ From the boot ROM to the threads that run for as long as the board is up:
 | The flash variable store has room for the OS's writes after a boot: a bank the OS filled with the variables it replaced is started afresh with what the variables still need, and the OS writes again | ✅ | ✅ | ➖ | ➖ |
 | A shutdown through the runtime services, after `ExitBootServices`, ends in the bootloader's halt | ✅ | ➖ | ➖ | ➖ |
 | A boot key from the fused private key, handed over once, nothing of it left in the VPU's memory | ✅ | ➖ | ➖ | ➖ |
+| Wake-on-LAN: the OS powers the board off, the VPU waits on the Ethernet port, a magic packet boots the board | ✅ | ✅ | ➖ | ➖ |
 
 The Pi 4B column is a rev 1.5 (`d03115`).
 
@@ -179,6 +184,8 @@ pimu boot --eeprom out/stock-pieeprom.bin --sd boot/
 | `src/console.rs`, `src/cm.rs`, `src/otp.rs`, `src/board.rs` | The PL011, clock generators, OTP and the board's identity |
 | `src/spi_flash.rs`, `src/eeprom.rs`, `src/elf.rs`, `src/cache.rs` | The EEPROM and its sections, loading the ARM's image |
 | `src/pcie.rs`, `src/vl805.rs`, `src/usb.rs`, `src/lzss.rs` | The PCIe link, and the VL805 and its firmware |
+| `src/wake.rs`, `src/genet.rs` | Waiting for a magic packet after the OS powers the board off, and the Ethernet MAC and PHY that wait on |
+| `src/i2c.rs`, `src/expander.rs`, `src/pmic.rs` | The master the PMICs and the GPIO expander hang off, the power LED on the expander, and the SoC core rail's setpoint on the PMIC at `0x1E` |
 | `src/mailbox.rs` | The property mailbox |
 | `src/tpm_crb.rs` | The TPM's command response buffer, a page of the ARM's memory the VPU answers commands in |
 | `src/arm.rs`, `src/fdt.rs` | Starting the ARM, and the device tree it gets |

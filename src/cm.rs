@@ -99,6 +99,15 @@ pub const H264_CTL: u32 = 0x028;
 pub const ISP_CTL: u32 = 0x030;
 pub const GEN_1C8_CTL: u32 = 0x1c8;
 pub const GEN_208_CTL: u32 = 0x208;
+/// The two generators the Ethernet MAC runs from.
+pub const GEN_1E8_CTL: u32 = 0x1e8;
+/// Generators the stock firmware enables for peripherals this firmware does
+/// not identify.
+pub const GEN_1F0_CTL: u32 = 0x1f0;
+pub const GEN_1F8_CTL: u32 = 0x1f8;
+pub const GEN_200_CTL: u32 = 0x200;
+pub const GEN_22C_CTL: u32 = 0x22c;
+pub const GEN_210_CTL: u32 = 0x210;
 pub const SRC_PLLA_CORE: u32 = 4;
 pub const SRC_PLLC_PER: u32 = 5;
 pub const SRC_PLLD_PER: u32 = 6;
@@ -400,6 +409,33 @@ pub fn speed_up_arm(arm_mhz: u32) {
     let (ndiv, frac) = pllb_for(arm_mhz * div);
     ramp_pll(&PLLB, ndiv, frac);
     set_channel(&PLLB, PLLB_ARM, div);
+}
+
+/// The VPU's own clock generator.
+const VPU_CTL: u32 = 0x008;
+
+/// The VPU's clock rate: the oscillator's once [`slow_vpu`] has run, else what
+/// the PLLs give it.
+pub fn vpu_hz() -> u32 {
+    if read(VPU_CTL) & 0xf == SRC_OSC { OSC_HZ as u32 } else { bootcode_vpu_hz() }
+}
+
+/// Put the VPU on the oscillator, the clock it starts on.
+pub fn slow_vpu() {
+    write(VPU_CTL, read(VPU_CTL) & !0xf | SRC_OSC);
+}
+
+/// Generators the board does not need while it waits for a magic packet: the
+/// 3D unit's, the SD host's, the two the ARM's timer reads, and four of the
+/// peripheral generators above. With `0x1d8` and `0x1e0` stopped as well the
+/// detector never fires, so one of them has to run.
+const IDLE_GENERATORS: [u32; 8] =
+    [V3D_CTL, EMMC2_CTL, GEN_1C8_CTL, GEN_208_CTL, GEN_1F0_CTL, GEN_1F8_CTL, GEN_200_CTL, GEN_22C_CTL];
+
+pub fn stop_idle_generators() {
+    for ctl in IDLE_GENERATORS {
+        stop_generator(ctl);
+    }
 }
 
 /// Hold PLLB's ARM channel, which stops the ARM cores' clock, or release it.

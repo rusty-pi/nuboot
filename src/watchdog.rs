@@ -38,6 +38,9 @@ const PM_RSTS: u32 = 0x7e10_0020;
 const PM_WDOG: u32 = 0x7e10_0024;
 /// `PM_RSTS` bit 1: boot from `tryboot.img` next time, once.
 const RSTS_TRYBOOT: u32 = 1 << 1;
+/// `PM_RSTS` bits 0, 2, .. 10 all set: boot partition 63, which the bootloader
+/// takes to mean halt.
+const RSTS_HALT: u32 = 0x555;
 const PASSWD: u32 = 0x5a00_0000;
 
 /// `PM_WDOG` counts in 20 bits: `0xFFFFF` ticks is 16 s.
@@ -263,6 +266,18 @@ pub fn carry_poll() {
 
 /// What is left of the dog, below which the OS is taken to have armed it.
 const OS_TOOK_BELOW_US: u32 = 8_000_000;
+
+/// Whether the OS has asked for a power off: the halt partition in `PM_RSTS`
+/// and the dog armed for a full reset, which is what Linux's `bcm2835_power_off`
+/// leaves behind, in that order.
+pub fn power_off_requested() -> bool {
+    mmio::read(PM_RSTS) & RSTS_HALT == RSTS_HALT && mmio::read(PM_RSTC) & RSTC_WRCFG == RSTC_WRCFG_FULL_RESET
+}
+
+/// Take the halt partition out of `PM_RSTS`, so the reset after it boots.
+pub fn clear_power_off_request() {
+    mmio::write(PM_RSTS, PASSWD | mmio::read(PM_RSTS) & !RSTS_HALT);
+}
 
 /// Whether the next boot is asked to be a tryboot.
 pub fn tryboot_requested() -> bool {

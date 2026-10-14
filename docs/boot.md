@@ -86,6 +86,49 @@ in the 160 µs before it fires, which is rare. `ResetSystem`, which Linux's
 `reboot` and `poweroff` call, asks for its count again as long as the board has
 not reset.
 
+## Wake-on-LAN
+
+When the OS powers the board off, the VPU firmware stays up and waits for a
+magic packet on the Ethernet port. Linux's power off is a reset that ends in the
+bootloader's halt, which nothing but GPIO 3 wakes from; this firmware sees the
+power off coming and takes it instead of resetting.
+
+- Linux's firmware driver sends `NOTIFY_REBOOT` as the last of the devices shuts
+  down, before a reboot and before a power off. The firmware then watches
+  `PM_RSTS` and `PM_RSTC` for up to five seconds for what a power off writes,
+  through the firmware's `ResetSystem` or `bcm2835-wdt`: partition 63 (halt) and
+  the watchdog armed for a full reset. A reboot writes another partition, and the
+  board resets as it did before.
+- On a power off the firmware takes the watchdog off before it expires and stops
+  the ARM's clock. It resets the PCIe endpoint and powers the SerDes down, so the
+  VL805 idles, and puts the VPU on the oscillator and stops the clock generators
+  nothing uses. The Ethernet MAC and PHY are brought up at 10 or 100 Mbit/s,
+  with both DMA engines off and the MAC's magic packet detector armed for the
+  address the OS had (the one in the device tree, [uefi.md](uefi.md)). The power
+  LED and the Ethernet port's LEDs go out, and the VPU sleeps and looks at the detector and at GPIO 3 every
+  100 ms.
+- A magic packet for that address, or GPIO 3 pulled low, takes the halt out of
+  `PM_RSTS`, lights the LEDs again and resets the SoC, which boots as it does from
+  power on.
+- With no PHY or no link to wake from, the firmware arms the watchdog again with
+  `PM_RSTS` as the OS left it, and the stock bootloader halts as it always has.
+
+In stand-by the board draws about 2.4 W at the wall on a Raspberry Pi 4B
+`d03115`, against about 1.8 W in the stock bootloader's halt and 3.1 to 3.4 W
+with Raspberry Pi OS idle. The stock halt comes before the bootloader starts the
+PLLs and the SDRAM; this firmware runs from the SDRAM, which stays up.
+
+Nothing in the OS needs setting: the OS does not know the board waits, and
+powers off as it does without it.
+
+An OS started on the ACPI tables has no firmware driver to send `NOTIFY_REBOOT`
+(the tables do not describe the mailbox), so its power off ends in the
+bootloader's halt, as it did before.
+
+The EEPROM's `POWER_OFF_ON_HALT` is not read. A power off the OS asks for
+before the OS runs (UEFI's `ResetSystem` in boot services) halts in the
+bootloader.
+
 ## Running it in pimu
 
 ```bash
@@ -115,7 +158,7 @@ pimu boot --scenario scenarios/persist.yaml     # what the OS writes through the
 pimu boot --scenario scenarios/shutdown.yaml    # a shutdown through them ends in the bootloader's halt
 pimu boot --scenario scenarios/store-compact.yaml  # the flash store has room again at the next boot
 pimu boot --scenario scenarios/crypto.yaml      # the firmware cryptography service, locked from the OS
-scripts/build-linux-test.sh && pimu boot --scenario scenarios/linux.yaml  # Debian's kernel, from its own initramfs
+scripts/build-linux-test.sh && pimu boot --scenario scenarios/linux.yaml  # Debian's kernel, from its own initramfs, to a power off a magic packet wakes from
 pimu boot --scenario scenarios/linux-acpi.yaml   # the same kernel with acpi=on
 pimu boot --scenario scenarios/linux-no-dt.yaml  # and with an empty device tree, which it takes the ACPI tables for
 pimu boot --scenario scenarios/watchdog-hang.yaml  # a hang in UEFI resets the board
@@ -132,7 +175,7 @@ they are signed with ([uefi.md](uefi.md#secure-boot)).
 - On a board, only a Raspberry Pi 4B rev 1.5 (`d03115`) has run it, started by the stock EEPROM bootloader from the network; the rest
   is tested in pimu, which models the bootloader, including its signed boot
   ([README](../README.md#tested)).
-- The property mailbox answers `GET_REBOOT_FLAGS` and `SET_REBOOT_FLAGS` (bit 0 is the one-shot tryboot request in `PM_RSTS`, which Linux's `reboot '0 tryboot'` sets), `NOTIFY_XHCI_RESET` (reload the VL805's
+- The property mailbox answers `NOTIFY_REBOOT` (which starts the [watch for a power off](#wake-on-lan)), `GET_REBOOT_FLAGS` and `SET_REBOOT_FLAGS` (bit 0 is the one-shot tryboot request in `PM_RSTS`, which Linux's `reboot '0 tryboot'` sets), `NOTIFY_XHCI_RESET` (reload the VL805's
   firmware after the OS has reset the PCIe link), the TPM 2.0 on the VPU (tag
   `0x000300a3` carries a command, `0x000300a1` extends a PCR) and the
   one-time boot key (tag `0x000300a0`) and the device key's signatures, HMACs and

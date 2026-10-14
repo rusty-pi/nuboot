@@ -18,9 +18,12 @@ pub mod crypto;
 pub mod critical;
 pub mod eeprom;
 pub mod elf;
+pub mod expander;
 pub mod fdt;
+pub mod genet;
 pub mod gpio;
 pub mod handover;
+pub mod i2c;
 pub mod idle;
 pub mod kdf;
 pub mod keystore;
@@ -33,6 +36,7 @@ pub mod mmio;
 pub mod otp;
 pub mod p256;
 pub mod pcie;
+pub mod pmic;
 pub mod rng;
 pub mod rsa;
 pub mod sched;
@@ -48,6 +52,7 @@ pub mod tpm_crb;
 pub mod usb;
 pub mod varstore;
 pub mod vl805;
+pub mod wake;
 pub mod watchdog;
 
 // Both VPU cores come out of reset at the same place; bit 16 of `version` is

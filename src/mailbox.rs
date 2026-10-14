@@ -12,7 +12,7 @@
 //! firmware does not know is left as it came, and the buffer is marked
 //! answered either way, which is what the stock firmware does.
 
-use crate::{arm, crypto, debug, error, idle, info, keystore, measure, mmio, tpm2, varstore, vl805, warn, watchdog};
+use crate::{arm, crypto, debug, error, idle, info, keystore, measure, mmio, tpm2, varstore, vl805, wake, warn, watchdog};
 
 const VPU_VIEW: u32 = 0x7e00_b980;
 /// Mailbox 0, which the ARM reads.
@@ -40,6 +40,11 @@ const MAX_BUFFER: u32 = 0x6000;
 /// Linux's `RPI_FIRMWARE_NOTIFY_XHCI_RESET`: it has reset the PCIe link, and
 /// with it a VL805 that keeps no firmware of its own.
 const TAG_NOTIFY_XHCI_RESET: u32 = 0x0003_0058;
+
+/// Linux's `RPI_FIRMWARE_NOTIFY_REBOOT`, which its firmware driver sends as the
+/// last of the devices shuts down, before a reboot and before a power off alike
+/// ([`wake`]).
+const TAG_NOTIFY_REBOOT: u32 = 0x0003_0048;
 
 /// Linux's `RPI_FIRMWARE_GET_REBOOT_FLAGS` and `SET_REBOOT_FLAGS`, which
 /// `reboot '0 tryboot'` sets: bit 0 asks the bootloader to boot the next time
@@ -105,7 +110,13 @@ pub fn serve(timeout_us: u32) {
         while mmio::read(STATUS0) & STATUS_FULL != 0 {}
         mmio::write(DATA0, message);
     }
+    wake::serve_shutdown();
     idle::listen_mailbox();
+}
+
+/// Whether the ARM has posted a request that has not been read yet.
+pub fn request_pending() -> bool {
+    mmio::read(STATUS1) & STATUS_EMPTY == 0
 }
 
 /// What the buffer held when the ARM posted it. The ARM goes on running while
@@ -217,6 +228,10 @@ fn answer(bus: u32, runtime: bool) {
                     error!("usb", "VL805 firmware reload failed"; device = format_args!("{device:#x}"));
                 }
                 set(i + 2, RESPONSE | 4);
+            }
+            TAG_NOTIFY_REBOOT => {
+                wake::announce_shutdown();
+                set(i + 2, RESPONSE);
             }
             TAG_GET_REBOOT_FLAGS if room >= 4 => {
                 set(value, u32::from(watchdog::tryboot_requested()));

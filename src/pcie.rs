@@ -187,6 +187,13 @@ pub fn reset() {
     timer::delay_us(RESET_US);
 }
 
+/// Put the endpoint and the bridge into reset and power the SerDes down: what
+/// `init` undoes. Nothing on the link answers after this.
+pub fn power_down() {
+    reset();
+    rmw(HARD_DEBUG, 0, SERDES_IDDQ);
+}
+
 /// Bring the link up the way the bootloader does: release the bridge, power
 /// the SerDes, set the windows up, let the endpoint out of reset and wait for
 /// it, then set the root port up as a bridge. Whether it trained.
