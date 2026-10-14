@@ -29,6 +29,9 @@ for:
   off, and a magic packet for the board's address boots it
   ([docs/boot.md](docs/boot.md#wake-on-lan)).
 
+- **A stated security design**: what it defends, by what, and what it takes to
+  break it ([docs/security.md](docs/security.md)).
+
 Out of scope: HATs and IPv6. The operating system gets a device tree, and ACPI
 tables when it asks for them or has no device tree ([docs/uefi.md](docs/uefi.md#acpi)).
 

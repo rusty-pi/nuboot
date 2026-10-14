@@ -211,7 +211,7 @@ log in two banks of 20 KiB from `0x74000`, and come back at the next boot.
   with a seal: the device private key's HMAC-SHA256
   ([keystore.md](keystore.md#the-firmware-cryptography-service)) of the SHA-256
   of its attributes, name, value and a counter, which the VPU computes, so the
-  key never reaches the ARM. A record whose seal does not match, or whose
+  firmware never hands the key to the ARM. A record whose seal does not match, or whose
   counter is not above the one before it, is ignored. A variable is at most
   16 KiB.
 - A record is intact when its framing and SHA-256 are. One that is not, such as
@@ -231,7 +231,12 @@ device key seals for it only through the VPU's runtime tag, in a domain UEFI
 accepts for a variable of the OS's own and nothing else (below). UEFI forbids
 the device key to sign and to HMAC at `ExitBootServices`, and stops the boot
 when the VPU does not say it is locked. Dropping the newest record of a
-variable returns it to its previous value. Where the flash does not answer, or
+variable returns it to its previous value, which for a `dbx` update is to
+revoke less, and erasing both banks returns the keys the firmware was built
+with. Nothing outside the flash says how many records there should be, so the
+store cannot tell a rollback from an older state; the keys are measured into
+PCR 7 ([tpm2.md](tpm2.md#what-is-measured)), which is what a TPM policy
+notices it by. Where the flash does not answer, or
 no device private key is fused, there is no seal and a
 variable other than `KEK`, `db` and `dbx` lasts until reset. Writing a whole new
 `pieeprom.bin` clears the store.
@@ -284,7 +289,8 @@ plugin updates it by putting a capsule in `\EFI\UpdateCapsule` on the EFI
 system partition. At every boot, before the boot option runs, each `.cap` file
 there is checked:
 
-1. The header's GUID is the firmware's ESRT class, and the sizes fit the file.
+1. The header's GUID is the ESRT class of the firmware or of the EEPROM
+   bootloader, and the sizes fit the file.
 2. A `WIN_CERTIFICATE_UEFI_GUID` holds a detached PKCS #7 signature over the
    image after it. The signer has to chain to a `db` entry that is not
    Microsoft's, whose CAs sign for anyone, and the image's SHA-256 must not
@@ -367,7 +373,7 @@ build also needs `xz` and `openssl`, and `--test-apps` needs `sbsign`
 
 | build | payload | `pi4-uefi.bin` |
 |---|---|---|
-| default | 119 KB | 55 KB |
+| default | 218 KB | 103 KB |
 
 ## Running it in pimu
 
