@@ -8,6 +8,8 @@
 //! one Linux's `bcmgenet` arms for a suspend with `WAKE_MAGIC`
 //! (`bcmgenet_wol.c`).
 
+use core::sync::atomic::{AtomicU32, Ordering};
+
 use crate::{cm, gpio, mmio, timer};
 
 const GENET: u32 = 0x7d58_0000;
@@ -106,6 +108,25 @@ const EXT_IDDQ: u16 = 0x0d06;
 const PHY_ID_BROADCOM_OUI: u32 = 0x600d_0000;
 const PHY_ID_OUI_MASK: u32 = 0xffff_0000;
 
+/// The Broadcom PHYs' shadow register window: a read writes the shadow's number
+/// in bits 14:10 and reads the value back from the low ten bits, a write sets
+/// bit 15 as well.
+const MII_SHADOW: u32 = 0x1c;
+const SHADOW_WRITE: u16 = 1 << 15;
+const SHADOW_NUMBER_SHIFT: u16 = 10;
+const SHADOW_VALUE_MASK: u16 = 0x03ff;
+/// The shadows that say what each of the PHY's LED pins shows: two selectors of
+/// four bits each in a shadow.
+const SHADOW_LED_SELECTORS: [u16; 2] = [0x0d, 0x0e];
+/// A selector's source that ties the pin high, which puts its LED out.
+const LED_SOURCE_OFF: u16 = 0xe;
+const LEDS_OFF: u16 = LED_SOURCE_OFF << 4 | LED_SOURCE_OFF;
+const NO_PHY: u32 = u32::MAX;
+
+/// The PHY whose LED selectors [`leds_off`] changed, and what they were.
+static LED_PHY: AtomicU32 = AtomicU32::new(NO_PHY);
+static LED_SELECTORS_BEFORE: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
+
 /// The PHY's address on a 4B and a 400 or a CM4 without the extended
 /// revision's bit 22, in the order they are looked for.
 const PHY_ADDRESSES: [u32; 2] = [1, 0];
@@ -158,6 +179,11 @@ pub fn arm_magic_packet(mac: [u8; 6]) -> Result<Link, Error> {
     reset();
     let phy = find_phy().ok_or(Error::NoPhy)?;
     let link = negotiate(phy).ok_or(Error::NoLink)?;
+    if leds_off(phy).is_some() {
+        crate::info!("wake", "the Ethernet port's LEDs are off");
+    } else {
+        crate::warn!("wake", "the PHY did not take the LED setting, leaving the Ethernet port's LEDs on");
+    }
     receive(mac, link);
     arm_detector();
     Ok(link)
@@ -171,6 +197,7 @@ pub fn magic_packet_seen() -> bool {
 /// Leave the MAC the way Linux's `bcmgenet_wol_power_up_cfg` does: the
 /// detector off, the receiver off.
 pub fn disarm() {
+    leds_restore();
     mmio::write(UMAC_MPD_CTRL, mmio::read(UMAC_MPD_CTRL) & !MPD_EN);
     mmio::write(HFB_CTRL, mmio::read(HFB_CTRL) & !RBUF_ACPI_EN);
     mmio::write(UMAC_CMD, mmio::read(UMAC_CMD) & !CMD_RX_EN);
@@ -270,6 +297,45 @@ fn negotiate(phy: u32) -> Option<Link> {
         link.is_some()
     });
     link
+}
+
+fn shadow_read(phy: u32, shadow: u16) -> Option<u16> {
+    mdio_write(phy, MII_SHADOW, shadow << SHADOW_NUMBER_SHIFT)?;
+    Some(mdio_read(phy, MII_SHADOW)? & SHADOW_VALUE_MASK)
+}
+
+fn shadow_write(phy: u32, shadow: u16, value: u16) -> Option<()> {
+    mdio_write(phy, MII_SHADOW, SHADOW_WRITE | shadow << SHADOW_NUMBER_SHIFT | value)
+}
+
+/// Put out the LEDs the PHY drives, the Ethernet port's, keeping what their
+/// selectors were for [`leds_restore`]. The link and its negotiation do not
+/// change. Only a Broadcom PHY is known to take it; whether it did.
+fn leds_off(phy: u32) -> Option<()> {
+    if phy_id(phy)? & PHY_ID_OUI_MASK != PHY_ID_BROADCOM_OUI {
+        return None;
+    }
+    for (shadow, before) in SHADOW_LED_SELECTORS.into_iter().zip(&LED_SELECTORS_BEFORE) {
+        before.store(shadow_read(phy, shadow)? as u32, Ordering::Relaxed);
+    }
+    LED_PHY.store(phy, Ordering::Relaxed);
+    for shadow in SHADOW_LED_SELECTORS {
+        shadow_write(phy, shadow, LEDS_OFF)?;
+        (shadow_read(phy, shadow)? == LEDS_OFF).then_some(())?;
+    }
+    Some(())
+}
+
+/// Put the LEDs' selectors back to what [`leds_off`] found.
+fn leds_restore() {
+    let phy = LED_PHY.load(Ordering::Relaxed);
+    if phy == NO_PHY {
+        return;
+    }
+    for (shadow, before) in SHADOW_LED_SELECTORS.into_iter().zip(&LED_SELECTORS_BEFORE) {
+        shadow_write(phy, shadow, before.load(Ordering::Relaxed) as u16);
+    }
+    LED_PHY.store(NO_PHY, Ordering::Relaxed);
 }
 
 /// The link the PHY has negotiated, with what the partner offers weighed

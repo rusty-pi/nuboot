@@ -105,10 +105,10 @@ power off coming and takes it instead of resetting.
   nothing uses. The Ethernet MAC and PHY are brought up at 10 or 100 Mbit/s,
   with both DMA engines off and the MAC's magic packet detector armed for the
   address the OS had (the one in the device tree, [uefi.md](uefi.md)). The power
-  LED goes out, and the VPU sleeps and looks at the detector and at GPIO 3 every
+  LED and the Ethernet port's LEDs go out, and the VPU sleeps and looks at the detector and at GPIO 3 every
   100 ms.
 - A magic packet for that address, or GPIO 3 pulled low, takes the halt out of
-  `PM_RSTS`, lights the power LED and resets the SoC, which boots as it does from
+  `PM_RSTS`, lights the LEDs again and resets the SoC, which boots as it does from
   power on.
 - With no PHY or no link to wake from, the firmware arms the watchdog again with
   `PM_RSTS` as the OS left it, and the stock bootloader halts as it always has.
