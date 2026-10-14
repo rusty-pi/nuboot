@@ -8,9 +8,12 @@
 //! firmware ([`esrt::FIRMWARE_CLASS`]) or the EEPROM bootloader
 //! ([`esrt::EEPROM_CLASS`]), then a
 //! `WIN_CERTIFICATE_UEFI_GUID` holding a detached PKCS #7 signature over what
-//! follows it: `P4FW`, the version as a little-endian `u32`, the length of
-//! `boot.sig` as one, `boot.sig`, and `boot.img`. The bootloader checks that
-//! pair against the EEPROM's customer key when it boots it.
+//! follows it: `P4FW`, the resource's class GUID again, the version as a
+//! little-endian `u32`, the length of `boot.sig` as one, `boot.sig`, and
+//! `boot.img`. The class is in the signed part so that a capsule signed for the
+//! EEPROM bootloader cannot be handed to the firmware, or the other way round.
+//! The bootloader checks the pair against the EEPROM's customer key when it
+//! boots it.
 //!
 //! An update of the firmware takes three boots:
 //!
@@ -140,10 +143,13 @@ fn check(file: &[u8]) -> Result<Capsule, (u32, &'static str)> {
     if image.get(..4) != Some(MAGIC) {
         return Err(invalid("image is not firmware"));
     }
-    let version = u32_at(image, 4).ok_or(invalid("no version"))?;
-    let sig_len = u32_at(image, 8).ok_or(invalid("no boot.sig"))? as usize;
-    let sig = image.get(12..12 + sig_len).filter(|_| sig_len <= MAX_SIGNATURE).ok_or(invalid("boot.sig does not fit"))?;
-    let img = &image[12 + sig_len..];
+    if image.get(4..20) != Some(kind.class().as_bytes()) {
+        return Err(invalid("the signed image is for another resource than the capsule header names"));
+    }
+    let version = u32_at(image, 20).ok_or(invalid("no version"))?;
+    let sig_len = u32_at(image, 24).ok_or(invalid("no boot.sig"))? as usize;
+    let sig = image.get(28..28 + sig_len).filter(|_| sig_len <= MAX_SIGNATURE).ok_or(invalid("boot.sig does not fit"))?;
+    let img = &image[28 + sig_len..];
     if img.is_empty() || img.len() > MAX_IMAGE {
         return Err((esrt::INSUFFICIENT_RESOURCES, "boot.img is empty or too large"));
     }

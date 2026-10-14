@@ -14,6 +14,7 @@ boot:
       EFI/UpdateCapsule/corrupt.cap: "../out/capsule-corrupt.cap"
       EFI/UpdateCapsule/stranger.cap: "../out/capsule-stranger.cap"
       EFI/UpdateCapsule/junk.cap: "../out/capsule-junk.cap"
+      EFI/UpdateCapsule/relabeled.cap: "../out/capsule-relabeled.cap"
   until: "hello test: done"
   wall_secs: 900
 
@@ -28,5 +29,7 @@ milestones:
     line: "capsule refused  path=\\EFI\\UpdateCapsule\\corrupt.cap"
   - why: "A key db does not hold cannot sign firmware."
     line: "reason=\"not signed by a key in db\""
+  - why: "A capsule signed for the EEPROM bootloader whose header was changed to name the firmware is refused: the class is inside what the signature covers."
+    line: "reason=\"the signed image is for another resource than the capsule header names\""
   - why: "A file that is no capsule is refused."
     line: "reason=\"not a capsule for this firmware\""

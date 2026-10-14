@@ -289,9 +289,11 @@ there is checked:
    image after it. The signer has to chain to a `db` entry that is not
    Microsoft's, whose CAs sign for anyone, and the image's SHA-256 must not
    be in `dbx`.
-3. The image is `P4FW`, a little-endian `u32` version, the length of
-   `boot.sig` as one, `boot.sig`, and `boot.img` ([boot.md](boot.md#signed-boot)).
-   `boot.sig` names the SHA-256 of that `boot.img`.
+3. The image is `P4FW`, the class GUID of the header again, a little-endian
+   `u32` version, the length of `boot.sig` as one, `boot.sig`, and `boot.img`
+   ([boot.md](boot.md#signed-boot)). The class is part of what is signed, so a
+   capsule made for one resource is refused as the other. `boot.sig` names the
+   SHA-256 of that `boot.img`.
 4. The version is newer than the running firmware's.
 
 A capsule that fails sets the ESRT's last attempt version and status

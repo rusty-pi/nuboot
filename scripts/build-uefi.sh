@@ -193,6 +193,7 @@ sign "$rt/target/aarch64-unknown-uefi/release/shutdown.efi" "$out/runtime-shutdo
 st="$here/uefi/test-apps/store"
 (cd "$st" && cargo build --release --target aarch64-unknown-uefi)
 sign "$st/target/aarch64-unknown-uefi/release/enroll.efi" "$out/store-enroll.efi"
+"$here/scripts/mkcapsule.py" "$keys/db.key" "$keys/db.crt" 0x7fffffff --class eeprom --header-class firmware "$out/capsule-relabeled.cap"
 sign "$st/target/aarch64-unknown-uefi/release/tamper.efi" "$out/store-tamper.efi"
 sbsign --key "$keys/x.key" --cert "$keys/x.crt" --output "$out/store-enrolled.efi" \
   "$st/target/aarch64-unknown-uefi/release/enrolled.efi" 2>/dev/null

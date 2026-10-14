@@ -159,6 +159,7 @@ jobs:
             out/capsule-stranger.cap
             out/capsule-junk.cap
             out/runtime-variables.efi
+            out/capsule-relabeled.cap
             out/crypto.efi
             out/persist.efi
             out/store-compact.efi
