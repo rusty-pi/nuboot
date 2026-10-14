@@ -119,6 +119,10 @@ PLLs and the SDRAM; this firmware runs from the SDRAM, which stays up.
 Nothing in the OS needs setting: the OS does not know the board waits, and
 powers off as it does without it.
 
+An OS started on the ACPI tables has no firmware driver to send `NOTIFY_REBOOT`
+(the tables do not describe the mailbox), so its power off ends in the
+bootloader's halt, as it did before.
+
 The EEPROM's `POWER_OFF_ON_HALT` is not read. A power off the OS asks for
 before the OS runs (UEFI's `ResetSystem` in boot services) halts in the
 bootloader.
