@@ -185,6 +185,7 @@ pimu boot --eeprom out/stock-pieeprom.bin --sd boot/
 | `src/spi_flash.rs`, `src/eeprom.rs`, `src/elf.rs`, `src/cache.rs` | The EEPROM and its sections, loading the ARM's image |
 | `src/pcie.rs`, `src/vl805.rs`, `src/usb.rs`, `src/lzss.rs` | The PCIe link, and the VL805 and its firmware |
 | `src/wake.rs`, `src/genet.rs` | Waiting for a magic packet after the OS powers the board off, and the Ethernet MAC and PHY that wait on |
+| `src/i2c.rs`, `src/pmic.rs` | The master the PMICs hang off, and the SoC core rail's setpoint on the PMIC at `0x1E` |
 | `src/mailbox.rs` | The property mailbox |
 | `src/tpm_crb.rs` | The TPM's command response buffer, a page of the ARM's memory the VPU answers commands in |
 | `src/arm.rs`, `src/fdt.rs` | Starting the ARM, and the device tree it gets |

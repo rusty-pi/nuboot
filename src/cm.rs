@@ -414,6 +414,12 @@ pub fn speed_up_arm(arm_mhz: u32) {
 /// The VPU's own clock generator.
 const VPU_CTL: u32 = 0x008;
 
+/// The VPU's clock rate: the oscillator's once [`slow_vpu`] has run, else what
+/// the PLLs give it.
+pub fn vpu_hz() -> u32 {
+    if read(VPU_CTL) & 0xf == SRC_OSC { OSC_HZ as u32 } else { bootcode_vpu_hz() }
+}
+
 /// Put the VPU on the oscillator, the clock it starts on.
 pub fn slow_vpu() {
     write(VPU_CTL, read(VPU_CTL) & !0xf | SRC_OSC);
