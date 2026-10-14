@@ -134,6 +134,10 @@ gives `out/start4.elf`. It also needs `python3`, and downloads the stock EEPROM
 image the scenarios boot. `scripts/build.sh --features color` colours the log
 with ANSI escapes.
 
+A release is an `X.Y.Z` tag on `main`: pushing it builds `start4.elf` in CI and
+publishes it as that tag's GitHub release, with the tag's message as the notes
+(`.claude/skills/release/SKILL.md` has the steps).
+
 ## Running it in pimu
 
 [`scenarios/`](scenarios/) holds the boots CI checks: each names the EEPROM
