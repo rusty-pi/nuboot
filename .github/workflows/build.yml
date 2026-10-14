@@ -57,8 +57,8 @@ jobs:
       # scripts/build-linux-test.sh builds the initramfs's helper with the
       # cross compiler and its C library.
       - name: Install Python, sbsigntool and the cross compiler
+        if: runner.environment == 'github-hosted'
         run: |
-          command -v python3 >/dev/null && command -v sbsign >/dev/null && command -v mcopy >/dev/null && command -v aarch64-linux-gnu-gcc >/dev/null && [ -e /usr/aarch64-linux-gnu/include/stdio.h ] && exit 0
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends python3 sbsigntool openssl mtools dosfstools make gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 
@@ -197,7 +197,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
       - name: Install acpica-tools and dmidecode
+        if: runner.environment == 'github-hosted'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends acpica-tools dmidecode
@@ -213,7 +215,9 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
       - name: Install tpm2-tools and cryptsetup
+        if: runner.environment == 'github-hosted'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends tpm2-tools cryptsetup-bin
