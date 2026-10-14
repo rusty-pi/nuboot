@@ -193,7 +193,7 @@ jobs:
   # tools' disassembly and recompilation of the DSDT; and the SMBIOS tables,
   # which dmidecode reads.
   acpi:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_BOOT || 'ubuntu-24.04' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -209,7 +209,7 @@ jobs:
   # whole TPM driven by tpm2-tools and systemd-cryptenroll over the
   # simulator's socket protocol.
   tpm:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_BOOT || 'ubuntu-24.04' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
@@ -221,7 +221,7 @@ jobs:
         run: scripts/test-tpm.sh
 
   scenarios:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ vars.RUNNER_BOOT || 'ubuntu-24.04' }}
     outputs:
       matrix: ${{ steps.list.outputs.matrix }}
     steps:
