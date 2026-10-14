@@ -405,6 +405,24 @@ pub fn speed_up_arm(arm_mhz: u32) {
     set_channel(&PLLB, PLLB_ARM, div);
 }
 
+/// The VPU's own clock generator.
+const VPU_CTL: u32 = 0x008;
+
+/// Put the VPU on the oscillator, the clock it starts on.
+pub fn slow_vpu() {
+    write(VPU_CTL, read(VPU_CTL) & !0xf | SRC_OSC);
+}
+
+/// Generators nothing runs from while the board waits for a magic packet: the
+/// 3D unit's, the SD host's, and the two the ARM's timer reads.
+const IDLE_GENERATORS: [u32; 4] = [V3D_CTL, EMMC2_CTL, GEN_1C8_CTL, GEN_208_CTL];
+
+pub fn stop_idle_generators() {
+    for ctl in IDLE_GENERATORS {
+        stop_generator(ctl);
+    }
+}
+
 /// Hold PLLB's ARM channel, which stops the ARM cores' clock, or release it.
 pub fn hold_arm(hold: bool) {
     let cm = read(PLLB.cm);

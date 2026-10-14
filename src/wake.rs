@@ -90,6 +90,8 @@ fn stand_by() -> ! {
         Err(genet::Error::NoPhy) => halt("no PHY answers on the MDIO bus"),
         Err(genet::Error::NoLink) => halt("no link to wake from"),
     }
+    cm::slow_vpu();
+    cm::stop_idle_generators();
     gpio::set_function(WAKE_GPIO, gpio::INPUT);
     gpio::set_pull(WAKE_GPIO, gpio::Pull::Up);
     loop {
