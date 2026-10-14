@@ -16,7 +16,7 @@ use core::cell::Cell;
 use pi4_server_firmware::board::{Board, Revision};
 use pi4_server_firmware::handover::{self, BootDevice};
 use pi4_server_firmware::{
-    arm, console, error, idle, info, mailbox, measure, otp, sched, stack, stc, timer, usb, warn, watchdog,
+    arm, console, error, idle, info, mailbox, measure, otp, sched, stack, stc, thermal, timer, usb, warn, watchdog,
 };
 
 /// What the ARM cores start in: an armstub and the compressed UEFI firmware
@@ -91,6 +91,11 @@ fn firmware_main() -> ! {
     take_over_watchdog();
 
     let board = Board::read();
+    match thermal::start() {
+        Some(millicelsius) => info!("thermal", "temperature sensor running";
+            celsius = format_args!("{}{}.{}", if millicelsius < 0 { "-" } else { "" }, millicelsius.abs() / 1000, millicelsius.abs() % 1000 / 100)),
+        None => warn!("thermal", "temperature sensor gave no sample"),
+    }
     measure::platform(
         COMMIT,
         ARM_IMAGE,
@@ -103,7 +108,7 @@ fn firmware_main() -> ! {
         if handover::present() { handover::sdram_mib() } else { 0 },
     );
     usb::bring_up(&board);
-    let started = match arm::start(ARM_IMAGE, ARM_TREE, board.serial) {
+    let started = match arm::start(ARM_IMAGE, ARM_TREE, board.serial, board.revision) {
         Ok(started) => {
             info!("arm", "ARM started in UEFI";
                 image_bytes = started.image_bytes, tree = format_args!("{:#x}", arm::TREE_ADDR),
@@ -113,7 +118,7 @@ fn firmware_main() -> ! {
             true
         }
         Err(arm::Error::Tree) => {
-            error!("arm", "the built-in device tree has no /memory@0 reg, not starting the ARM");
+            error!("arm", "the built-in device tree has no /memory@0 reg or no /reserved-memory, not starting the ARM");
             false
         }
     };

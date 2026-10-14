@@ -6,7 +6,7 @@
 //! with the primary core going on to decompress the UEFI payload. The
 //! address of the tree goes in the image's word at [`IMAGE_TREE_WORD`].
 
-use crate::{cm, fdt, handover, mmio, timer};
+use crate::{cm, fdt, handover, mmio, timer, tpm_crb};
 
 /// The ARM control block, and the bit that lets the cores out of reset.
 const ARMCTRL: u32 = 0x7e00_b000;
@@ -38,6 +38,25 @@ pub const VPU_BASE: u32 = 0x3ec0_0000;
 
 /// What the OS's driver for the TPM on the VPU matches (`tools/tpm-vpu`).
 const TPM_COMPATIBLE: &[u8] = b"rusty-pi,pi4-vpu-tpm\0";
+
+/// The page of the ARM's memory the TPM's command response buffer is in: the
+/// last one below the VPU's own. The device tree reserves it, and the UEFI
+/// firmware tells the OS about it in the ACPI tables.
+pub const CRB_BASE: u32 = VPU_BASE - tpm_crb::SIZE;
+const CRB_NODE: &[u8] = b"tpm-crb@3ebff000";
+const _: () = assert!(CRB_BASE == 0x3ebf_f000);
+
+fn crb_reg() -> [u8; 12] {
+    let mut reg = [0u8; 12];
+    reg[4..8].copy_from_slice(&CRB_BASE.to_be_bytes());
+    reg[8..12].copy_from_slice(&tpm_crb::SIZE.to_be_bytes());
+    reg
+}
+
+/// The TPM's command response buffer.
+pub fn crb() -> tpm_crb::Window {
+    tpm_crb::Window::new((0xc000_0000 | CRB_BASE) as usize as *mut u8, CRB_BASE)
+}
 
 /// The second bank the ARM gets, above the first gigabyte, and how far it can
 /// reach: the peripherals sit in the 64 MiB below 4 GiB.
@@ -253,7 +272,7 @@ fn memory_reg(total: u64, out: &mut [u8; MEMORY_REG_MAX]) -> usize {
 }
 
 pub enum Error {
-    /// The built-in device tree is not one, or has no `/memory@0` `reg`.
+    /// The built-in device tree is not one, or has no `/memory@0` `reg` or no `/reserved-memory`.
     Tree,
 }
 
@@ -278,43 +297,94 @@ pub fn ethernet_address(serial: u32) -> [u8; 6] {
     [0x02, digest[0], digest[1], digest[2], digest[3], digest[4]]
 }
 
-/// Put `image` at ARM physical 0 and `tree`, with the board's memory and
-/// network address filled in, at [`TREE_ADDR`], then let the cores out of
+/// The root property the revision code goes in, which nothing but UEFI reads
+/// (for the identity SMBIOS gives).
+const REVISION_PROPERTY: &[u8] = b"rusty-pi,board-revision";
+
+/// The serial number as a device tree string: eight hex digits, as the
+/// bootloader names the board (`serial 1a2b3c4d`), and the NUL.
+fn serial_text(serial: u32) -> [u8; 9] {
+    let mut text = [0u8; 9];
+    for (i, digit) in text[..8].iter_mut().enumerate() {
+        *digit = b"0123456789abcdef"[(serial >> (28 - 4 * i) & 0xf) as usize];
+    }
+    text
+}
+
+/// Put `image` at ARM physical 0 and `tree`, with the board's memory, network
+/// address and identity filled in, at [`TREE_ADDR`], then let the cores out of
 /// reset.
-pub fn start(image: &[u8], tree: &[u8], serial: u32) -> Result<Started, Error> {
+pub fn start(image: &[u8], tree: &[u8], serial: u32, revision: u32) -> Result<Started, Error> {
     let total = if handover::present() { handover::sdram_mib() as u64 } else { 1024 } << 20;
     let mut reg = [0u8; MEMORY_REG_MAX];
     let reg_len = memory_reg(total, &mut reg);
     let ethernet = ethernet_address(serial);
-    // The tree is copied through the two halves of its window, each copy with
-    // one change: the TPM's node, the network address, and the memory's `reg`.
-    let half = TREE_MAX / 2;
-    let second = TREE_ADDR + half as u32;
+    // The tree is copied through the windows of its space, each copy with one
+    // change: the TPM's node, the TPM's buffer in the reserved memory, the
+    // network address, the board's serial number and revision, and the
+    // memory's `reg`. The last copy is at `TREE_ADDR`.
+    let window = TREE_MAX / 4;
+    let window_at = |n: usize| TREE_ADDR + (n * window) as u32;
     let with_tpm = fdt::copy_with_node(
         tree,
-        arm_memory(TREE_ADDR, half),
+        arm_memory(window_at(1), window),
         &[b""],
         b"vpu-tpm",
         &[(b"compatible", TPM_COMPATIBLE)],
     )
     .ok_or(Error::Tree)?;
-    let with_tpm: &[u8] = arm_memory(TREE_ADDR, with_tpm);
-    let with_address = match fdt::copy_with_new_property(with_tpm, arm_memory(second, half), ETHERNET_NODE, b"local-mac-address", &ethernet) {
-        Some(len) => len,
-        None => {
-            arm_memory(second, with_tpm.len()).copy_from_slice(with_tpm);
-            with_tpm.len()
-        }
+    let with_buffer = fdt::copy_with_node(
+        arm_memory(window_at(1), with_tpm),
+        arm_memory(window_at(2), window),
+        &[b"", b"reserved-memory"],
+        CRB_NODE,
+        &[(b"reg", &crb_reg()), (b"no-map", b"")],
+    )
+    .ok_or(Error::Tree)?;
+    let (with_address_at, with_address) = match fdt::copy_with_new_property(
+        arm_memory(window_at(2), with_buffer),
+        arm_memory(window_at(1), window),
+        ETHERNET_NODE,
+        b"local-mac-address",
+        &ethernet,
+    ) {
+        Some(len) => (window_at(1), len),
+        None => (window_at(2), with_buffer),
     };
-    let with_address: &[u8] = arm_memory(second, with_address);
+    // The board's identity, where the tree has none: its serial number, which
+    // the device tree specification names, and its revision code.
+    let spare = |at: u32| if at == window_at(1) { window_at(2) } else { window_at(1) };
+    let serial_at = spare(with_address_at);
+    let (with_serial_at, with_serial) = match fdt::copy_with_new_property(
+        arm_memory(with_address_at, with_address),
+        arm_memory(serial_at, window),
+        &[b""],
+        b"serial-number",
+        &serial_text(serial),
+    ) {
+        Some(len) => (serial_at, len),
+        None => (with_address_at, with_address),
+    };
+    let revision_at = spare(with_serial_at);
+    let (with_revision_at, with_revision) = match fdt::copy_with_new_property(
+        arm_memory(with_serial_at, with_serial),
+        arm_memory(revision_at, window),
+        &[b""],
+        REVISION_PROPERTY,
+        &revision.to_be_bytes(),
+    ) {
+        Some(len) => (revision_at, len),
+        None => (with_serial_at, with_serial),
+    };
     let tree_bytes = fdt::copy_with_property(
-        with_address,
-        arm_memory(TREE_ADDR, half),
+        arm_memory(with_revision_at, with_revision),
+        arm_memory(TREE_ADDR, window),
         &[b"", b"memory@0"],
         b"reg",
         &reg[..reg_len],
     )
     .ok_or(Error::Tree)?;
+    crb().reset();
 
     let at = arm_memory(0, image.len());
     at.copy_from_slice(image);

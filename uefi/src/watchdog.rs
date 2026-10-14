@@ -14,7 +14,10 @@
 //! uses that timer or that routing, which no loader or kernel stub does, takes
 //! the beat from it.
 
+use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+use r_efi::efi;
 
 use crate::util::{counter_us, read32, write32};
 
@@ -23,6 +26,9 @@ use crate::util::{counter_us, read32, write32};
 const WORD: u64 = 0xfc;
 const EXIT: u32 = 2;
 
+/// The power manager's registers' page, which the OS has to map for
+/// [`runtime_reset_system`].
+pub const PM_PAGE: u64 = 0xFE10_0000;
 const PM_RSTC: u64 = 0xFE10_001C;
 const PM_RSTS: u64 = 0xFE10_0020;
 const PM_WDOG: u64 = 0xFE10_0024;
@@ -170,15 +176,42 @@ pub fn request_tryboot() {
     write32(PM_RSTS, PM_PASSWORD | read32(PM_RSTS) | PM_RSTS_TRYBOOT);
 }
 
-/// Reset the board, as `bcm2835-wdt` does; with `halt`, to stay off.
-pub fn reset(halt: bool) -> ! {
+/// The count a reset is asked for: 10 ticks of the dog, about 150 µs.
+const RESET_TICKS: u32 = 10;
+/// More than this left on the dog means somebody has reloaded it since.
+const RELOADED_ABOVE: u32 = 4 * RESET_TICKS;
+
+/// Have the dog reset the board within a few ticks, as `bcm2835-wdt` does; with
+/// `halt`, to stay off.
+fn start_reset(halt: bool) {
     mask_interrupts();
     if halt {
         let rsts = read32(PM_RSTS);
         write32(PM_RSTS, PM_PASSWORD | (rsts & !0xFFF) | PM_RSTS_HALT);
     }
-    write32(PM_WDOG, PM_PASSWORD | 10);
+    write32(PM_WDOG, PM_PASSWORD | RESET_TICKS);
     let rstc = read32(PM_RSTC);
     write32(PM_RSTC, PM_PASSWORD | (rstc & PM_RSTC_WRCFG_CLR) | PM_RSTC_WRCFG_FULL_RESET);
+}
+
+/// Reset the board; with `halt`, to stay off.
+pub fn reset(halt: bool) -> ! {
+    start_reset(halt);
     crate::util::halt()
+}
+
+/// `ResetSystem` after `ExitBootServices`: the OS calls it at EL1, so it touches
+/// no EL2 register and logs nothing. A shutdown is a reset the bootloader halts
+/// after.
+///
+/// The VPU reloads the dog for a while after `ExitBootServices`, and a reload
+/// before the dog runs out puts the reset off by seconds, so the count is asked
+/// for again whenever the dog has been reloaded.
+pub extern "efiapi" fn runtime_reset_system(kind: efi::ResetType, _status: efi::Status, _size: usize, _data: *mut c_void) {
+    start_reset(kind == efi::RESET_SHUTDOWN);
+    loop {
+        if (read32(PM_WDOG) & PM_WDOG_MAX) > RELOADED_ABOVE {
+            write32(PM_WDOG, PM_PASSWORD | RESET_TICKS);
+        }
+    }
 }

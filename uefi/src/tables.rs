@@ -34,9 +34,9 @@ struct RuntimeData {
 const MAX_CONFIG: usize = 16;
 
 /// `EFI_RT_PROPERTIES_TABLE`: which runtime services work after
-/// `ExitBootServices`: the variable services, from [`crate::rtvar`]. The OS
-/// does not call `SetVirtualAddressMap`, so it maps the runtime regions where
-/// they are.
+/// `ExitBootServices`: the variable services, from [`crate::rtvar`], and
+/// `ResetSystem`, from [`crate::watchdog`]. The OS does not call
+/// `SetVirtualAddressMap`, so it maps the runtime regions where they are.
 #[repr(C)]
 struct RtProperties {
     version: u16,
@@ -45,6 +45,7 @@ struct RtProperties {
 }
 
 const RT_VARIABLE_SERVICES: u32 = 0x10 | 0x20 | 0x40 | 0x2000;
+const RT_RESET_SYSTEM: u32 = 0x400;
 
 const RT_PROPERTIES_GUID: efi::Guid =
     efi::Guid::from_fields(0xeb66918a, 0x7eef, 0x402a, 0x84, 0x2e, &[0x93, 0x1d, 0x21, 0xc3, 0x8a, 0xe9]);
@@ -470,6 +471,7 @@ extern "efiapi" fn exit_boot_services(_handle: efi::Handle, key: usize) -> efi::
     d.rt.get_next_variable_name = rtvar::get_next_variable_name;
     d.rt.set_variable = rtvar::set_variable;
     d.rt.query_variable_info = rtvar::query_variable_info;
+    d.rt.reset_system = crate::watchdog::runtime_reset_system;
     d.st.boot_services = core::ptr::null_mut();
     d.st.con_in = core::ptr::null_mut();
     d.st.console_in_handle = core::ptr::null_mut();
@@ -803,7 +805,7 @@ pub fn init(console: efi::Handle, con_in: *mut r_efi::protocols::simple_text_inp
     for (i, c) in "pi4-server-firmware".encode_utf16().enumerate() {
         d.vendor[i] = c;
     }
-    d.rt_properties = RtProperties { version: 1, length: 8, supported: RT_VARIABLE_SERVICES };
+    d.rt_properties = RtProperties { version: 1, length: 8, supported: RT_VARIABLE_SERVICES | RT_RESET_SYSTEM };
     d.rt = efi::RuntimeServices {
         hdr: header(efi::RUNTIME_SERVICES_SIGNATURE, core::mem::size_of::<efi::RuntimeServices>()),
         get_time,

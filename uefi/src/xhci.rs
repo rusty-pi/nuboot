@@ -196,6 +196,12 @@ const EVENT_TRBS: usize = 256;
 const CONTROL_BUF: usize = 4096;
 
 static XHCI: Global<Option<Xhci>> = Global::new(None);
+static REGISTERS: Global<Option<u64>> = Global::new(None);
+
+/// Where the controller's registers are, when the VL805 is on the bus.
+pub fn registers_base() -> Option<u64> {
+    *REGISTERS.get()
+}
 
 pub fn controller() -> &'static mut Xhci {
     XHCI.get().as_mut().unwrap()
@@ -736,12 +742,45 @@ fn controller_path() -> Vec<u8> {
         .done()
 }
 
+const CAPABILITY_LIST: u64 = 0x34;
+const MSI_CAPABILITY_ID: u32 = 0x05;
+/// Bit 0 of the MSI capability's message control word, its upper half.
+const MSI_ENABLE: u32 = 1 << 16;
+/// The most capabilities a function's list can hold in its 192 bytes.
+const CAPABILITIES_MAX: usize = 48;
+
+fn msi_capability() -> Option<u64> {
+    let mut at = (read32(cfg(CAPABILITY_LIST)) & 0xfc) as u64;
+    for _ in 0..CAPABILITIES_MAX {
+        if at == 0 {
+            return None;
+        }
+        let header = read32(cfg(at));
+        if header & 0xff == MSI_CAPABILITY_ID {
+            return Some(at);
+        }
+        at = ((header >> 8) & 0xfc) as u64;
+    }
+    None
+}
+
+/// `start4.elf` enables the controller's MSI, and a function with MSI enabled
+/// does not raise INTx, the only interrupt an OS on the ACPI tables has.
+fn leave_the_interrupt_line_to_the_os() {
+    if let Some(at) = msi_capability() {
+        let control = cfg(at);
+        write32(control, read32(control) & !MSI_ENABLE);
+    }
+}
+
 /// Find the controller, reset it and bring up everything on its ports.
 pub fn init() {
     let Some(base) = registers() else {
         info!("usb", "no VL805 on the PCIe bus");
         return;
     };
+    *REGISTERS.get() = Some(base);
+    crate::tables::on_exit_boot_services(leave_the_interrupt_line_to_the_os);
     let xhci = match Xhci::init(base) {
         Ok(x) => x,
         Err(e) => {

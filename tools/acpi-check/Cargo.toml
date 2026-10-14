@@ -1,0 +1,17 @@
+[package]
+name = "acpi-check"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+description = "The UEFI firmware's ACPI tables, built for the host and checked with the ACPICA tools."
+
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "acpi-dump"
+path = "src/main.rs"
+
+[dependencies]

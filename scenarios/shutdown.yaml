@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "shutdown"
+description: "An EFI application exits boot services as an operating system loader does, then asks the runtime services for a shutdown: the board resets with the halt partition in PM_RSTS, and the bootloader that starts again halts instead of booting."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  bootconf:
+    - "BOOT_UART=1"
+  sd:
+    files:
+      start4.elf: "../out/start4-test.elf"
+      EFI/BOOT/BOOTAA64.EFI: "../out/runtime-shutdown.efi"
+  until: "Halt: wake"
+  wall_secs: 300
+
+milestones:
+  - why: "The properties table lists ResetSystem among the services the OS is left with."
+    line: "runtime test: the properties table offers ResetSystem ok"
+  - why: "The application asks for a shutdown after ExitBootServices."
+    line: "runtime test: shutting down"
+  - why: "The bootloader that starts after the reset finds the halt partition in PM_RSTS."
+    line: "partition 63"
+  - why: "It halts there."
+    line: "Halt: wake"

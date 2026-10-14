@@ -51,15 +51,16 @@ jobs:
           fi
           rm vc4-elf-*.deb
 
-      # scripts/mkstore.py (with python3-cryptography) signs the variable store
-      # records the scenarios start from,
-      # scripts/mkbootimg.py the signed boot.img (with mtools and dosfstools),
-      # and scripts/build-uefi.sh signs the test applications with sbsign.
-      - name: Install Python and sbsigntool
+      # scripts/mkbootimg.py makes the signed boot.img (with mtools and
+      # dosfstools),
+      # scripts/build-uefi.sh signs the test applications with sbsign, and
+      # scripts/build-linux-test.sh builds the initramfs's helper with the
+      # cross compiler and its C library.
+      - name: Install Python, sbsigntool and the cross compiler
         run: |
-          command -v python3 >/dev/null && command -v sbsign >/dev/null && command -v mcopy >/dev/null && command -v aarch64-linux-gnu-gcc >/dev/null && exit 0
+          command -v python3 >/dev/null && command -v sbsign >/dev/null && command -v mcopy >/dev/null && command -v aarch64-linux-gnu-gcc >/dev/null && [ -e /usr/aarch64-linux-gnu/include/stdio.h ] && exit 0
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3 python3-cryptography sbsigntool openssl mtools dosfstools make gcc-aarch64-linux-gnu
+          sudo apt-get install -y --no-install-recommends python3 sbsigntool openssl mtools dosfstools make gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 
       # The action brings rustup itself, which a self-hosted runner has only
       # once something has installed it; the toolchain built with is the one
@@ -160,7 +161,11 @@ jobs:
             out/runtime-variables.efi
             out/crypto.efi
             out/persist.efi
+            out/store-compact.efi
+            out/runtime-shutdown.efi
             out/linux-test.efi
+            out/linux-acpi-test.efi
+            out/linux-no-dt-test.efi
             out/hello.efi
             out/watchdog-hang.efi
             out/watchdog-exit.efi
@@ -183,6 +188,21 @@ jobs:
             out/grubaa64.efi
           if-no-files-found: error
           retention-days: 7
+
+  # The ACPI tables on the host: their links and checksums, and the ACPICA
+  # tools' disassembly and recompilation of the DSDT; and the SMBIOS tables,
+  # which dmidecode reads.
+  acpi:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install acpica-tools and dmidecode
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends acpica-tools dmidecode
+      - name: Test
+        run: scripts/test-acpi.sh
 
   # Every `scenarios/*.yaml` is a job, so a new scenario needs no edit here.
   # The TPM's code on the host: its crypto against reference vectors, and the

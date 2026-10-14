@@ -24,9 +24,11 @@
 #                     the same crate: ask for the boot key bound to PCR 4 or
 #                     to nothing (two images) and try to measure after it;
 #                     send the TPM on the VPU a series of commands
-#   out/runtime-variables.efi, out/crypto.efi, out/persist.efi
+#   out/runtime-variables.efi, out/crypto.efi, out/persist.efi,
+#   out/store-compact.efi, out/runtime-shutdown.efi
 #                     uefi/test-apps/runtime: exit boot services and use the
-#                     variable services the OS is left with
+#                     variable services the OS is left with, fill the flash
+#                     store with them, and shut down
 #   out/capsule-*.cap firmware update capsules the capsule scenario puts on the
 #                     card: new, old, corrupt, signed by a stranger, and junk
 #   out/reboot-flags.efi
@@ -185,6 +187,8 @@ rt="$here/uefi/test-apps/runtime"
 sign "$rt/target/aarch64-unknown-uefi/release/variables.efi" "$out/runtime-variables.efi"
 sign "$rt/target/aarch64-unknown-uefi/release/crypto.efi" "$out/crypto.efi"
 sign "$rt/target/aarch64-unknown-uefi/release/persist.efi" "$out/persist.efi"
+sign "$rt/target/aarch64-unknown-uefi/release/compact.efi" "$out/store-compact.efi"
+sign "$rt/target/aarch64-unknown-uefi/release/shutdown.efi" "$out/runtime-shutdown.efi"
 
 st="$here/uefi/test-apps/store"
 (cd "$st" && cargo build --release --target aarch64-unknown-uefi)

@@ -5,7 +5,7 @@
 //! at its next boot.
 //!
 //! Two kinds of record come in. A variable no signature guards, which the VPU
-//! signs with the device key as UEFI does, so the signature says the write went
+//! seals with the device key as UEFI does, so the seal says the write went
 //! through this firmware. And a record the OS made out of a write signed by PK
 //! or a KEK key, which the VPU appends as it is: UEFI checks that signature
 //! again at every boot, and what does not verify is ignored.
@@ -22,7 +22,8 @@ const RECORD_MAGIC: u32 = 0x5245_4331;
 const BANK_HEADER: u32 = 8;
 const RECORD_HEADER: usize = 60;
 const DIGEST: usize = 32;
-const SIGNATURE: usize = 64;
+/// The device key's HMAC-SHA256 of a record's digest.
+const SEAL: usize = 32;
 
 pub const SET: u32 = 1;
 pub const DELETE: u32 = 2;
@@ -30,8 +31,8 @@ pub const DELETE: u32 = 2;
 /// The most a record is: UEFI keeps variables of up to 16 KiB.
 pub const MAX_RECORD: usize = 20 * 1024;
 const MAX_NAME_UNITS: usize = 256;
-/// The most data the VPU signs for the OS.
-pub const MAX_SIGNED_DATA: usize = 16 * 1024;
+/// The most data the VPU seals for the OS.
+pub const MAX_SEALED_DATA: usize = 16 * 1024;
 
 const NV: u32 = 1;
 const BS: u32 = 2;
@@ -46,7 +47,7 @@ pub enum Error {
     /// A variable no signature guards is for the OS to write only if it is
     /// kept across resets and readable at runtime.
     Refused,
-    /// The board has no device key to sign with.
+    /// The board has no device key to seal with.
     NoDeviceKey,
     /// The bank has no room: UEFI compacts it at the next boot.
     Full,
@@ -185,8 +186,8 @@ fn walk(mut each: impl FnMut(u32, &[u8; RECORD_HEADER])) -> Option<Tail> {
 fn next_sequence() -> u64 {
     let mut next = 0u64;
     walk(|_, head| {
-        let signed = u32_at(head, 56) as usize == SIGNATURE && u32_at(head, 12) & AUTH == 0;
-        if signed {
+        let sealed = u32_at(head, 56) as usize == SEAL && u32_at(head, 12) & AUTH == 0;
+        if sealed {
             let seq = u64::from_le_bytes(head[32..40].try_into().unwrap());
             next = next.max(seq.saturating_add(1));
         }
@@ -227,9 +228,13 @@ fn check(record: &[u8]) -> Result<(), Error> {
 }
 
 /// Append a whole record, as UEFI wrote it: framing and digest checked, and
-/// the flash read back.
+/// the flash read back. Only the record of an authenticated write (`KEK`, `db`,
+/// `dbx`) comes in this way: one without would claim a seal it has not got.
 pub fn append(record: &[u8]) -> Result<(), Error> {
     check(record)?;
+    if u32_at(record, 12) & AUTH == 0 || !matches!(u32_at(record, 8), SET | DELETE) {
+        return Err(Error::Refused);
+    }
     spi_flash::with_pins(|| append_with_pins(record))
 }
 
@@ -264,10 +269,10 @@ fn append_with_pins(record: &[u8]) -> Result<(), Error> {
 
 static mut RECORD: [u8; MAX_RECORD] = [0; MAX_RECORD];
 
-/// Sign and append a write of a variable no signature guards: a non-volatile
+/// Seal and append a write of a variable no signature guards: a non-volatile
 /// variable the OS can read, or the deletion of one. `name` is UCS-2, as
-/// bytes. The signature is of the runtime domain, which UEFI accepts for these
-/// attributes and no others: what the OS asks the VPU to sign is the OS's own
+/// bytes. The seal is of the runtime domain, which UEFI accepts for these
+/// attributes and no others: what the OS asks the VPU to seal is the OS's own
 /// say, never a firmware variable's.
 pub fn persist(kind: u32, attributes: u32, guid: &[u8; 16], name: &[u8], data: &[u8]) -> Result<(), Error> {
     let units = name.len() / 2;
@@ -278,11 +283,11 @@ pub fn persist(kind: u32, attributes: u32, guid: &[u8; 16], name: &[u8], data: &
         || name.chunks_exact(2).any(|unit| unit == [0, 0])
         || attributes != NV | BS | RT
         || (kind == DELETE && !data.is_empty())
-        || data.len() > MAX_SIGNED_DATA
+        || data.len() > MAX_SEALED_DATA
     {
         return Err(Error::Refused);
     }
-    let body = RECORD_HEADER + name.len() + data.len() + SIGNATURE;
+    let body = RECORD_HEADER + name.len() + data.len() + SEAL;
     let total = body.next_multiple_of(4) + DIGEST;
     if total > MAX_RECORD {
         return Err(Error::Refused);
@@ -300,14 +305,14 @@ pub fn persist(kind: u32, attributes: u32, guid: &[u8; 16], name: &[u8], data: &
     record[32..48].copy_from_slice(&time);
     record[48..52].copy_from_slice(&(units as u32).to_le_bytes());
     record[52..56].copy_from_slice(&(data.len() as u32).to_le_bytes());
-    record[56..60].copy_from_slice(&(SIGNATURE as u32).to_le_bytes());
+    record[56..60].copy_from_slice(&(SEAL as u32).to_le_bytes());
     let name_at = RECORD_HEADER;
     record[name_at..name_at + name.len()].copy_from_slice(name);
     let data_at = name_at + name.len();
     record[data_at..data_at + data.len()].copy_from_slice(data);
 
     let mut digest = Sha256::new();
-    digest.update(b"pi4-server-firmware runtime variable record v1");
+    digest.update(b"pi4-server-firmware runtime variable record v2");
     digest.update(&kind.to_le_bytes());
     digest.update(&attributes.to_le_bytes());
     digest.update(guid);
@@ -316,10 +321,9 @@ pub fn persist(kind: u32, attributes: u32, guid: &[u8; 16], name: &[u8], data: &
     digest.update(&(data.len() as u32).to_le_bytes());
     digest.update(name);
     digest.update(data);
-    let (r, s) = keystore::device_sign(&digest.finish()).map_err(|_| Error::NoDeviceKey)?;
-    let auth_at = data_at + data.len();
-    record[auth_at..auth_at + 32].copy_from_slice(&r);
-    record[auth_at + 32..auth_at + 64].copy_from_slice(&s);
+    let seal = keystore::device_hmac(&digest.finish()).map_err(|_| Error::NoDeviceKey)?;
+    let seal_at = data_at + data.len();
+    record[seal_at..seal_at + SEAL].copy_from_slice(&seal);
 
     let tail = body.next_multiple_of(4);
     let digest = sha256::digest(&record[..tail]);

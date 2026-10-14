@@ -176,7 +176,7 @@ pub extern "efiapi" fn efi_main(image: Handle, system_table: *mut SystemTable) -
             "a signed update of db is accepted",
             set(rt, "db", &SECURITY_DB, NV_BS_RT | TIME_BASED | APPEND, DB_UPDATE) == Status::SUCCESS,
         );
-        check("the VPU signs a deletion of SecureBoot", raw_delete("SecureBoot", &GLOBAL) == 0);
+        check("the VPU seals a deletion of SecureBoot", raw_delete("SecureBoot", &GLOBAL) == 0);
         check("a buffer in the firmware's memory is left alone", post_in_firmware_memory());
         check("a hidden variable is created over", set(rt, "RtHidden", &OURS, NV_BS_RT, &[1]) == Status::SUCCESS);
         check("and deleted", set(rt, "RtHidden", &OURS, 0, &[]) == Status::SUCCESS);

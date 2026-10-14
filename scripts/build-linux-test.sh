@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# Build out/linux-test.efi: Debian's arm64 kernel and a busybox initramfs
-# (uefi/test-apps/linux/init) in a unified kernel image, signed with the test
-# key, which scenarios/linux.yaml boots to see the firmware from a running
-# Linux. Needs what scripts/build-uefi.sh --test-keys --test-apps does, and
-# sbsign, xz, ar, tar and cpio's gzip.
+# Build out/linux-test.efi, out/linux-acpi-test.efi and out/linux-no-dt-test.efi:
+# Debian's arm64 kernel and a busybox initramfs (uefi/test-apps/linux/init) in
+# a unified kernel image, signed with the test key, which scenarios/linux.yaml,
+# scenarios/linux-acpi.yaml and scenarios/linux-no-dt.yaml boot to see the
+# firmware from a running Linux, with the device tree, with the ACPI tables
+# and with no device tree. Needs what
+# scripts/build-uefi.sh --test-keys --test-apps does, and sbsign, xz, ar, tar
+# and cpio's gzip, and off an aarch64 host aarch64-linux-gnu-gcc with its C
+# library, which build the TPM module and the initramfs's helper.
 set -euo pipefail
 
 KERNEL_URL="${KERNEL_URL:-https://deb.debian.org/debian/pool/main/l/linux/linux-image-6.12.107+deb13-arm64-unsigned_6.12.107-1_arm64.deb}"
@@ -70,14 +74,18 @@ ln -s /usr/lib/ld-linux-aarch64.so.1 "$root/lib/ld-linux-aarch64.so.1"
 rm -rf "$root/usr/lib/aarch64-linux-gnu/gconv" "$root/usr/lib/aarch64-linux-gnu/audit" "$root/usr/lib/aarch64-linux-gnu/ossl-modules"
 printf 'ID=test\nNAME="Test"\nPRETTY_NAME="Test OS"\nVERSION_ID=1\n' >"$root/etc/os-release"
 xz -dc "$tmp"/kernel/usr/lib/modules/*/kernel/fs/efivarfs/efivarfs.ko.xz >"$root/efivarfs.ko"
-xz -dc "$tmp"/kernel/usr/lib/modules/*/kernel/drivers/watchdog/bcm2835_wdt.ko.xz >"$root/bcm2835_wdt.ko"
 mkdir -p "$root/modules"
-# The reset controller xhci-pci waits for, then what `modprobe --show-depends xhci_pci usb_storage sd_mod` gives for this kernel, in load order.
-for module in reset-raspberrypi usb-common usbcore xhci-hcd xhci-pci scsi_common scsi_mod usb-storage sd_mod; do
-  xz -dc "$tmp"/kernel/usr/lib/modules/*/kernel/drivers/*/*/"$module".ko.xz >"$root/modules/$module.ko" 2>/dev/null \
-    || xz -dc "$tmp"/kernel/usr/lib/modules/*/kernel/drivers/*/"$module".ko.xz >"$root/modules/$module.ko"
+# The reset controller xhci-pci waits for, then what `modprobe --show-depends xhci_pci usb_storage sd_mod` gives for this kernel, in load order;
+# then what the SD host, the network interface and the platform xHCI driver need, for the boot that describes the board with the ACPI tables.
+for module in reset-raspberrypi usb-common usbcore xhci-hcd xhci-pci scsi_common scsi_mod usb-storage sd_mod \
+    sdhci sdhci-pltfm sdhci-iproc libphy fwnode_mdio fixed_phy of_mdio mdio-bcm-unimac genet xhci-plat-hcd bcm2711_thermal iproc-rng200 bcm2835_wdt; do
+  path="$(find "$tmp"/kernel/usr/lib/modules -name "$module.ko.xz" | head -n 1)"
+  [ -n "$path" ] || { echo "this kernel has no module $module: list what its drivers need with modprobe --show-depends" >&2; exit 1; }
+  xz -dc "$path" >"$root/modules/$module.ko"
 done
 cp "$tmp/tpm-vpu/tpm_vpu.ko" "$root/tpm_vpu.ko"
+"${CROSS}gcc" -static -O2 -o "$root/bin/rmvar" "$here/uefi/test-apps/linux/rmvar.c"
+"${CROSS}strip" "$root/bin/rmvar"
 cp "$here/uefi/test-apps/linux/init" "$root/init"
 chmod +x "$root/init"
 "$here/scripts/mkinitramfs.py" "$root" "$tmp/initrd.gz"
@@ -85,7 +93,24 @@ chmod +x "$root/init"
 sbsign --key "$keys/db.key" --cert "$keys/db.crt" --output "$tmp/vmlinuz.signed" "$tmp"/kernel/boot/vmlinuz-* 2>/dev/null
 printf 'ID=test\nNAME="Test"\nPRETTY_NAME="Test OS"\nVERSION_ID=1\n' >"$tmp/osrel"
 printf 'console=ttyAMA0,115200 earlycon=pl011,0xfe201000 rdinit=/init panic=-1 ignore_loglevel printk.devkmsg=on maxcpus=2' >"$tmp/cmdline"
-"$here/scripts/mkuki.py" "$tmp/stub/usr/lib/systemd/boot/efi/linuxaa64.efi.stub" "$tmp/uki.efi" \
-  --section .osrel="$tmp/osrel" --section .cmdline="$tmp/cmdline" --section .linux="$tmp/vmlinuz.signed" --section .initrd="$tmp/initrd.gz"
-sbsign --key "$keys/db.key" --cert "$keys/db.crt" --output "$out/linux-test.efi" "$tmp/uki.efi" 2>/dev/null
-ls -l "$out/linux-test.efi"
+# A device tree with a root node and nothing else, which the kernel counts as
+# none.
+python3 -c 'import struct, sys; sys.stdout.buffer.write(struct.pack(">18I", 0xd00dfeed, 72, 56, 72, 40, 17, 16, 0, 0, 16, 0, 0, 0, 0, 1, 0, 2, 9))' >"$tmp/empty.dtb"
+
+# uki NAME CMDLINE [mkuki.py option ...]: the kernel and the initramfs in a
+# unified kernel image out/NAME.efi, with that command line.
+uki() {
+  name=$1; cmdline=$2; shift 2
+  "$here/scripts/mkuki.py" "$tmp/stub/usr/lib/systemd/boot/efi/linuxaa64.efi.stub" "$tmp/uki.efi" \
+    --section .osrel="$tmp/osrel" --section .cmdline="$cmdline" --section .linux="$tmp/vmlinuz.signed" --section .initrd="$tmp/initrd.gz" "$@"
+  sbsign --key "$keys/db.key" --cert "$keys/db.crt" --output "$out/$name.efi" "$tmp/uki.efi" 2>/dev/null
+  ls -l "$out/$name.efi"
+}
+# The same kernel and initramfs three times: told to describe the board with
+# its device tree, as it does by default and with two cores; with the ACPI
+# tables (acpi=on) and all four; and given no device tree to choose ACPI over.
+uki linux-test "$tmp/cmdline"
+sed 's/ maxcpus=2/ acpi=on/' "$tmp/cmdline" >"$tmp/cmdline.acpi"
+uki linux-acpi-test "$tmp/cmdline.acpi"
+sed 's/ maxcpus=2//' "$tmp/cmdline" >"$tmp/cmdline.no-dt"
+uki linux-no-dt-test "$tmp/cmdline.no-dt" --section .dtb="$tmp/empty.dtb"

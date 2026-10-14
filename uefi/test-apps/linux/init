@@ -15,20 +15,32 @@ LOADER=4a67b082-0a4c-41cf-b6c7-440b29bb8c4f
 loader() { tail -c +5 "/sys/firmware/efi/efivars/$1-$LOADER" 2>&1 | tr -d '\000'; }
 
 say "kernel $(uname -r) is up"
-dmesg | grep -E "efi: EFI v|efi: RTPROP|Kernel is locked down|efivars: Registered|Loaded X.509 cert|esrt:|efi:" | grep -v "linux test" | while read -r line; do say "kernel log: ${line#*] }"; done
+if [ -d /sys/firmware/acpi/tables ]; then MODE=acpi; else MODE=dt; fi
+say "described by $MODE"
+case " $(cat /proc/cmdline) " in
+*" acpi="*) say "command line has an acpi option" ;;
+*) say "command line has no acpi option" ;;
+esac
+say "machine model lines in the kernel log $(dmesg | grep -c 'Machine model:')"
+say "l2 cache $(cat /sys/devices/system/cpu/cpu0/cache/index2/size 2>&1)"
+dmesg | grep -E "efi: EFI v|efi: RTPROP|Kernel is locked down|efivars: Registered|Loaded X.509 cert|esrt:|efi:|ACPI:" | grep -v "linux test" | while read -r line; do say "kernel log: ${line#*] }"; done
 insmod /efivarfs.ko
 mount -t efivarfs efivarfs /sys/firmware/efi/efivars && say "efivarfs mounted"
 say "SecureBoot $(var SecureBoot $GLOBAL)"
 say "SetupMode $(var SetupMode $GLOBAL)"
 say "OsIndicationsSupported $(var OsIndicationsSupported $GLOBAL)"
-say "ethernet address $(hexdump -ve '1/1 "%02x"' /sys/firmware/devicetree/base/scb/ethernet@7d580000/local-mac-address 2>&1)"
+[ $MODE = dt ] && say "ethernet address $(hexdump -ve '1/1 "%02x"' /sys/firmware/devicetree/base/scb/ethernet@7d580000/local-mac-address 2>&1)"
 say "LoaderInfo $(loader LoaderInfo)"
 say "StubInfo $(loader StubInfo)"
 say "LoaderEntrySelected $(loader LoaderEntrySelected)"
 for e in /sys/firmware/efi/esrt/entries/*; do
     say "esrt $(cat $e/fw_class) type $(cat $e/fw_type) version $(cat $e/fw_version) status $(cat $e/last_attempt_status)"
 done
-insmod /tpm_vpu.ko && say "tpm_vpu loaded"
+if [ $MODE = dt ]; then
+    insmod /tpm_vpu.ko && say "tpm_vpu loaded"
+else
+    say "tpm driver $(basename "$(readlink /sys/class/tpm/tpm0/device/driver)")"
+fi
 mount -t securityfs securityfs /sys/kernel/security
 say "tpm major $(cat /sys/class/tpm/tpm0/tpm_version_major 2>&1)"
 say "tpm devices $(ls /dev/tpm0 /dev/tpmrm0 2>&1 | tr '\n' ' ')"
@@ -40,23 +52,88 @@ done
 log=$(wc -c < /sys/kernel/security/tpm0/binary_bios_measurements 2>&1)
 say "event log $([ "$log" -gt 0 ] 2>/dev/null && echo present || echo "unreadable: $log")"
 /usr/bin/bootctl status --no-pager 2>&1 | while read -r line; do say "bootctl: $line"; done
-for module in reset-raspberrypi usb-common usbcore xhci-hcd xhci-pci scsi_common scsi_mod usb-storage sd_mod; do
-    insmod /modules/$module.ko 2>&1 || say "module $module: failed"
-done
-for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-    [ -e /sys/class/block/sda ] && break
-    sleep 1
-done
-say "xhci $(dmesg | grep -c 'xHCI Host Controller') controller(s)"
-say "usb devices $(cat /sys/bus/usb/devices/*/product 2>/dev/null | tr '\n' ',')"
-say "usb disk $(cat /sys/class/block/sda/size 2>&1) sectors"
+usb() {
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        [ -e /sys/class/block/sda ] && break
+        sleep 1
+    done
+    say "xhci $(dmesg | grep -c 'xHCI Host Controller') controller(s)"
+    say "usb devices $(cat /sys/bus/usb/devices/*/product 2>/dev/null | tr '\n' ',')"
+    say "usb disk $(cat /sys/class/block/sda/size 2>&1) sectors"
+    say "usb disk boot signature $(dd if=/dev/sda bs=1 skip=510 count=2 2>/dev/null | hexdump -ve '1/1 "%02x"')"
+    say "usb read $(dd if=/dev/sda of=/dev/null bs=1M count=64 2>&1 | tail -n 1)"
+}
+if [ $MODE = acpi ]; then
+    for module in sdhci sdhci-pltfm sdhci-iproc libphy fwnode_mdio fixed_phy of_mdio mdio-bcm-unimac genet \
+        usb-common usbcore xhci-hcd xhci-plat-hcd scsi_common scsi_mod usb-storage sd_mod; do
+        insmod /modules/$module.ko 2>&1 || say "module $module: failed"
+    done
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        [ -e /sys/class/block/mmcblk0 ] && break
+        sleep 1
+    done
+    if [ -e /sys/class/block/mmcblk0 ]; then
+        say "sd card $(cat /sys/class/block/mmcblk0/size) sectors"
+    else
+        say "no sd card"
+    fi
+    say "network interfaces $(ls /sys/class/net | tr '\n' ' ')"
+    say "ethernet address $(cat /sys/class/net/e*/address 2>&1 | tr -d :)"
+else
+    for module in reset-raspberrypi usb-common usbcore xhci-hcd xhci-pci scsi_common scsi_mod usb-storage sd_mod bcm2711_thermal; do
+        insmod /modules/$module.ko 2>&1 || say "module $module: failed"
+    done
+fi
+insmod /modules/iproc-rng200.ko 2>&1 || say "module iproc-rng200: failed"
+insmod /modules/bcm2835_wdt.ko 2>&1 || say "module bcm2835_wdt: failed"
+say "watchdog $(cat /sys/class/watchdog/watchdog0/identity 2>&1)"
+usb
+thermal() {
+    zone=/sys/class/thermal/thermal_zone0
+    say "thermal zone $(cat $zone/type 2>&1)"
+    temp=$(cat $zone/temp 2>&1)
+    if [ "$temp" -gt 10000 ] 2>/dev/null && [ "$temp" -lt 100000 ]; then say "temperature plausible"; else say "temperature $temp"; fi
+    say "critical trip $(cat $zone/trip_point_0_temp 2>&1) $(cat $zone/trip_point_0_type 2>&1)"
+}
+thermal
+hwrng=$(cat /sys/class/misc/hw_random/rng_available 2>&1)
+case "$hwrng" in
+*iproc-rng200*) say "hwrng iproc-rng200 registered" ;;
+*) say "hwrng missing: $hwrng" ;;
+esac
+echo iproc-rng200 >/sys/class/misc/hw_random/rng_current
+say "hwrng current $(cat /sys/class/misc/hw_random/rng_current 2>&1)"
+say "hwrng read $(dd if=/dev/hwrng bs=32 count=1 2>/dev/null | wc -c) bytes"
+say "pmu $(ls /sys/bus/event_source/devices | grep armv8 | tr '\n' ' ')"
+dmi() {
+    id=/sys/class/dmi/id
+    say "dmi product $(cat $id/sys_vendor 2>&1) $(cat $id/product_name 2>&1)"
+    serial=$(cat $id/product_serial 2>&1)
+    case "$serial" in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) say "dmi serial is eight hex digits" ;;
+    *) say "dmi serial $serial" ;;
+    esac
+    version=$(cat $id/bios_version 2>&1)
+    case "$version" in
+    [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) say "dmi firmware $(cat $id/bios_vendor 2>&1) built from a commit" ;;
+    *) say "dmi firmware version $version" ;;
+    esac
+    say "dmi chassis type $(cat $id/chassis_type 2>&1)"
+    say "dmi uuid $(cat $id/product_uuid 2>&1 | tr -d - | wc -c) characters"
+    say "dmi memory $(od -An -tu2 -j12 -N2 /sys/firmware/dmi/entries/17-0/raw 2>&1 | tr -d ' ') MiB"
+}
+dmi
+if [ $MODE = dt ]; then
+    say "device tree model $(tr -d '\000' </sys/firmware/devicetree/base/model)"
+    [ "$(tr -d '\000' </sys/firmware/devicetree/base/serial-number)" = "$serial" ] && say "device tree serial is the dmi serial"
+fi
 TEST=6b1c0a52-3a7e-4d1f-9a0b-112233445566
 if [ -e /sys/firmware/efi/efivars/LinuxTest-$TEST ]; then
     say "variable survived the reset $(var LinuxTest $TEST)"
+    rmvar /sys/firmware/efi/efivars/LinuxTest-$TEST && say "variable removed"
 else
     printf '\007\000\000\000\001\002\003' > /sys/firmware/efi/efivars/LinuxTest-$TEST && say "variable written"
     say "variable reads $(var LinuxTest $TEST)"
-    insmod /bcm2835_wdt.ko
     say "resetting"
     reboot -f
     sleep 60

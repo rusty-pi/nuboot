@@ -15,6 +15,7 @@ extern crate alloc;
 #[path = "../../src/log.rs"]
 pub mod log;
 
+mod acpi;
 mod block;
 mod capsule;
 mod conio;
@@ -30,9 +31,6 @@ mod fat;
 mod fdt;
 mod image;
 mod mailbox;
-#[path = "../../src/p256.rs"]
-#[allow(dead_code)]
-mod p256;
 mod mem;
 mod proto;
 mod pkcs7;
@@ -44,6 +42,7 @@ mod secure;
 #[path = "../../src/sha256.rs"]
 #[allow(dead_code)]
 mod sha256;
+mod smbios;
 mod spiflash;
 mod stc;
 mod store;
@@ -113,8 +112,10 @@ fn memory_map(tree: &fdt::Fdt, tree_addr: u64) {
     // The armstub's page: the spin table the secondary cores wait on, and the
     // watchdog word.
     map.mark(0, mem::PAGE, efi::RESERVED_MEMORY_TYPE);
-    // What the runtime services reach the VPU through.
+    // What the runtime services reach the board through: the mailbox to the VPU,
+    // and the power manager, which resets it.
     map.add_mmio(rtvar::MAILBOX_PAGE, rtvar::MAILBOX_PAGE + mem::PAGE);
+    map.add_mmio(watchdog::PM_PAGE, watchdog::PM_PAGE + mem::PAGE);
     map.mark(DMA_ARENA.0, DMA_ARENA.1, efi::BOOT_SERVICES_DATA);
     map.mark(tree_addr, tree_addr + tree.size() as u64, efi::BOOT_SERVICES_DATA);
     map.mark(start, runtime_end, efi::RUNTIME_SERVICES_CODE);
@@ -188,6 +189,8 @@ extern "C" fn pi4_main(tree_addr: u64) -> ! {
 
     sd::init();
     xhci::init();
+    acpi::init(&tree, xhci::registers_base());
+    smbios::init(&tree);
 
     tcg2::separators();
     capsule::scan();

@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Put a variable store in a copy of an EEPROM image, for the scenarios that
 start from what an earlier boot left in it. The device key is the test key
-they fuse.
+they fuse, and a record is sealed with an HMAC-SHA256 of its digest by it.
 
     mkstore.py PIEEPROM OUT [--update pending|proven VERSION [--eeprom]] [--stamp TS] [--backup FILE] [--empty]
 
 By default the store is the tamper scenario's, with known damage in it: what a
-board's OS could do to the flash, done to it. It holds, in order: Good and Fresh, signed and in sequence; Forged, whose seal is
-wrong; Stale, signed but numbered below what came before it; Torn, whose
-digest does not match; and AfterTorn, sealed and in sequence, behind it.
+board's OS could do to the flash, done to it. It holds, in order: Good and Fresh, sealed and in sequence; Forged, whose seal is
+wrong; Stale, sealed but numbered below what came before it; Torn, whose
+digest does not match; and AfterTorn, sealed and in sequence, behind it. Then what the OS had the VPU
+seal: a hidden variable's deletion, a variable of its own, SecureBoot's deletion and a record under the
+firmware's own class, FwUpdateResult.
 
 With --update the store holds one sealed record, what the firmware keeps while
 a capsule's update is under way: its state, and the version it carries. With
@@ -19,13 +21,10 @@ EEPROM update. With --empty the store holds nothing.
 """
 
 import hashlib
+import hmac
 import struct
 import sys
 import uuid
-
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.hazmat.primitives.asymmetric.utils import Prehashed, decode_dss_signature
 
 BASE = 0x74000
 BANK = 0x5000
@@ -35,27 +34,22 @@ SET = 1
 ATTRIBUTES = 0x1 | 0x2 | 0x4
 GUID = uuid.UUID("5d0f3a58-1c0e-4d1b-9a44-0123456789ab").bytes_le
 ROWS = [0xC0DE2001, 0xC0DE3112, 0xC0DE4223, 0xC0DE5334, 0xC0DE6445, 0xC0DE7556, 0xC0DE8667, 0xC0DE9778]
-LABEL = b"pi4-server-firmware variable store record v3"
-RUNTIME_LABEL = b"pi4-server-firmware runtime variable record v1"
+LABEL = b"pi4-server-firmware variable store record v4"
+RUNTIME_LABEL = b"pi4-server-firmware runtime variable record v2"
 DELETE = 2
 GLOBAL = uuid.UUID("8be4df61-93ca-11d2-aa0d-00e098032b8c").bytes_le
 
 
-def device_key():
+def seal_of(digest):
     private = b"".join(struct.pack("<I", r) for r in ROWS)
-    return ec.derive_private_key(int.from_bytes(private, "big"), ec.SECP256R1())
-
-
-def sign(digest):
-    r, s = decode_dss_signature(device_key().sign(digest, ec.ECDSA(Prehashed(hashes.SHA256()))))
-    return r.to_bytes(32, "big") + s.to_bytes(32, "big")
+    return hmac.new(private, digest, hashlib.sha256).digest()
 
 
 def record(name, data, seq, seal=True, torn=False, guid=GUID, attributes=ATTRIBUTES, kind=SET, label=LABEL):
     time = struct.pack("<Q", seq) + bytes(8)
     utf16 = name.encode("utf-16-le")
     signed = label + struct.pack("<II", kind, attributes) + guid + time + struct.pack("<II", len(name), len(data)) + utf16 + data
-    mac = sign(hashlib.sha256(signed).digest()) if seal else bytes(64)
+    mac = seal_of(hashlib.sha256(signed).digest()) if seal else bytes(32)
     body_len = 60 + len(utf16) + len(data) + len(mac)
     padded = -(-body_len // 4) * 4
     total = padded + 32
@@ -107,12 +101,14 @@ def main():
             record("Stale", b"stale", 0),
             record("Torn", b"torn", 3, torn=True),
             record("AfterTorn", b"after", 4),
-            # What the OS had the VPU sign: a variable of its own is read, and
-            # the deletion of a hidden one and of a firmware one is not.
+            # What the OS had the VPU seal: a variable of its own is read, and
+            # the deletion of a hidden one, of a firmware one and a record of
+            # the firmware's own are not.
             record("Hidden", b"hidden", 5, attributes=0x1 | 0x2),
             record("Hidden", b"", 6, attributes=ATTRIBUTES, kind=DELETE, label=RUNTIME_LABEL),
             record("RuntimeOk", b"ok", 7, attributes=ATTRIBUTES, label=RUNTIME_LABEL),
             record("SecureBoot", b"", 8, guid=GLOBAL, attributes=ATTRIBUTES, kind=DELETE, label=RUNTIME_LABEL),
+            record("FwUpdateResult", struct.pack("<II", 1, 0), 9, guid=FIRMWARE_CLASS, attributes=ATTRIBUTES, label=RUNTIME_LABEL),
         ]
     log = b"".join(records)
     head = struct.pack("<II", BANK_MAGIC, 1)

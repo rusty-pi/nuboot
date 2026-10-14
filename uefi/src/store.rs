@@ -213,6 +213,16 @@ fn first_erased_in(image: &[u8], from: usize) -> usize {
     image.len()
 }
 
+/// Program `bytes` at `at`, and whether they read back as they were written.
+fn program_verified(at: u32, bytes: &[u8]) -> bool {
+    if !spiflash::program(at, bytes) {
+        return false;
+    }
+    let mut back = alloc::vec![0u8; bytes.len()];
+    spiflash::read(at, &mut back);
+    back == bytes
+}
+
 fn write_bank(bank: usize, seq: u32, records: &[Record]) -> Option<u32> {
     let base = BANKS[bank];
     for sector in (0..BANK).step_by(SECTOR) {
@@ -223,7 +233,7 @@ fn write_bank(bank: usize, seq: u32, records: &[Record]) -> Option<u32> {
     let mut at = base + BANK_HEADER;
     for r in records {
         let bytes = r.encode();
-        if at as usize + bytes.len() > (base + BANK) as usize || !spiflash::program(at, &bytes) {
+        if at as usize + bytes.len() > (base + BANK) as usize || !program_verified(at, &bytes) {
             return None;
         }
         at += bytes.len() as u32;
@@ -231,7 +241,36 @@ fn write_bank(bank: usize, seq: u32, records: &[Record]) -> Option<u32> {
     let mut head = [0u8; 8];
     head[..4].copy_from_slice(&BANK_MAGIC.to_le_bytes());
     head[4..].copy_from_slice(&seq.to_le_bytes());
-    spiflash::program(base, &head).then_some(at)
+    program_verified(base, &head).then_some(at)
+}
+
+/// Start the other bank with `live`, every record the variables still need,
+/// when this one is more than half full and that leaves it room. Once UEFI is
+/// gone the VPU only appends, and the OS's writes fail when the bank is full:
+/// the boot is where room is made.
+pub fn compact_when_crowded(live: impl FnOnce() -> Vec<Record>) {
+    let state = STATE.get();
+    if !state.ready || state.seq == 0 || !spiflash::present() {
+        return;
+    }
+    let used = (state.tail - BANKS[state.bank] - BANK_HEADER) as usize;
+    if used <= (BANK - BANK_HEADER) as usize / 2 {
+        return;
+    }
+    let records = live();
+    let needed: usize = records.iter().map(|r| r.encode().len()).sum();
+    if needed >= used {
+        return;
+    }
+    let other = 1 - state.bank;
+    let seq = state.seq.wrapping_add(1).max(1);
+    match write_bank(other, seq, &records) {
+        Some(tail) => {
+            *state = State { ready: true, bank: other, seq, tail };
+            info!("store", "bank more than half full, the other started with what is still needed"; bank = other, records = records.len(), bytes = used, bytes_needed = needed);
+        }
+        None => warn!("store", "bank more than half full and the other did not take what is needed"; bytes = used, bytes_needed = needed),
+    }
 }
 
 /// Add `record` to the log. When the bank is full, `live` (every record

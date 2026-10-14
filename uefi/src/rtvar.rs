@@ -433,6 +433,9 @@ pub extern "efiapi" fn set_variable(
     if name.is_empty() || (size > 0 && data.is_null()) {
         return efi::Status::INVALID_PARAMETER;
     }
+    if guid == crate::esrt::FIRMWARE_CLASS {
+        return efi::Status::WRITE_PROTECTED;
+    }
     let append = attributes & APPEND != 0;
     let given = attributes;
     let attributes = attributes & !APPEND;

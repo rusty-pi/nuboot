@@ -9,13 +9,16 @@ board's device tree, and starts the ARM in them:
 1. It puts `pi4-uefi.bin` at ARM physical 0, where the cores come out of
    reset, and the device tree at `0xF0_0000` with `/memory@0` filled in from
    the board's SDRAM, a `vpu-tpm` node ([os-image.md](os-image.md)) and the
-   Ethernet controller's `local-mac-address`: `02:` and five bytes of a hash of
-   the board's serial number, the same at every boot. The ARM gets everything below `0x3EC0_0000`, where the
+   reserved page of the TPM's command response buffer ([tpm2.md](tpm2.md#the-command-response-buffer)),
+   and the Ethernet controller's `local-mac-address`: `02:` and five bytes of a hash of
+   the board's serial number, the same at every boot, and the board's `serial-number` and
+   revision code in the root. The ARM gets everything below `0x3EC0_0000`, where the
    VPU firmware's own memory starts, and all the memory above 1 GiB.
 2. `pi4-uefi.bin` (`uefi/stub/`) starts with an armstub: each core sets up
    the local timer, the generic timer, the GIC and EL3's controls, and drops
    to non-secure EL2. The secondary cores wait on the spin table at `0xd8`
-   that the device tree names.
+   that the device tree names, and on the mailboxes at `0x800` that the ACPI
+   tables name.
 3. The primary core decompresses the payload, coded with xz's ARM64 filter
    and LZMA, to `0x100_0000` and enters it with `x0` holding the device tree.
 4. The payload sets up an identity map, builds the memory map from the
@@ -43,18 +46,96 @@ from `start4.elf`'s:
 |---|---|
 | Memory | An identity map: RAM below `0xFC00_0000` and from 4 to 8 GiB normal write-back, the 2 MiB at `0x20_0000` non-cacheable for DMA, the rest device. The memory map is `/memory` from the device tree, less `/memreserve/`, `/reserved-memory`, the armstub's page at 0, the tree and the firmware itself |
 | Boot services | Memory, pools, events and timers (polled; there are no interrupts), protocol handlers, `LoadImage`/`StartImage`/`Exit` for PE32+ AArch64 images, `ExitBootServices` |
-| Runtime services | `GetVariable`, `GetNextVariableName`, `SetVariable` and `QueryVariableInfo` after `ExitBootServices`, from a 128 KiB table in the firmware image, which is typed as runtime services code and data, and the mailbox's page, typed as memory-mapped I/O for the OS to map. The OS reads the variables the firmware holds with runtime access and creates or changes others, and the writes outlast a reset ([below](#variables-the-os-writes)). `PK` and the Secure Boot state refuse writes. The `EFI_RT_PROPERTIES_TABLE` lists only these four, so `SetVirtualAddressMap` is not offered and the OS maps the runtime regions where they are. Every other runtime service returns `EFI_UNSUPPORTED`; Linux resets through `bcm2835-wdt` |
+| Runtime services | `GetVariable`, `GetNextVariableName`, `SetVariable`, `QueryVariableInfo` and `ResetSystem` after `ExitBootServices`. The firmware image is typed as runtime services code and data, the variables are a 128 KiB table in it, and the mailbox's page and the power manager's are typed as memory-mapped I/O for the OS to map. The OS reads the variables the firmware holds with runtime access and creates or changes others, and the writes outlast a reset ([below](#variables-the-os-writes)). `PK` and the Secure Boot state refuse writes. `ResetSystem` writes the power manager's registers: every kind but a shutdown resets the board, and a shutdown resets it to the bootloader's halt. The `EFI_RT_PROPERTIES_TABLE` lists only these five, so `SetVirtualAddressMap` is not offered and the OS maps the runtime regions where they are. Every other runtime service returns `EFI_UNSUPPORTED` |
 | Console | `SimpleTextOutput` and `SimpleTextInput` on the PL011 at `0xFE20_1000`, with VT100 keys |
 | Storage | The SD card on EMMC2 (`0xFE34_0000`), and USB drives (bulk-only mass storage) on the VL805's root ports or behind a hub. `BlockIo`, `DiskIo`, MBR and GPT partitions, and a read-only FAT12/16/32 `SimpleFileSystem` |
 | USB | The VL805's xHCI behind the PCIe root complex, which `start4.elf` has brought up and given its firmware |
 | `EFI_RNG_PROTOCOL` | RNG200's FIFO, raw |
-| `ResetSystem` | The power manager's watchdog (`PM_RSTC`/`PM_WDOG`), halt through `PM_RSTS` |
+| `ResetSystem` | The power manager's watchdog (`PM_RSTC`/`PM_WDOG`), halt through `PM_RSTS`: partition 63, which the EEPROM bootloader halts at (and powers off at when its `POWER_OFF_ON_HALT` is set). The same after `ExitBootServices`, which is how Linux resets and powers off in both modes |
 | `SetWatchdogTimer`, `ExitBootServices` | UEFI beats the board's watchdog from the hypervisor timer's interrupt and hands it back to `start4.elf` at `ExitBootServices` ([boot.md](boot.md#boot-watchdog)) |
 | ESRT | One system firmware resource, the firmware itself, in the `EFI_SYSTEM_RESOURCE_TABLE`, with the commit's time as its version. `OsIndicationsSupported` offers file capsule delivery, and `OsIndications` takes the OS's write |
-| Device tree | Passed on to the OS as the `EFI_DTB_TABLE` configuration table |
+| Device tree | Passed on to the OS as the `EFI_DTB_TABLE` configuration table. Besides the stock tree's content it has the memory, the network address, the TPM, and the board's identity: `serial-number` and `rusty-pi,board-revision` in the root |
+| SMBIOS | Version 3.1.1, as the `EFI_SMBIOS3_TABLE` configuration table, whichever way the OS describes the board: the firmware (its vendor, the commit and its date), the system (maker, the board's name from its revision code, the revision code, the serial number and a UUID made from it), the board and its enclosure, the processor and the memory. `/sys/class/dmi/id`, `dmidecode`, `hostnamectl` and fwupd's hardware IDs read them, and an OS on the ACPI tables has no device tree to get the model and serial number from |
+| ACPI | The tables of the [next section](#acpi), as the `EFI_ACPI_20_TABLE_GUID` configuration table |
 | Variables | Held in RAM, with the non-volatile ones also in the flash store ([below](#the-variable-store)) |
 
 The SD card is tried before USB.
+
+## ACPI
+
+The firmware also offers ACPI tables: the RSDP is the
+`EFI_ACPI_20_TABLE_GUID` configuration table, and the tables are built at every
+boot from the board and the VPU's own state. A kernel that is given both them
+and the device tree uses the device tree, and uses the tables when its command
+line says `acpi=on` or when the device tree it is given has nothing in it. With
+them the OS finds the TPM on the VPU through its own driver, with no module
+([os-image.md](os-image.md#with-the-acpi-tables)).
+
+| table | holds |
+|---|---|
+| FADT | Hardware-reduced ACPI 6.3, with no PSCI: the cores start through the parking protocol |
+| MADT | The four cores, each with the interrupt of its performance monitor (`perf` works), and the GIC-400 |
+| GTDT | The generic timers |
+| SPCR | The PL011 on GPIO 14 and 15 as the console, at 115200 baud |
+| PPTT | Each core's caches (48 KiB for instructions, 32 KiB for data) and the 1 MiB they share |
+| IORT | How much memory the USB controller reaches: the lower 2 GiB |
+| TPM2 | The TPM on the VPU, as a command response buffer device with the ACPI start method ([tpm2.md](tpm2.md#the-command-response-buffer)) |
+| DSDT | The devices below |
+
+The DSDT has a device for each of:
+
+| device | `_HID` | what takes it |
+|---|---|---|
+| each core | `ACPI0007` | the kernel's processor driver |
+| the console | `ARMH0011` | the SBSA UART driver, which keeps the line at the baud rate the SPCR names |
+| the TPM | `MSFT0101` | `tpm_crb`; its start method writes the doorbell to the mailbox |
+| the power manager | `PRP0001`, with the `compatible` of the device tree's node | `bcm2835-pm`: the watchdog the boot watchdog is handed to ([boot.md](boot.md#boot-watchdog)) |
+| the random number generator | `PRP0001`, with the `compatible` of the device tree's node | `iproc-rng200` |
+| the temperature sensor | a thermal zone, `_TMP` reading the sensor's register and `_CRT` giving 85 °C, the SoC's rating, since nothing here slows the cores down before then | the kernel's ACPI thermal driver (`acpitz`); the VPU starts the sensor's clock, which the zone and the device tree's thermal driver both need |
+| the SD host | `BRCME88C` | `sdhci-iproc`, with the card at 3.3 V and no DMA, as this firmware's own driver runs it: a sequential read of 64 MiB takes about 3.4 s (19 MB/s) on a Raspberry Pi 4B d03115, where stock Raspberry Pi OS reads the same card at 44 MB/s |
+| the network interface | `BCM6E4E` | `genet`, with the address the device tree gives it |
+| the USB controller | `PNP0D10`, in a container device (`ACPI0004`) that says what it reaches | the kernel's generic xHCI driver (`xhci-plat-hcd`) |
+
+The secondary cores wait in the armstub on the spin table the device tree names
+and on a mailbox for each core, the ACPI parking protocol's: the OS writes the
+core's number and an entry point there and sends software interrupt 0, which
+wakes the core, and the core takes the entry point.
+
+The USB controller, the VL805 behind the PCIe root complex, is a platform
+xHCI device: UEFI has brought the link up, given the controller its firmware
+and put its registers in the root complex's window, and the tables name that
+address and the interrupt line the root complex raises for it, so the OS needs
+no driver for the root complex. The controller reaches the lower 2 GiB of
+memory, from the container's `_DMA` and from the IORT, which the kernel reads
+early enough to keep the memory a driver asks for in reach and to copy
+transfers through a buffer below it for the rest. UEFI turns off the
+controller's MSI as the OS takes over.
+
+Reset and power off are not in the tables: the kernel takes them from the runtime services' `ResetSystem`.
+
+What the device tree has and the tables leave out is what the kernel's driver
+reads from the device tree only, or what the board does not offer under either
+description:
+
+- the GPIO controller, I2C, SPI and PWM: the drivers are device tree only, and
+  HATs are out of scope;
+- the PCIe root complex, whose configuration space is not ECAM: the USB
+  controller behind it is described as a device of its own, so `lspci` lists
+  nothing, and a CM4's PCIe slot has no driver on the tables;
+- Wi-Fi and Bluetooth: the chip's power switches are lines of the GPIO
+  expander, which Raspberry Pi's VPU firmware serves over the mailbox and this
+  firmware does not;
+- CPU frequency scaling, which Linux does through the VPU's clock services over
+  the same mailbox: the ARM runs at the one rate the VPU sets, 600 MHz;
+- the display, camera and audio.
+
+`scripts/test-acpi.sh` builds the table code for the host (`tools/acpi-check`)
+and checks the tables' links and checksums, then disassembles each with the
+ACPICA tools' `iasl` and compiles the DSDT again to the same bytes, evaluates the
+TPM's start method and the thermal zone's `_TMP` with `acpiexec`, and reads the
+SMBIOS tables with `dmidecode`. `scenarios/linux-acpi.yaml` boots Debian's arm64
+kernel on the tables in pimu, and `scenarios/linux-no-dt.yaml` the same kernel
+with a device tree that has nothing in it.
 
 ## Secure Boot
 
@@ -127,22 +208,31 @@ log in two banks of 20 KiB from `0x74000`, and come back at the next boot.
   boot starts from the built-in keys and checks each stored write again against
   the keys as they were when it was made.
 - Every other non-volatile variable (boot entries, shim's MOK list) is stored
-  with a signature, the device private key's ECDSA P-256 signature
-  ([keystore.md](keystore.md#the-firmware-cryptography-service)) over its
-  attributes, name, value and a counter. A record whose signature does not verify, or
-  whose counter is not above the one before it, is ignored. A variable is
-  at most 16 KiB.
+  with a seal: the device private key's HMAC-SHA256
+  ([keystore.md](keystore.md#the-firmware-cryptography-service)) of the SHA-256
+  of its attributes, name, value and a counter, which the VPU computes, so the
+  key never reaches the ARM. A record whose seal does not match, or whose
+  counter is not above the one before it, is ignored. A variable is at most
+  16 KiB.
 - A record is intact when its framing and SHA-256 are. One that is not, such as
   a write a power loss cut short, is stepped over to the next intact one, and
   the store moves to the other bank without it at that boot.
+- A bank more than half full at boot is replaced by the other, started with
+  the records the variables still need, when that frees room: the VPU only
+  appends once UEFI is gone, and the OS's writes fail while the bank is full.
+  What the boot refused goes with what the writes replaced: a write signed by
+  keys the board does not hold, and a variable that is not the OS's. A board
+  with no device private key keeps its bank, since it read none of the plain
+  records, and so does a boot in which the VPU did not answer for a record,
+  which may be sound.
 
 The OS can write the flash, and can drop records, but not make one: the
-device key signs for it only through the VPU's runtime tag, in a signature
-domain UEFI accepts for a variable of the OS's own and nothing else (below).
-UEFI forbids the device key to sign and to HMAC at `ExitBootServices`, and
-stops the boot when the VPU does not say it is locked. Dropping the
-newest record of a variable returns it to its previous value. Where the flash
-does not answer, or no device private key is fused, there is no signature and a
+device key seals for it only through the VPU's runtime tag, in a domain UEFI
+accepts for a variable of the OS's own and nothing else (below). UEFI forbids
+the device key to sign and to HMAC at `ExitBootServices`, and stops the boot
+when the VPU does not say it is locked. Dropping the newest record of a
+variable returns it to its previous value. Where the flash does not answer, or
+no device private key is fused, there is no seal and a
 variable other than `KEK`, `db` and `dbx` lasts until reset. Writing a whole new
 `pieeprom.bin` clears the store.
 
@@ -153,17 +243,18 @@ their table, and tell the VPU over the mailbox, on a channel of their own
 (7) that the OS's mailbox driver does not listen on, so that nothing is posted
 back to disturb it: the VPU answers in the message's own buffer.
 
-- A non-volatile variable no signature guards is signed by the VPU with the
+- A non-volatile variable no signature guards is sealed by the VPU with the
   device key and appended to the flash store, with the sequence number the next
-  record needs. The VPU signs, in a domain of its own, only a write or a
+  record needs. The VPU seals, in a domain of its own, only a write or a
   deletion with the attributes non-volatile, boot services and runtime, a name
-  without a NUL and at most 16 KiB of value: what the OS asks it to sign is the
+  without a NUL and at most 16 KiB of value: what the OS asks it to seal is the
   OS's word. At the next boot UEFI takes such a record only for a variable the
   OS owns, one that the table holds with those attributes, or none. A
   `SecureBoot`, `PK` or other variable the firmware keeps, or one the boot
   chain keeps from the OS (non-volatile without runtime access, such as shim's
-  MOK lists and the update records), is left as it is. A board with no device
-  key keeps the write in the table until reset.
+  MOK lists and the update records), is left as it is, and a variable under the
+  firmware's own class, where its update state is kept, is refused to the OS.
+  A board with no device key keeps the write in the table until reset.
 - A write of `KEK`, `db` or `dbx` is a signed update (what `efi-updatevar` and
   fwupd's `uefi-db`, `uefi-dbx` and `uefi-kek` plugins write). The runtime
   services cannot check the signature, so they append the record as it is, and
@@ -293,9 +384,16 @@ pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed b
 - `pi4-uefi.bin` is linked at 0 and the payload at `0x100_0000`; neither is
   relocatable.
 - The device tree is Raspberry Pi's for the Pi 4B whatever the board, with
-  nothing filled in but `/memory@0`, the TPM's node and the Ethernet address,
-  which is not the one Raspberry Pi's firmware gives the board.
-- Nothing sets the ARM's clock.
+  the memory, the TPM's node and its reserved page, the board's serial number
+  and revision code and the Ethernet address filled in; that address is not
+  the one Raspberry Pi's firmware gives the board.
+- The ACPI tables describe a Raspberry Pi 4B's devices whatever the board, and
+  the SMBIOS tables a Pi 4's processor and memory, with the board named by its
+  revision code.
+- In ACPI mode `bcm2835-pm` logs errors at boot (its optional power-domain
+  resources are not described), and the watchdog is the `bcm2835_wdt` driver
+  that the device it makes takes.
+- The ARM runs at 600 MHz, the one rate the VPU sets.
 - Nothing reads `BootOrder`: the boot is always the removable-media path.
 - `dbx` holds image hashes only; a certificate in it is ignored.
 - Storage is read-only to EFI applications; the firmware writes only the files an update needs.

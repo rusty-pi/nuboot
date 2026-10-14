@@ -80,9 +80,11 @@ own.
 
 The timer is the EL2 hypervisor timer (`CNTHP`, GIC interrupt 26), routed to EL2
 until `ExitBootServices`: a payload that uses either takes the beat from UEFI.
-A reset with a short count (Linux's `reboot`) within the 120 s after
-`ExitBootServices` is delayed if one of the VPU's reloads lands in the 160 µs
-before it fires, which is rare.
+A reset with a short count that an operating system's own driver makes within
+the 120 s after `ExitBootServices` is delayed if one of the VPU's reloads lands
+in the 160 µs before it fires, which is rare. `ResetSystem`, which Linux's
+`reboot` and `poweroff` call, asks for its count again as long as the board has
+not reset.
 
 ## Running it in pimu
 
@@ -110,8 +112,12 @@ pimu boot --scenario scenarios/capsule-eeprom-restore.yaml  # after it, the stor
 pimu boot --scenario scenarios/capsule-eeprom-failed.yaml   # an EEPROM update the bootloader did not make
 pimu boot --scenario scenarios/runtime-variables.yaml  # variables through the runtime services
 pimu boot --scenario scenarios/persist.yaml     # what the OS writes through them outlasts a reset
+pimu boot --scenario scenarios/shutdown.yaml    # a shutdown through them ends in the bootloader's halt
+pimu boot --scenario scenarios/store-compact.yaml  # the flash store has room again at the next boot
 pimu boot --scenario scenarios/crypto.yaml      # the firmware cryptography service, locked from the OS
 scripts/build-linux-test.sh && pimu boot --scenario scenarios/linux.yaml  # Debian's kernel, from its own initramfs
+pimu boot --scenario scenarios/linux-acpi.yaml   # the same kernel with acpi=on
+pimu boot --scenario scenarios/linux-no-dt.yaml  # and with an empty device tree, which it takes the ACPI tables for
 pimu boot --scenario scenarios/watchdog-hang.yaml  # a hang in UEFI resets the board
 pimu boot --scenario scenarios/watchdog-exit.yaml  # ExitBootServices hands the dog to the OS
 pimu boot --eeprom out/stock-pieeprom.bin --sd boot/   # a directory holding start4.elf as the SD card
@@ -131,5 +137,10 @@ they are signed with ([uefi.md](uefi.md#secure-boot)).
   `0x000300a3` carries a command, `0x000300a1` extends a PCR) and the
   one-time boot key (tag `0x000300a0`) and the device key's signatures, HMACs and
   public key (`0x0003008e` to `0x00030095`, [keystore.md](keystore.md#the-firmware-cryptography-service)),
-  and, on channel 7 for the runtime services, the store's `0x000300a6` (append a record as it is) and `0x000300a7` (sign and append a variable's write), and no other tag. None returns a fuse.
-- Nothing sets the ARM's clock.
+  and, on channel 6, the TPM's doorbell (the ACPI start method of the TPM's
+  command response buffer, which makes the VPU run the command in the page at
+  `0x3EBFF000`, [tpm2.md](tpm2.md#the-command-response-buffer)), and, on channel 7 for the
+  runtime services, the store's `0x000300a6` (append the record of a signed
+  `KEK`, `db` or `dbx` update as it is) and `0x000300a7` (seal and append a
+  variable's write), and no other tag. None returns a fuse.
+- The ARM runs at 600 MHz, the one rate the VPU sets.

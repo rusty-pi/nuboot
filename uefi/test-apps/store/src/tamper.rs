@@ -11,6 +11,7 @@ use r_efi::efi::{Char16, Guid, Handle, Status, SystemTable};
 
 const GUID: Guid = Guid::from_fields(0x5d0f3a58, 0x1c0e, 0x4d1b, 0x9a, 0x44, &[0x01, 0x23, 0x45, 0x67, 0x89, 0xab]);
 const GLOBAL: Guid = Guid::from_fields(0x8be4df61, 0x93ca, 0x11d2, 0xaa, 0x0d, &[0x00, 0xe0, 0x98, 0x03, 0x2b, 0x8c]);
+const FIRMWARE_CLASS: Guid = Guid::from_fields(0x7d1c0a4e, 0x5b83, 0x4f2a, 0x9c, 0x61, &[0xe2, 0x08, 0x4a, 0x3d, 0x95, 0xb7]);
 
 fn say(system_table: *mut SystemTable, text: &str) {
     let mut buf = [0 as Char16; 80];
@@ -36,6 +37,7 @@ pub extern "efiapi" fn efi_main(_image: Handle, system_table: *mut SystemTable) 
         ("Hidden", &GUID),
         ("RuntimeOk", &GUID),
         ("SecureBoot", &GLOBAL),
+        ("FwUpdateResult", &FIRMWARE_CLASS),
     ] {
         let mut wide = [0u16; 16];
         for (i, b) in name.bytes().enumerate() {
