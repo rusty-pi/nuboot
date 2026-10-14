@@ -18,6 +18,10 @@ const DATA: &[u8] = &[0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x07, 0x01];
 const SPC_INDIRECT_DATA: &[u8] = &[0x2b, 0x06, 0x01, 0x04, 0x01, 0x82, 0x37, 0x02, 0x01, 0x04];
 const COMMON_NAME: &[u8] = &[0x55, 0x04, 0x03];
 
+/// The most certificates a signature may carry: building the chain checks
+/// each against the others, and the signature is read before it is trusted.
+const MAX_CERTS: usize = 16;
+
 const SEQ: u8 = 0x30;
 const SET: u8 = 0x31;
 const INT: u8 = 0x02;
@@ -201,6 +205,9 @@ fn signed_data_inner<'a>(der: &'a [u8], detached: Option<&[u8]>) -> Option<Resul
         while let Some(c) = d.next() {
             // Anything that is not an RSA certificate cannot be on the chain.
             if let Some(c) = Cert::parse(c.whole) {
+                if certs.len() == MAX_CERTS {
+                    return None;
+                }
                 certs.push(c);
             }
         }
