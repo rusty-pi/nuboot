@@ -1,7 +1,9 @@
 #!/bin/sh
-# Test the TPM's code on the host: the crypto against reference vectors, and
-# the whole TPM through tpm2-tools when they are installed (tools/tpm-sim).
-# TPM2_TOOLS can name the directory of tools that are not on the PATH.
+# Test the VPU firmware's code on the host: the TPM's crypto against reference
+# vectors, and the whole TPM through tpm2-tools when they are installed
+# (tools/tpm-sim); the log's rendering of text it does not control
+# (tools/log-check). TPM2_TOOLS can name the directory of tools that are not on
+# the PATH.
 #
 # The repository's cargo configuration is for the VPU build and applies to
 # every directory under it, so cargo runs from outside, on the manifest.
@@ -11,6 +13,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 export CARGO_TARGET_DIR="$root/tools/tpm-sim/target"
 cd "${TMPDIR:-/tmp}"
 cargo test --release --manifest-path "$root/tools/tpm-sim/Cargo.toml" "$@"
+CARGO_TARGET_DIR="$root/tools/log-check/target" cargo test --release --manifest-path "$root/tools/log-check/Cargo.toml" "$@"
 
 # With the tools, the whole TPM: TPM2_TOOLS names a directory they are in, for
 # an unpacked package.

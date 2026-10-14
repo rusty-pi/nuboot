@@ -17,3 +17,4 @@
 /keys
 /tools/tpm-sim/target
 /tools/acpi-check/target
+/tools/log-check/target
