@@ -51,6 +51,8 @@ fn check_esrt(system_table: *mut SystemTable) {
 
 #[unsafe(no_mangle)]
 pub extern "efiapi" fn efi_main(image: Handle, system_table: *mut SystemTable) -> Status {
+    let boot_rt = unsafe { (*system_table).runtime_services };
+    check("a boot-time volatile variable is made", set(boot_rt, "BootMade", &OURS, BS_RT, &[1, 2, 3]) == Status::SUCCESS);
     let rt = exit_boot_services(image, system_table);
     runtime_efi::settle();
     check_esrt(system_table);
@@ -78,6 +80,11 @@ pub extern "efiapi" fn efi_main(image: Handle, system_table: *mut SystemTable) -
     let (_, size, _) = get(rt, "RtTest", &OURS, &mut out);
     check("the replacement reads back", out[..size] == [9]);
     check("other attributes are refused", set(rt, "RtTest", &OURS, BS_RT, &[1]) == Status::INVALID_PARAMETER);
+    check("a volatile variable is not created at runtime", set(rt, "RtVolatile", &OURS, BS_RT, &[1]) == Status::INVALID_PARAMETER);
+    check("a volatile variable of the boot chain is read", get(rt, "BootMade", &OURS, &mut out).1 == 3);
+    check("it is not overwritten", set(rt, "BootMade", &OURS, BS_RT, &[9]) == Status::WRITE_PROTECTED);
+    check("it is not deleted", set(rt, "BootMade", &OURS, 0, &[]) == Status::WRITE_PROTECTED);
+    check("it is not replaced by a non-volatile one", set(rt, "BootMade", &OURS, BS_RT | NV, &[9]) == Status::WRITE_PROTECTED);
     check("no runtime access is refused", set(rt, "RtOther", &OURS, efi::VARIABLE_BOOTSERVICE_ACCESS, &[1]) == Status::INVALID_PARAMETER);
 
     let (status, size, _) = get(rt, "RtTest", &OURS, &mut out[..0]);
@@ -110,7 +117,7 @@ pub extern "efiapi" fn efi_main(image: Handle, system_table: *mut SystemTable) -
     let block = [0xa5u8; 3000];
     let mut churned = true;
     for round in 0..200u32 {
-        churned &= set(rt, "RtChurn", &OURS, BS_RT, &block[..1000 + (round as usize % 2000)]) == Status::SUCCESS;
+        churned &= set(rt, "RtChurn", &OURS, BS_RT | NV, &block[..1000 + (round as usize % 2000)]) == Status::SUCCESS;
     }
     let (status, size, _) = get(rt, "RtChurn", &OURS, &mut out[..]);
     check("rewriting a variable reuses the table", churned && status == Status::SUCCESS && size == 1000 + (199 % 2000));

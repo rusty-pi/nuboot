@@ -91,13 +91,15 @@ pub fn bytes(name: &str, guid: &efi::Guid) -> Option<Vec<u8>> {
 }
 
 /// Copy the variables the OS can read into the table its runtime services
-/// answer from ([`crate::rtvar`]). Those it may also change are the ones no
-/// signature guards.
+/// answer from ([`crate::rtvar`]). Those it may also change are the
+/// non-volatile ones no signature guards: a volatile variable is something the
+/// boot chain made for the OS to read (shim's `MokListRT`, which a kernel
+/// takes keys from), and is the boot chain's to write.
 pub fn export_runtime() {
     crate::rtvar::clear();
     for v in VARS.get().iter().filter(|v| visible(v) && v.attributes & RT != 0) {
         let key = !v.fixed && is_key(&v.name, &v.guid);
-        let writable = !v.fixed && !key && v.attributes & AUTH == 0;
+        let writable = !v.fixed && !key && v.attributes & AUTH == 0 && v.attributes & NV != 0;
         if !crate::rtvar::add(&v.name, &v.guid, v.attributes, &v.data, writable, key) {
             warn!("var", "variable not kept for the OS: runtime table full"; name = W(&v.name));
         }
