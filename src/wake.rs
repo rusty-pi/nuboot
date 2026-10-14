@@ -27,7 +27,7 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::board::Board;
-use crate::{arm, cm, console, genet, gpio, info, mailbox, sched, timer, warn, watchdog};
+use crate::{arm, cm, console, genet, gpio, info, mailbox, pcie, sched, timer, warn, watchdog};
 
 /// How long after `NOTIFY_REBOOT` the OS has to ask for a power off. It does so
 /// within milliseconds, once the other devices have shut down.
@@ -81,6 +81,7 @@ fn power_off_comes() -> bool {
 
 fn stand_by() -> ! {
     cm::hold_arm(true);
+    pcie::power_down();
     let mac = arm::ethernet_address(Board::read().serial);
     info!("wake", "the OS powered the board off"; mac = Address(mac));
     match genet::arm_magic_packet(mac) {
