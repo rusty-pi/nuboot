@@ -43,6 +43,7 @@ const ST_SESSIONS: u16 = 0x8002;
 const RC_SUCCESS: u32 = 0;
 const RC_INITIALIZE: u32 = 0x100;
 const RC_COMMAND_SIZE: u32 = 0x142;
+const RC_FAILURE: u32 = 0x101;
 const RC_COMMAND_CODE: u32 = 0x143;
 const RC_BAD_TAG: u32 = 0x1e;
 /// The format-one codes: the parameter or handle number goes in bits 8-11 and
@@ -346,6 +347,9 @@ pub fn execute(command: &[u8], response: &mut [u8]) -> usize {
     }
     let mut body = Out { buf: response, at: 10 };
     let result = run(code, tag, &mut input, &mut body);
+    // A command that took a hierarchy's proof (`Hash`'s ticket) has had the
+    // device key's pads on the stack.
+    keystore::scrub();
     match result {
         Ok(sessions) => {
             let len = body.at;

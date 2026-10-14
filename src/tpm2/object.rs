@@ -986,6 +986,9 @@ pub fn load_external(c: &mut Command) -> Result<(), u32> {
         return Err(RC_HIERARCHY | RC_P | 3 * RC_1);
     }
     let bytes = &c.params.buf[public_at + 2..public_at + 2 + body.len()];
+    if bytes.len() > MAX_PUBLIC {
+        return Err(RC_SIZE | RC_P | 2 * RC_1);
+    }
     let name = name_of(bytes);
     let slot_index = free_slot()?;
     let slot = &mut table()[slot_index];

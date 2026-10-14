@@ -107,6 +107,7 @@ fn firmware_main() -> ! {
         otp::read(otp::BOOTMODE),
         if handover::present() { handover::sdram_mib() } else { 0 },
     );
+    pi4_server_firmware::keystore::seed();
     usb::bring_up(&board);
     let started = match arm::start(ARM_IMAGE, ARM_TREE, board.serial, board.revision) {
         Ok(started) => {
