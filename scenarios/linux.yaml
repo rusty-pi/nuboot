@@ -111,5 +111,7 @@ milestones:
     line: "the OS powered the board off"
   - why: "The Ethernet MAC and PHY are up at 100 Mbit/s with the magic packet detector armed."
     line: "waiting for a magic packet  mbit_s=100 duplex=full"
+  - why: "The power LED, a pin of the GPIO expander on the board's I2C bus, goes out."
+    line: "the power LED is off"
   - why: "A magic packet from the network peer, for the address the OS had, wakes the board."
     line: 'waking the board  reason="magic packet"'

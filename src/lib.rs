@@ -18,6 +18,7 @@ pub mod crypto;
 pub mod critical;
 pub mod eeprom;
 pub mod elf;
+pub mod expander;
 pub mod fdt;
 pub mod genet;
 pub mod gpio;
