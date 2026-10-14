@@ -111,7 +111,7 @@ power off coming and takes it instead of resetting.
 - With no PHY or no link to wake from, the firmware arms the watchdog again with
   `PM_RSTS` as the OS left it, and the stock bootloader halts as it always has.
 
-In stand-by the board draws about 2.5 W at the wall on a Raspberry Pi 4B
+In stand-by the board draws about 2.4 W at the wall on a Raspberry Pi 4B
 `d03115`, against about 1.8 W in the stock bootloader's halt and 3.1 to 3.4 W
 with Raspberry Pi OS idle. The stock halt comes before the bootloader starts the
 PLLs and the SDRAM; this firmware runs from the SDRAM, which stays up.

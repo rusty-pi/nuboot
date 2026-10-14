@@ -101,6 +101,12 @@ pub const GEN_1C8_CTL: u32 = 0x1c8;
 pub const GEN_208_CTL: u32 = 0x208;
 /// The two generators the Ethernet MAC runs from.
 pub const GEN_1E8_CTL: u32 = 0x1e8;
+/// Generators the stock firmware enables for peripherals this firmware does
+/// not identify.
+pub const GEN_1F0_CTL: u32 = 0x1f0;
+pub const GEN_1F8_CTL: u32 = 0x1f8;
+pub const GEN_200_CTL: u32 = 0x200;
+pub const GEN_22C_CTL: u32 = 0x22c;
 pub const GEN_210_CTL: u32 = 0x210;
 pub const SRC_PLLA_CORE: u32 = 4;
 pub const SRC_PLLC_PER: u32 = 5;
@@ -413,9 +419,12 @@ pub fn slow_vpu() {
     write(VPU_CTL, read(VPU_CTL) & !0xf | SRC_OSC);
 }
 
-/// Generators nothing runs from while the board waits for a magic packet: the
-/// 3D unit's, the SD host's, and the two the ARM's timer reads.
-const IDLE_GENERATORS: [u32; 4] = [V3D_CTL, EMMC2_CTL, GEN_1C8_CTL, GEN_208_CTL];
+/// Generators the board does not need while it waits for a magic packet: the
+/// 3D unit's, the SD host's, the two the ARM's timer reads, and four of the
+/// peripheral generators above. With `0x1d8` and `0x1e0` stopped as well the
+/// detector never fires, so one of them has to run.
+const IDLE_GENERATORS: [u32; 8] =
+    [V3D_CTL, EMMC2_CTL, GEN_1C8_CTL, GEN_208_CTL, GEN_1F0_CTL, GEN_1F8_CTL, GEN_200_CTL, GEN_22C_CTL];
 
 pub fn stop_idle_generators() {
     for ctl in IDLE_GENERATORS {
