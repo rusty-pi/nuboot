@@ -43,6 +43,95 @@ as the version.
 `scripts/mkcab.py` needs `gcab`. `fwupdtool get-details` shows what fwupd
 makes of the cabinet, the device GUID and the version among them.
 
+```mermaid
+flowchart LR
+    build["scripts/build.sh<br/>FIRMWARE_TIME=version"] --> elf["start4.elf"]
+    eeprom["pieeprom.bin<br/>(EEPROM update)"] --> mkbootimg
+    elf --> mkbootimg["mkbootimg.py<br/>signed with customer-private.pem"]
+    mkbootimg --> boot["boot.img + boot.sig"]
+    boot --> mkcapsule["mkcapsule.py<br/>signed with db.key / db.crt"]
+    mkcapsule --> cap["firmware.cap"]
+    cap --> mkcab["mkcab.py"]
+    mkcab --> cab["pi4-server-firmware-version.cab"]
+```
+
+## Applying an update
+
+The firmware applies a capsule on the boot after fwupd stages it. A firmware
+update takes three boots; the new firmware runs once from `tryboot.img` before
+it replaces `boot.img`:
+
+```mermaid
+sequenceDiagram
+    participant fwupd
+    participant ESP as EFI system partition
+    participant FW as Firmware
+    participant BL as EEPROM bootloader
+
+    fwupd->>ESP: capsule in \EFI\UpdateCapsule
+    fwupd->>FW: set OsIndications, reboot
+
+    Note over FW: Boot 1, running from boot.img
+    FW->>FW: check class GUID, db signature, dbx, version
+    alt capsule rejected
+        FW->>FW: set ESRT last attempt status
+    else capsule accepted
+        FW->>ESP: write tryboot.img and tryboot.sig, remove capsule
+        FW->>FW: record update as pending
+        FW->>BL: reset with tryboot request
+    end
+
+    Note over BL,FW: Boot 2, running from tryboot.img
+    BL->>BL: check tryboot.sig against the EEPROM's key
+    BL->>FW: start new firmware from tryboot.img
+    FW->>FW: find pending record, report success in ESRT
+    FW->>FW: record update as proven at ExitBootServices
+
+    Note over BL,FW: Boot 3, running from boot.img
+    FW->>FW: check the update is proven
+    alt update proven
+        FW->>ESP: tryboot pair becomes boot.img and boot.sig
+        FW->>BL: reset into the new firmware
+    else update not proven
+        FW->>ESP: remove tryboot.img and tryboot.sig
+        FW->>FW: report failure in ESRT
+    end
+```
+
+A boot from `tryboot.img` that fails before `ExitBootServices` is followed by
+one from `boot.img`, which is boot 3 with the update not proven.
+
+An update of the EEPROM bootloader stages the same way, with the variable
+store saved around the EEPROM write, which erases it:
+
+```mermaid
+sequenceDiagram
+    participant ESP as EFI system partition
+    participant FW as Firmware
+    participant BL as EEPROM bootloader
+
+    Note over FW: Boot 1, running from boot.img
+    FW->>FW: check capsule, record update as pending
+    FW->>ESP: write tryboot.img and tryboot.sig, remove capsule
+    FW->>ESP: copy variable store to STORE.BAK, read it back
+    FW->>BL: reset with tryboot request
+
+    Note over BL: Boot 2, running from tryboot.img
+    BL->>BL: check tryboot.sig against the EEPROM's key
+    BL->>BL: write pieeprom.upd if pieeprom.sig is later than its own
+    BL->>BL: stamp update time into the last 8 bytes of the flash
+
+    Note over FW: Next start, empty store
+    FW->>ESP: read STORE.BAK back into the store, restart
+    FW->>FW: flash as new as the capsule says?
+    alt yes
+        FW->>FW: report success in ESRT
+    else no
+        FW->>FW: report failure in ESRT
+    end
+    FW->>ESP: remove tryboot pair and STORE.BAK
+```
+
 ## Keys
 
 fwupd also updates `KEK`, `db` and `dbx` from the OS, with its `uefi-kek`,
