@@ -40,12 +40,17 @@ const SIGNATURE: usize = 64;
 const LABEL: &[u8] = b"nuboot update\0";
 
 /// What replaces the bundle's header once it runs: `P4UH`, the version of the
-/// firmware that started it, the length of its commit and the commit.
+/// firmware that started it, the length of its commit and the commit, then the
+/// SHA-256 of the image and its length.
 const LOADER: [u8; 4] = *b"P4UH";
 const LOADER_VERSION: u32 = 4;
 const LOADER_COMMIT_LEN: u32 = 8;
 const LOADER_COMMIT: u32 = 9;
 const COMMIT_MAX: usize = 40;
+/// The SHA-256 of the image the loader ran, and its length, which the loader
+/// computed itself: the image's own measurement of itself would prove nothing.
+const LOADER_DIGEST: u32 = 52;
+const LOADER_IMAGE_LEN: u32 = 84;
 
 /// The uncached alias of SDRAM, so what the ARM side wrote is read from memory.
 const UNCACHED: u32 = 0xc000_0000;
@@ -65,6 +70,8 @@ static KEYS: &[u8] = include_bytes!(env!("UPDATE_KEYS"));
 
 pub struct Staged {
     pub version: u32,
+    /// The SHA-256 of the image, which is what the update is measured as.
+    pub digest: [u8; 32],
     image: &'static [u8],
 }
 
@@ -129,7 +136,7 @@ pub fn staged() -> Result<Option<Staged>, &'static str> {
     if !signed_by_an_update_key(&header[..HEADER], image, &header[HEADER..HEADER + SIGNATURE]) {
         return Err("no update key signed the bundle");
     }
-    Ok(Some(Staged { version: word(header, 8), image }))
+    Ok(Some(Staged { version: word(header, 8), digest: sha256::digest(image), image }))
 }
 
 /// Run the bundle's image, in the update slot, as the bootloader would have
@@ -144,6 +151,10 @@ pub fn chain(staged: &Staged, commit: &str) -> ! {
         mmio::write8(at + LOADER_COMMIT + i as u32, b);
     }
     mmio::write8(at + LOADER_COMMIT_LEN, commit.len() as u8);
+    for (i, &b) in staged.digest.iter().enumerate() {
+        mmio::write8(at + LOADER_DIGEST + i as u32, b);
+    }
+    mmio::write(at + LOADER_IMAGE_LEN, staged.image.len() as u32);
     mmio::write(at + LOADER_VERSION, VERSION);
     mmio::write(at, u32::from_le_bytes(LOADER));
     cache::enter(SLOT_BASE)
@@ -157,9 +168,18 @@ pub fn take_loader() -> Option<Loader> {
         return None;
     }
     let len = (mmio::read8(at + LOADER_COMMIT_LEN) as usize).min(COMMIT_MAX);
-    let mut loader = Loader { version: mmio::read(at + LOADER_VERSION), commit: [0; COMMIT_MAX], len };
+    let mut loader = Loader {
+        version: mmio::read(at + LOADER_VERSION),
+        commit: [0; COMMIT_MAX],
+        len,
+        digest: [0; 32],
+        image_len: mmio::read(at + LOADER_IMAGE_LEN),
+    };
     for (i, byte) in loader.commit[..len].iter_mut().enumerate() {
         *byte = mmio::read8(at + LOADER_COMMIT + i as u32);
+    }
+    for (i, byte) in loader.digest.iter_mut().enumerate() {
+        *byte = mmio::read8(at + LOADER_DIGEST + i as u32);
     }
     mmio::write(at, 0);
     Some(loader)
@@ -167,6 +187,9 @@ pub fn take_loader() -> Option<Loader> {
 
 pub struct Loader {
     pub version: u32,
+    /// The SHA-256 of this image, and its length, as the loader measured them.
+    pub digest: [u8; 32],
+    pub image_len: u32,
     commit: [u8; COMMIT_MAX],
     len: usize,
 }

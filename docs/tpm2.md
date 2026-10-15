@@ -25,6 +25,8 @@ replays to the PCRs as a TPM's does:
 
 | PCR | event | holds |
 |---|---|---|
+| 0 | `EV_S_CRTM_VERSION` | `nuboot-loader`, the commit and the version of the firmware that started an update, in UTF-16; only on a board that runs an update |
+| 0 | `EV_EFI_PLATFORM_FIRMWARE_BLOB2` | the update's own VPU image, `start4-update`, as the SHA-256 the loader took of it before it ran it; only on a board that runs an update |
 | 0 | `EV_S_CRTM_VERSION` | `nuboot` and the commit, in UTF-16 |
 | 0 | `EV_EFI_PLATFORM_FIRMWARE_BLOB2` | the UEFI image, and the device tree it starts the ARM with |
 | 1 | `EV_PLATFORM_CONFIG_FLAGS` | `board.revision`, `board.ext_revision`, `board.serial`, `board.mac_rows`, `otp.bootmode` and `sdram.mib`, one event each, as `name=value` |

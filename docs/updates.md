@@ -41,8 +41,9 @@ the bootloader never sees it.
    bundle's ECDSA P-256 signature against its update keys, copies the image to
    the update slot at `0x3ee00200`, leaves its own version and commit where the
    image finds them, and enters it.
-3. The image boots as the firmware. It measures the loader's commit and version
-   into PCR 0 ahead of its own and starts the ARM. When UEFI reaches
+3. The image boots as the firmware. It measures the loader's commit and version,
+   and the SHA-256 the loader took of the image, into PCR 0 ahead of its own
+   events, and starts the ARM. When UEFI reaches
    `ExitBootServices` it blesses the bundle, by dropping the counter from its
    name, and removes the older bundles.
 4. At every later power-up the loader runs first, and its UEFI stages the newest

@@ -114,9 +114,19 @@ fn crtm_version(args: core::fmt::Arguments) {
     record(PCR_FIRMWARE, EV_S_CRTM_VERSION, sha256::digest(&version[..len]), &version[..len]);
 }
 
-/// Measure the firmware that started this one as an update, ahead of this one.
-pub fn loader(commit: &str, version: u32) {
-    crtm_version(format_args!("pi4-loader {commit} {version}"));
+/// Measure the firmware that started this one as an update, ahead of this one:
+/// its commit and version, and the SHA-256 the loader took of this image before
+/// it ran it, which `base` and `len` place in memory.
+pub fn loader(commit: &str, version: u32, digest: [u8; 32], base: u32, len: u32) {
+    crtm_version(format_args!("nuboot-loader {commit} {version}"));
+    let description = "start4-update";
+    let mut data = [0u8; MAX_DATA];
+    data[0] = description.len() as u8;
+    data[1..1 + description.len()].copy_from_slice(description.as_bytes());
+    let at = 1 + description.len();
+    data[at..at + 8].copy_from_slice(&(base as u64).to_le_bytes());
+    data[at + 8..at + 16].copy_from_slice(&(len as u64).to_le_bytes());
+    record(PCR_FIRMWARE, EV_EFI_PLATFORM_FIRMWARE_BLOB2, digest, &data[..at + 16]);
 }
 
 /// Measure the firmware and the board. Once, before the ARM starts.

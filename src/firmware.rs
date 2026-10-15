@@ -99,8 +99,10 @@ fn firmware_main() -> ! {
         None => warn!("thermal", "temperature sensor gave no sample"),
     }
     if let Some(loader) = update::take_loader() {
-        info!("update", "measuring the firmware that started this one"; loader = loader.commit(), loader_version = loader.version);
-        measure::loader(loader.commit(), loader.version);
+        let d = loader.digest;
+        info!("update", "measuring the firmware that started this one"; loader = loader.commit(), loader_version = loader.version,
+            image_sha256 = format_args!("{:02x}{:02x}{:02x}{:02x}", d[0], d[1], d[2], d[3]), image_bytes = loader.image_len);
+        measure::loader(loader.commit(), loader.version, loader.digest, update::SLOT_BASE, loader.image_len);
     }
     measure::platform(
         COMMIT,

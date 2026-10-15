@@ -190,8 +190,11 @@ it, so a flaw there stays until the owner signs a new `start4.elf`. It runs at
 every power-up, ahead of the update.
 
 The image the bundle carries measures the loader's commit and version into PCR 0
-ahead of its own events, so a policy bound to PCR 0 tells a board running an
-update from one running the loader.
+ahead of its own events, and with them the SHA-256 of its own image, which the
+loader took when it checked the signature and left for the image. The image does
+not hash itself: what is measured is what the owner-signed code ran. A policy
+bound to PCR 0 therefore tells a board running an update from one running the
+loader, and one update build from another, by the hash of the VPU image.
 
 ## The device key and the TPM's secrets
 
@@ -416,9 +419,10 @@ Not defended, and not claimed:
 - Rollback of the store, or of `boot.img`, by anyone who can write the media. The
   flash's write protection is not used: the firmware clears the protect bits of
   the flash's status register when it writes the store.
-- The VPU's own code is not measured as a hash: `EV_S_CRTM_VERSION` names the
-  commit, and PCR 0 holds the hashes of the UEFI image and the device tree it
-  starts. The VL805's firmware and the EEPROM's configuration are not measured.
+- The VPU's own code is not measured as a hash when it is the loader the
+  bootloader started: `EV_S_CRTM_VERSION` names the commit, and PCR 0 holds the
+  hashes of the UEFI image and the device tree it starts. An update's VPU image
+  is measured, by the loader that ran it. The VL805's firmware and the EEPROM's configuration are not measured.
 - The device key against privileged ARM code (above).
 - A kernel with a raw mailbox device for users (Raspberry Pi's `/dev/vcio`) lets
   the OS's users send any channel-8 tag, the boot key's among them. Use a

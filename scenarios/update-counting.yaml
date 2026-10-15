@@ -29,5 +29,7 @@ milestones:
     line: "starting the staged bundle  version=3355443200"
   - why: "The build the bundle carried runs in the update slot."
     line: "running as an update  version=3355443200"
+  - why: "It measures the SHA-256 and the length the loader took of its image."
+    line: "image_sha256="
   - why: "It reached ExitBootServices and blessed the bundle."
     line: "the updated firmware reached the OS  version=3355443200"
