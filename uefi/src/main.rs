@@ -152,7 +152,10 @@ fn boot(parent: efi::Handle) {
     for fs in proto::with(Some(&simple_file_system::PROTOCOL_GUID)) {
         let Some(dp) = proto::get(fs, &r_efi::protocols::device_path::PROTOCOL_GUID) else { continue };
         let path = Builder::from(devpath::bytes(dp as *const u8)).file(&name).done();
-        let handle = match image::load(parent, path.as_ptr(), None) {
+        tcg2::boot_option(Some(&path));
+        let loaded = image::load(parent, path.as_ptr(), None);
+        tcg2::boot_option(None);
+        let handle = match loaded {
             Ok(h) => h,
             Err(efi::Status::NOT_FOUND) => continue,
             Err(s) => {
@@ -193,6 +196,7 @@ extern "C" fn pi4_main(tree_addr: u64) -> ! {
     acpi::init(&tree, xhci::registers_base());
     smbios::init(&tree);
 
+    tcg2::measure_handoff_tables(&[acpi::ACPI_20_TABLE_GUID, smbios::SMBIOS3_TABLE_GUID]);
     tcg2::separators();
     capsule::scan();
     boot(parent);

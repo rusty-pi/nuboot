@@ -13,7 +13,7 @@ use crate::util::Hex;
 use crate::{esrt, fdt, info, mem, tables as efi_tables, warn};
 
 /// `EFI_SMBIOS3_TABLE_GUID`.
-const SMBIOS3_TABLE_GUID: efi::Guid =
+pub const SMBIOS3_TABLE_GUID: efi::Guid =
     efi::Guid::from_fields(0xf2fd1544, 0x9794, 0x4a2c, 0x99, 0x2e, &[0xe5, 0xbb, 0xcf, 0x20, 0xe3, 0x94]);
 
 /// The root properties the VPU firmware gives the tree besides the stock

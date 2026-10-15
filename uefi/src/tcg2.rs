@@ -6,8 +6,10 @@
 //!
 //! This firmware measures the way a PC's does: the Secure Boot configuration
 //! (`SecureBoot`, `PK`, `KEK`, `db`, `dbx`) and the certificate that verified
-//! each image go to PCR 7, each image's Authenticode hash to PCR 4, and a
-//! separator follows the configuration in both.
+//! each image go to PCR 7, each image's Authenticode hash to PCR 4, the
+//! tables handed to the OS to PCR 1, and a separator follows the configuration
+//! in PCRs 0 to 7. The boot option's disk's GPT goes to PCR 5 and the call to
+//! it to PCR 4.
 
 use alloc::vec::Vec;
 use core::ffi::c_void;
@@ -23,11 +25,16 @@ const GUID: efi::Guid =
 
 const EV_NO_ACTION: u32 = 0x3;
 const EV_SEPARATOR: u32 = 0x4;
+const EV_EFI_ACTION: u32 = 0x8000_0007;
+const EV_EFI_GPT_EVENT: u32 = 0x8000_0006;
+const EV_EFI_HANDOFF_TABLES2: u32 = 0x8000_000b;
 const EV_EFI_VARIABLE_DRIVER_CONFIG: u32 = 0x8000_0001;
 const EV_EFI_BOOT_SERVICES_APPLICATION: u32 = 0x8000_0003;
 const EV_EFI_VARIABLE_AUTHORITY: u32 = 0x8000_00e0;
 
+const PCR_HANDOFF: u32 = 1;
 const PCR_IMAGES: u32 = 4;
+const PCR_BOOT_CONFIG: u32 = 5;
 const PCR_SECURE_BOOT: u32 = 7;
 
 const FLAG_EXTEND_ONLY: u64 = 1;
@@ -139,12 +146,55 @@ pub fn measure_variable(name: &str, guid: &efi::Guid, data: &[u8]) {
     record(PCR_SECURE_BOOT, EV_EFI_VARIABLE_DRIVER_CONFIG, &sha256::digest(&event), &event);
 }
 
-/// The configuration is measured: the separators PCs put after it.
+/// The configuration tables the firmware hands over, as
+/// `UEFI_HANDOFF_TABLE_POINTERS2`, into PCR 1. A table that is not installed
+/// is left out.
+pub fn measure_handoff_tables(guids: &[efi::Guid]) {
+    let tables: Vec<(&efi::Guid, u64)> =
+        guids.iter().filter_map(|g| crate::tables::table(g).map(|t| (g, t as u64))).collect();
+    if tables.is_empty() {
+        return;
+    }
+    let description = "UEFI tables";
+    let mut event = Vec::new();
+    event.push(description.len() as u8);
+    event.extend_from_slice(description.as_bytes());
+    event.extend_from_slice(&(tables.len() as u64).to_le_bytes());
+    for (guid, table) in tables {
+        event.extend_from_slice(guid.as_bytes());
+        event.extend_from_slice(&table.to_le_bytes());
+    }
+    record(PCR_HANDOFF, EV_EFI_HANDOFF_TABLES2, &sha256::digest(&event), &event);
+}
+
+/// The configuration is measured: the separators PCs put after it, one in
+/// each of PCRs 0 to 7.
 pub fn separators() {
     let event = [0u8; 4];
-    for pcr in [PCR_IMAGES, PCR_SECURE_BOOT] {
+    for pcr in 0..=7 {
         record(pcr, EV_SEPARATOR, &sha256::digest(&event), &event);
     }
+}
+
+/// The boot option the firmware is loading, until [`announce_boot_option`]
+/// or [`boot_option`] with `None`.
+static BOOT_OPTION: Global<Option<Vec<u8>>> = Global::new(None);
+
+/// Say that the image `path` names is the boot option, or, with `None`, that
+/// loading it is over.
+pub fn boot_option(path: Option<&[u8]>) {
+    *BOOT_OPTION.get() = path.map(<[u8]>::to_vec);
+}
+
+/// The image about to be measured is the boot option: the GPT of its disk goes
+/// into PCR 5, and the action of calling it into PCR 4, ahead of the image.
+pub fn announce_boot_option() {
+    let Some(path) = BOOT_OPTION.get().take() else { return };
+    if let Some(gpt) = crate::block::gpt_data(&path) {
+        record(PCR_BOOT_CONFIG, EV_EFI_GPT_EVENT, &sha256::digest(gpt), gpt);
+    }
+    let action = b"Calling EFI Application from Boot Option";
+    record(PCR_IMAGES, EV_EFI_ACTION, &sha256::digest(action), action);
 }
 
 /// An image the firmware has verified: its hash into PCR 4, and the `db`

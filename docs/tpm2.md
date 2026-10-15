@@ -21,7 +21,8 @@ The TPM is started when the firmware is. A `TPM2_Startup` from a payload gets
 
 `start4.elf` measures the firmware and the board before it starts the ARM, and
 UEFI starts its event log with those events (tag `0x000300a4`), so the log
-replays to the PCRs as a TPM's does:
+replays to the PCRs as a TPM's does. UEFI and the loaders add the rest, in
+this order:
 
 | PCR | event | holds |
 |---|---|---|
@@ -30,13 +31,23 @@ replays to the PCRs as a TPM's does:
 | 0 | `EV_S_CRTM_VERSION` | `nuboot` and the commit, in UTF-16 |
 | 0 | `EV_EFI_PLATFORM_FIRMWARE_BLOB2` | the UEFI image, and the device tree it starts the ARM with |
 | 1 | `EV_PLATFORM_CONFIG_FLAGS` | `board.revision`, `board.ext_revision`, `board.serial`, `board.mac_rows`, `otp.bootmode` and `sdram.mib`, one event each, as `name=value` |
-| 7 | | the Secure Boot configuration, and the certificate that verified each image |
-| 4 | | each image UEFI loads |
+| 1 | `EV_PLATFORM_CONFIG_FLAGS` | `eeprom.bootconf=`, the SHA-256 of `bootconf.txt` in the EEPROM as it is stored, or `none` |
+| 0 | `EV_EFI_PLATFORM_FIRMWARE_BLOB2` | the VL805's hub and MCU images (`vl805-hub`, `vl805-mcu`), when the VPU loads them into the chip, which the 4B revisions without a flash of their own for it need |
+| 7 | `EV_EFI_VARIABLE_DRIVER_CONFIG` | the Secure Boot configuration: `SecureBoot`, `PK`, `KEK`, `db` and `dbx` |
+| 1 | `EV_EFI_HANDOFF_TABLES2` | the pointers to the ACPI and SMBIOS tables handed to the OS |
+| 0-7 | `EV_SEPARATOR` | one in each PCR, once the configuration is measured |
+| 5 | `EV_EFI_GPT_EVENT` | the GPT of the disk the boot option is on, when it has one |
+| 4 | `EV_EFI_ACTION` | `Calling EFI Application from Boot Option`, ahead of the boot option's image |
+| 4 | `EV_EFI_BOOT_SERVICES_APPLICATION` | each image UEFI loads |
+| 7 | `EV_EFI_VARIABLE_AUTHORITY` | the `db` certificate that verified each image |
 
 Shim, GRUB, systemd-boot and systemd-stub measure the rest through
 `HashLogExtendEvent`: systemd-boot puts `loader.conf` in PCR 5, systemd-stub
 the sections of a unified kernel image in PCR 11, shim the MOK list in PCR 14,
 GRUB its commands and files in PCRs 8 and 9.
+
+Nothing is measured into PCRs 2, 3 and 6: there are no option ROMs and no
+suspend. The ExitBootServices actions are not logged.
 
 ## What it implements
 
@@ -145,7 +156,9 @@ the scenario checks that systemd-boot and the stub measured into PCRs 5 and
 11 on the way.
 
 `scripts/check-tpm2.py` checks the first: that the event log replays to the
-PCRs, with the board's identity in PCR 1, the properties, that the PCRs read back
+PCRs, with the board's identity and the EEPROM's configuration in PCR 1, a
+separator in each of PCRs 0 to 7, the handoff tables and the call to the boot
+option, the properties, that the PCRs read back
 are what SHA-256 makes of what was extended, the update counter, the error
 codes of the commands the TPM refuses, and what the key, the sealed data and the
 sessions answer and refuse.

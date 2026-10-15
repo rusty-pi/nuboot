@@ -68,17 +68,18 @@ sees it.
 ```text
 boot ROM        bootloader in the EEPROM, against the OTP's key hash
 bootloader      boot.img, against boot.sig and the EEPROM's public key
-start4.elf      measures itself, UEFI and the board into PCRs 0 and 1; starts the ARM
+start4.elf      measures UEFI, the board, the EEPROM's bootconf.txt and the VL805's firmware into PCRs 0 and 1; starts the ARM
 UEFI            LoadImage: Authenticode signature chained to db, hash not in dbx
 shim, GRUB      their own keys and the MOK list; each measured into the TPM
 kernel          lockdown, because UEFI says Secure Boot is on
 ```
 
 From `start4.elf` on, each link measures what it starts into the TPM on the VPU
-([tpm2.md](tpm2.md#what-is-measured)): the firmware and board into PCRs 0 and 1,
-the Secure Boot keys into PCR 7, every image UEFI loads into PCR 4 with the
-certificate that verified it into PCR 7, and what shim, GRUB, systemd-boot and
-the kernel's stub add into PCRs 5, 8, 9, 11 and 14. A PCR only moves by
+([tpm2.md](tpm2.md#what-is-measured)): the firmware, the board, the EEPROM's
+configuration and the VL805's firmware into PCRs 0 and 1, the Secure Boot keys
+into PCR 7, every image UEFI loads into PCR 4 with the certificate that
+verified it into PCR 7, the boot disk's GPT into PCR 5, and what shim, GRUB,
+systemd-boot and the kernel's stub add into PCRs 5, 8, 9, 11 and 14. A PCR only moves by
 extension, and the registers the TPM refuses to extend (17-22) are refused on
 the mailbox too.
 
@@ -422,7 +423,10 @@ Not defended, and not claimed:
 - The VPU's own code is not measured as a hash when it is the loader the
   bootloader started: `EV_S_CRTM_VERSION` names the commit, and PCR 0 holds the
   hashes of the UEFI image and the device tree it starts. An update's VPU image
-  is measured, by the loader that ran it. The VL805's firmware and the EEPROM's configuration are not measured.
+  is measured, by the loader that ran it.
+- The EEPROM's bootloader (`bootcode.bin`) is not measured, and neither is the
+  VL805's firmware on a board that keeps it in a flash of its own: the VPU
+  loads no image there, and there is nothing to hash.
 - The device key against privileged ARM code (above).
 - A kernel with a raw mailbox device for users (Raspberry Pi's `/dev/vcio`) lets
   the OS's users send any channel-8 tag, the boot key's among them. Use a

@@ -19,7 +19,7 @@ use crate::util::Hex;
 use crate::{fdt, info, mem, tables as efi_tables, warn};
 
 /// `EFI_ACPI_20_TABLE_GUID`.
-const ACPI_20_TABLE_GUID: efi::Guid =
+pub const ACPI_20_TABLE_GUID: efi::Guid =
     efi::Guid::from_fields(0x8868e871, 0xe4f1, 0x11d3, 0xbc, 0x22, &[0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81]);
 
 const CRB_NODE: &[u8] = b"tpm-crb@";

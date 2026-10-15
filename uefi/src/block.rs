@@ -12,6 +12,7 @@ use r_efi::efi;
 use r_efi::protocols::{block_io, device_path, disk_io};
 
 use crate::devpath::{self, Builder};
+use crate::util::Global;
 use crate::{info, proto, warn};
 
 /// What a storage driver gives the firmware.
@@ -307,6 +308,23 @@ fn partitions(disk: &Volume) -> Vec<Partition> {
         .collect()
 }
 
+/// Each GPT disk's path and its `UEFI_GPT_DATA`: the header, the number of
+/// partitions in use and their entries.
+static GPT_DATA: Global<Vec<(Vec<u8>, Vec<u8>)>> = Global::new(Vec::new());
+
+/// The `UEFI_GPT_DATA` of the disk the partition at `path` is on.
+pub fn gpt_data(path: &[u8]) -> Option<&'static [u8]> {
+    GPT_DATA.get().iter().find(|(disk, _)| path.starts_with(&disk[..disk.len() - 4])).map(|(_, data)| data.as_slice())
+}
+
+fn remember_gpt(disk: &Volume, header: &[u8], table: &[u8], count: usize, size: usize) {
+    let used: Vec<&[u8]> = (0..count).map(|i| &table[i * size..(i + 1) * size]).filter(|e| e[0..16].iter().any(|&b| b != 0)).collect();
+    let mut data = header[..(le32(header, 12) as usize).clamp(92, header.len())].to_vec();
+    data.extend_from_slice(&(used.len() as u64).to_le_bytes());
+    used.iter().for_each(|e| data.extend_from_slice(e));
+    GPT_DATA.get().push((disk.path.clone(), data));
+}
+
 fn gpt(disk: &Volume) -> Vec<Partition> {
     let bs = disk.block_size() as usize;
     let mut header = vec![0u8; bs];
@@ -322,6 +340,7 @@ fn gpt(disk: &Volume) -> Vec<Partition> {
     if disk.read_blocks(entries_lba, &mut table).is_err() {
         return Vec::new();
     }
+    remember_gpt(disk, &header, &table, count, size);
     (0..count)
         .filter_map(|i| {
             let e = &table[i * size..(i + 1) * size];

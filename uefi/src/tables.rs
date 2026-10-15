@@ -381,6 +381,12 @@ extern "efiapi" fn install_configuration_table(guid: *mut efi::Guid, table: *mut
     install_table(unsafe { *guid }, table)
 }
 
+/// The configuration table `guid` names, if it is installed.
+pub fn table(guid: &efi::Guid) -> Option<*mut c_void> {
+    let d = rt_data();
+    d.config[..d.st.number_of_table_entries].iter().find(|c| c.vendor_guid == *guid).map(|c| c.vendor_table)
+}
+
 pub fn install_table(guid: efi::Guid, table: *mut c_void) -> efi::Status {
     let d = rt_data();
     let n = d.st.number_of_table_entries;
