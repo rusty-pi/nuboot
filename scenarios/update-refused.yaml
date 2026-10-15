@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "update-refused"
+description: "An update capsule whose bundle a key no build trusts signed is accepted by UEFI, because db signed the capsule, and left in RAM. The VPU firmware the bootloader loaded refuses the bundle and starts the firmware it carries."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  otp_row:
+    - "56=0xc0de2001"
+    - "57=0xc0de3112"
+    - "58=0xc0de4223"
+    - "59=0xc0de5334"
+    - "60=0xc0de6445"
+    - "61=0xc0de7556"
+    - "62=0xc0de8667"
+    - "63=0xc0de9778"
+  sd:
+    files:
+      start4.elf: "../out/start4-test.elf"
+      EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-takeover.efi"
+      EFI/UpdateCapsule/next.cap: "../out/capsule-update-stranger.cap"
+  until: "the staged bundle is refused"
+  wall_secs: 1800
+
+milestones:
+  - why: "UEFI takes the capsule, which the test db key signed."
+    line: "update staged, resetting into it  version=2147483000"
+  - why: "The VPU firmware finds the bundle after the reset and no update key signed it."
+    line: "the staged bundle is refused"

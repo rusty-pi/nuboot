@@ -96,11 +96,15 @@ fn blob(description: &str, blob: &[u8]) {
     record(PCR_FIRMWARE, EV_EFI_PLATFORM_FIRMWARE_BLOB2, sha256::digest(blob), &data[..at + 16]);
 }
 
-/// Measure the firmware and the board. Once, before the ARM starts.
-pub fn platform(commit: &str, uefi: &[u8], tree: &[u8], revision: u32, ext_revision: u32, serial: u32, mac: (u32, u32), bootmode: u32, sdram_mib: u32) {
+/// A firmware version event: `text` as UTF-16.
+fn crtm_version(args: core::fmt::Arguments) {
+    let mut text = Text { bytes: [0; MAX_DATA], len: 0 };
+    if text.write_fmt(args).is_err() {
+        return;
+    }
     let mut version = [0u8; MAX_DATA];
     let mut len = 0;
-    for unit in "pi4-server-firmware ".encode_utf16().chain(commit.encode_utf16()) {
+    for unit in core::str::from_utf8(&text.bytes[..text.len]).unwrap_or("").encode_utf16() {
         if len + 2 > MAX_DATA {
             break;
         }
@@ -108,6 +112,16 @@ pub fn platform(commit: &str, uefi: &[u8], tree: &[u8], revision: u32, ext_revis
         len += 2;
     }
     record(PCR_FIRMWARE, EV_S_CRTM_VERSION, sha256::digest(&version[..len]), &version[..len]);
+}
+
+/// Measure the firmware that started this one as an update, ahead of this one.
+pub fn loader(commit: &str, version: u32) {
+    crtm_version(format_args!("pi4-loader {commit} {version}"));
+}
+
+/// Measure the firmware and the board. Once, before the ARM starts.
+pub fn platform(commit: &str, uefi: &[u8], tree: &[u8], revision: u32, ext_revision: u32, serial: u32, mac: (u32, u32), bootmode: u32, sdram_mib: u32) {
+    crtm_version(format_args!("pi4-server-firmware {commit}"));
     blob("pi4-uefi", uefi);
     blob("device-tree", tree);
 

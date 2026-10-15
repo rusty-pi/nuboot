@@ -97,6 +97,9 @@ fn firmware_main() -> ! {
             celsius = format_args!("{}{}.{}", if millicelsius < 0 { "-" } else { "" }, millicelsius.abs() / 1000, millicelsius.abs() % 1000 / 100)),
         None => warn!("thermal", "temperature sensor gave no sample"),
     }
+    if let Some(loader) = update::take_loader() {
+        measure::loader(loader.commit(), loader.version);
+    }
     measure::platform(
         COMMIT,
         ARM_IMAGE,
@@ -162,7 +165,7 @@ fn chain_update() {
         Ok(Some(staged)) => {
             info!("update", "starting the staged bundle"; version = staged.version, image_bytes = staged.image_bytes());
             console::drain();
-            update::chain(&staged)
+            update::chain(&staged, COMMIT)
         }
         Err(reason) => {
             warn!("update", "the staged bundle is refused"; reason = reason);

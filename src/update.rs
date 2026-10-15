@@ -38,6 +38,14 @@ const HEADER: usize = 24;
 const SIGNATURE: usize = 64;
 const LABEL: &[u8] = b"pi4-server-firmware update\0";
 
+/// What replaces the bundle's header once it runs: `P4UH`, the version of the
+/// firmware that started it, the length of its commit and the commit.
+const LOADER: [u8; 4] = *b"P4UH";
+const LOADER_VERSION: u32 = 4;
+const LOADER_COMMIT_LEN: u32 = 8;
+const LOADER_COMMIT: u32 = 9;
+const COMMIT_MAX: usize = 40;
+
 /// The uncached alias of SDRAM, so what the ARM side wrote is read from memory.
 const UNCACHED: u32 = 0xc000_0000;
 
@@ -121,12 +129,48 @@ pub fn staged() -> Result<Option<Staged>, &'static str> {
 }
 
 /// Run the bundle's image, in the update slot, as the bootloader would have
-/// started it. The bundle is gone first, so a reset does not run it again.
-pub fn chain(staged: &Staged) -> ! {
+/// started it. The bundle is gone first, so a reset does not run it again; in
+/// its place the image finds who started it, which it measures.
+pub fn chain(staged: &Staged, commit: &str) -> ! {
     let slot = (UNCACHED | SLOT_BASE) as usize as *mut u8;
     unsafe { core::ptr::copy_nonoverlapping(staged.image.as_ptr(), slot, staged.image.len()) };
-    mmio::write(UNCACHED | BUNDLE_ADDR, 0);
+    let at = UNCACHED | BUNDLE_ADDR;
+    let commit = &commit.as_bytes()[..commit.len().min(COMMIT_MAX)];
+    for (i, &b) in commit.iter().enumerate() {
+        mmio::write8(at + LOADER_COMMIT + i as u32, b);
+    }
+    mmio::write8(at + LOADER_COMMIT_LEN, commit.len() as u8);
+    mmio::write(at + LOADER_VERSION, VERSION);
+    mmio::write(at, u32::from_le_bytes(LOADER));
     cache::enter(SLOT_BASE)
+}
+
+/// The firmware that started this one as an update: its version and its
+/// commit. Once, before anything else uses the memory.
+pub fn take_loader() -> Option<Loader> {
+    let at = UNCACHED | BUNDLE_ADDR;
+    if mmio::read(at) != u32::from_le_bytes(LOADER) {
+        return None;
+    }
+    let len = (mmio::read8(at + LOADER_COMMIT_LEN) as usize).min(COMMIT_MAX);
+    let mut loader = Loader { version: mmio::read(at + LOADER_VERSION), commit: [0; COMMIT_MAX], len };
+    for (i, byte) in loader.commit[..len].iter_mut().enumerate() {
+        *byte = mmio::read8(at + LOADER_COMMIT + i as u32);
+    }
+    mmio::write(at, 0);
+    Some(loader)
+}
+
+pub struct Loader {
+    pub version: u32,
+    commit: [u8; COMMIT_MAX],
+    len: usize,
+}
+
+impl Loader {
+    pub fn commit(&self) -> &str {
+        core::str::from_utf8(&self.commit[..self.len]).unwrap_or("?")
+    }
 }
 
 /// Drop what is staged without running it.
