@@ -1,0 +1,228 @@
+name: release
+
+# Publishes the release an `X.Y.Z` tag names: the `start4.elf` built from the
+# commit the tag points at. The tag is made by `.claude/skills/release/SKILL.md`,
+# which works out the version and writes the notes this job publishes as the
+# release body.
+#
+# `workflow_dispatch` is the re-run path — dispatch it on the tag's ref, not on
+# a branch, since the version and the notes both come from the tag. A dispatch
+# runs the workflow as of that ref, so an old tag reruns the definition it was
+# cut with: a fix here reaches it only through a new tag.
+on:
+  push:
+    tags:
+      - '[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: read
+
+# One release at a time, and never cancel one: each builds a different tag.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Cheap, and before the build: a tag that is not an X.Y.Z, or that names a
+  # commit the build has already failed on, stops here.
+  check:
+    runs-on: ${{ vars.RUNNER_BUILD || 'ubuntu-26.04' }}
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Take the version from the tag
+        id: version
+        run: |
+          if [ "$GITHUB_REF_TYPE" != tag ]; then
+            echo "::error::dispatch this on an X.Y.Z tag, not on $GITHUB_REF_NAME"
+            exit 1
+          fi
+          if ! printf '%s' "$GITHUB_REF_NAME" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::$GITHUB_REF_NAME is not an X.Y.Z tag"
+            exit 1
+          fi
+          echo "version=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+
+      # The tag names a commit that is already on main, so `build.yml` has run
+      # on it there — on the same SHA, under a different ref. A run that failed
+      # is worth stopping for before the firmware is built and published.
+      #
+      # Absent, still going or cancelled is not: waiting costs a runner, a
+      # newer run on the same ref supersedes a cancelled one, and the build
+      # below runs on the tagged commit either way.
+      - name: Refuse a commit the build has already failed on
+        run: |
+          verdicts=$(gh run list --commit "$GITHUB_SHA" --workflow build.yml \
+            --json status,conclusion,url \
+            --jq '.[] | select(.status == "completed" and .conclusion != "cancelled") | "\(.conclusion) \(.url)"')
+          if [ -z "$verdicts" ]; then
+            echo "::warning::no finished build run on $GITHUB_SHA"
+            exit 0
+          fi
+          echo "$verdicts"
+          if echo "$verdicts" | grep -qv '^success '; then
+            echo "::error::build did not pass on $GITHUB_SHA"
+            exit 1
+          fi
+
+  build:
+    needs: check
+    # Where `build.yml` runs, with the same toolchain and the same
+    # certificates: `start4.elf` here is the one `scripts/build.sh` makes there.
+    runs-on: ${{ vars.RUNNER_BUILD || 'ubuntu-26.04' }}
+    timeout-minutes: 60
+    env:
+      VC4_PREFIX: /opt/vc4
+      CLONE_BASE: https://github.com/
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the toolchain
+        run: |
+          # Not just the exit status: a binary the loader refuses ("CPU ISA
+          # level is lower than required") still leaves it 0.
+          if "$VC4_PREFIX/bin/vc4-elf-as" --version 2>/dev/null | grep -q "GNU assembler"; then
+            echo "the image's toolchain in $VC4_PREFIX"
+            exit 0
+          fi
+          gh release download latest -R rusty-pi/binutils-vc4 -p vc4-elf-binutils.deb
+          gh release download latest -R rusty-pi/gcc-vc4 -p vc4-elf-gcc.deb
+          if sudo -n true 2>/dev/null; then
+            sudo apt-get install -y --no-install-recommends \
+              ./vc4-elf-binutils.deb ./vc4-elf-gcc.deb
+          else
+            # libgccjit finds its assembler under the prefix it was built
+            # for, so the packages cannot simply be unpacked elsewhere.
+            echo "::error::installing the toolchain packages needs sudo"
+            exit 1
+          fi
+          rm vc4-elf-*.deb
+
+      - name: Install Python, sbsigntool and the cross compiler
+        if: runner.environment == 'github-hosted'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3 sbsigntool openssl mtools dosfstools make gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust
+        run: |
+          rustup toolchain install
+          # The nightly the UEFI firmware start4.elf carries is built with.
+          (cd uefi && rustup toolchain install)
+
+      - name: Codegen cache key
+        id: key
+        run: echo "key=codegen-${{ runner.environment }}-${{ hashFiles('scripts/build-codegen.sh', 'rust-toolchain.toml') }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore codegen
+        id: cache
+        uses: actions/cache/restore@v6
+        with:
+          key: ${{ steps.key.outputs.key }}
+          path: ~/src/rustc_codegen_gcc/target/release/librustc_codegen_gcc.so
+
+      - name: Build codegen
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          rustup component add rustc-dev llvm-tools-preview
+          scripts/build-codegen.sh
+
+      - name: Save codegen
+        if: steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          key: ${{ steps.key.outputs.key }}
+          path: ~/src/rustc_codegen_gcc/target/release/librustc_codegen_gcc.so
+
+      # The firmware's own PK, KEK and db certificates, as in `build.yml`. A
+      # release made without them would carry keys of its own, which sign
+      # nothing a board will trust, so this job stops instead.
+      - name: Secure Boot certificates
+        env:
+          PK: ${{ secrets.PI4_PK_CERT }}
+          KEK: ${{ secrets.PI4_KEK_CERT }}
+          DB: ${{ secrets.PI4_DB_CERT }}
+        run: |
+          if [ -z "$PK" ] || [ -z "$KEK" ] || [ -z "$DB" ]; then
+            echo "::error::the PI4_PK_CERT, PI4_KEK_CERT and PI4_DB_CERT secrets are not all set"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/certs"
+          for name in PK KEK DB; do
+            eval "value=\$$name"
+            echo "$value" | base64 -d >"$RUNNER_TEMP/certs/$name.der"
+            echo "PI4_${name}_CERT=$RUNNER_TEMP/certs/$name.der" >> "$GITHUB_ENV"
+          done
+
+      - name: Build
+        run: |
+          scripts/setup-toolchain.sh
+          scripts/build.sh
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: start4
+          path: out/start4.elf
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: [check, build]
+    runs-on: ${{ vars.RUNNER_BUILD || 'ubuntu-26.04' }}
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      # The whole history and the tags: the release body is the annotated tag's
+      # own message, which a shallow checkout does not fetch.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: start4
+          path: out
+
+      # The release body is the annotated tag's own message — the notes written
+      # when the tag was made — with the list of published files appended here,
+      # so that it stays right without every tag repeating it. A lightweight tag
+      # has no message of its own, so such a release gets only the appended part.
+      - name: Publish the release
+        run: |
+          if [ "$(git cat-file -t "$VERSION")" = tag ]; then
+            git tag -l --format='%(contents)' "$VERSION" > notes.md
+          else
+            echo "::warning::$VERSION is lightweight, so it carries no notes"
+            : > notes.md
+          fi
+
+          cat >> notes.md <<EOF
+
+          ---
+
+          - \`start4.elf\`: the VPU firmware with the UEFI firmware and the board's device tree in it, for a board's boot partition under Raspberry Pi's own bootloader.
+          EOF
+
+          # A re-dispatch on a tag whose release already exists replaces it
+          # rather than failing, so a job that died after publishing can be run
+          # again.
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release edit "$VERSION" --title "$VERSION" --notes-file notes.md
+            gh release upload "$VERSION" out/start4.elf --clobber
+          else
+            gh release create "$VERSION" --verify-tag --title "$VERSION" \
+              --notes-file notes.md out/start4.elf
+          fi
