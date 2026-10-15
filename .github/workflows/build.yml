@@ -100,14 +100,16 @@ jobs:
           key: ${{ steps.key.outputs.key }}
           path: ~/src/rustc_codegen_gcc/target/release/librustc_codegen_gcc.so
 
-      # The firmware's own PK, KEK and db certificates, base64 DER, from the
-      # repository's secrets. Without them the build makes keys of its own,
-      # which sign nothing a board will trust.
+      # The firmware's own PK, KEK and db certificates, base64 DER, and the
+      # update key's public half, base64 of its 64 bytes, from the repository's
+      # secrets. Without them the build makes keys of its own, which sign
+      # nothing a board will trust.
       - name: Secure Boot certificates
         env:
           PK: ${{ secrets.PI4_PK_CERT }}
           KEK: ${{ secrets.PI4_KEK_CERT }}
           DB: ${{ secrets.PI4_DB_CERT }}
+          UPDATE: ${{ secrets.PI4_UPDATE_PUB }}
         run: |
           [ -n "$PK" ] && [ -n "$KEK" ] && [ -n "$DB" ] || exit 0
           mkdir -p "$RUNNER_TEMP/certs"
@@ -116,6 +118,13 @@ jobs:
             echo "$value" | base64 -d >"$RUNNER_TEMP/certs/$name.der"
             echo "PI4_${name}_CERT=$RUNNER_TEMP/certs/$name.der" >> "$GITHUB_ENV"
           done
+          if [ -n "$UPDATE" ]; then
+            echo "$UPDATE" | base64 -d >"$RUNNER_TEMP/certs/update.pub"
+          else
+            openssl ecparam -name prime256v1 -genkey -noout -out "$RUNNER_TEMP/certs/update.key"
+            openssl ec -in "$RUNNER_TEMP/certs/update.key" -pubout -outform DER | tail -c 64 >"$RUNNER_TEMP/certs/update.pub"
+          fi
+          echo "PI4_UPDATE_PUB=$RUNNER_TEMP/certs/update.pub" >> "$GITHUB_ENV"
 
       - name: Build
         run: |
