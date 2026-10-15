@@ -15,6 +15,12 @@ name = "start4"
 test = false
 bench = false
 
+[[bin]]
+name = "start4-update"
+path = "src/bin/start4.rs"
+test = false
+bench = false
+
 [features]
 # Colour the console log with ANSI escapes.
 color = []

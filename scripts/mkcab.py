@@ -2,7 +2,7 @@
 """Put a firmware update capsule in the cabinet fwupd installs, with the
 metadata that says which device it is for.
 
-    mkcab.py CAPSULE OUT.cab VERSION [--class firmware|eeprom] [--date YYYY-MM-DD] [--notes TEXT]
+    mkcab.py CAPSULE OUT.cab VERSION [--class firmware|eeprom|update] [--date YYYY-MM-DD] [--notes TEXT]
 
 CAPSULE is what scripts/mkcapsule.py wrote and VERSION the number it carries,
 which the ESRT reports once the update is applied. `fwupdmgr install OUT.cab`
@@ -29,6 +29,12 @@ RESOURCES = {
         "Raspberry Pi 4 EEPROM bootloader",
         "The stock EEPROM bootloader, updated with its configuration and keys kept",
         "3f8a0c5e-91d2-4b7a-a6c3-5d1e08f2b947",
+    ),
+    "update": (
+        "org.rusty-pi.pi4-server-firmware.update",
+        "pi4-server-firmware",
+        "The VPU and UEFI firmware for headless Raspberry Pi 4 servers, signed by the update key",
+        "b4c1e7a2-6d39-4f58-8e10-72a9c5d3f0b6",
     ),
 }
 

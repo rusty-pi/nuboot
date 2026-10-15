@@ -17,6 +17,7 @@ pub mod log;
 
 mod acpi;
 mod block;
+mod bundle;
 mod capsule;
 mod conio;
 mod console;

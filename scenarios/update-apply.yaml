@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "update-apply"
+description: "A board with its device private key fused (a test key, not a board's) finds an update capsule for a later build on the card. UEFI keeps the bundle, leaves it in RAM and resets; the VPU firmware the bootloader loaded checks the update key's signature, runs the bundle's image in the update slot, and that build reaches ExitBootServices and records the update as proven."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  otp_row:
+    - "56=0xc0de2001"
+    - "57=0xc0de3112"
+    - "58=0xc0de4223"
+    - "59=0xc0de5334"
+    - "60=0xc0de6445"
+    - "61=0xc0de7556"
+    - "62=0xc0de8667"
+    - "63=0xc0de9778"
+  sd:
+    files:
+      start4.elf: "../out/start4-test.elf"
+      EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-takeover.efi"
+      EFI/UpdateCapsule/next.cap: "../out/capsule-update.cap"
+  until: "the updated firmware reached the OS  version=2147483000"
+  wall_secs: 1800
+
+milestones:
+  - why: "The capsule is for a later build and signed by the test key."
+    line: "capsule verified"
+  - why: "The bundle is on the card and in RAM, and the reset follows."
+    line: "update staged, resetting into it  version=2147483000"
+  - why: "The firmware the bootloader loaded found the bundle after the reset and checked its signature."
+    line: "starting the staged bundle  version=2147483000"
+  - why: "The build the bundle carried runs in the update slot."
+    line: "running as an update  version=2147483000"
+  - why: "It reached ExitBootServices."
+    line: "the updated firmware reached the OS  version=2147483000"

@@ -7,8 +7,53 @@ fn main() {
     // USB boot.
     println!("cargo:rustc-link-arg-bin=start4=-Wl,-q");
     println!("cargo:rerun-if-changed=start4.ld");
+    println!("cargo:rustc-link-arg-bin=start4-update=-T{dir}/start4-update.ld");
+    println!("cargo:rerun-if-changed=start4-update.ld");
     commit();
+    firmware_time();
     arm_files(&dir);
+    update_keys(&dir);
+}
+
+/// What orders one build after another: the commit's time, or `FIRMWARE_TIME`.
+/// The UEFI firmware reads the same, so both halves of a build report one
+/// version.
+fn firmware_time() {
+    println!("cargo:rerun-if-env-changed=FIRMWARE_TIME");
+    let time = std::env::var("FIRMWARE_TIME").ok().filter(|t| t.parse::<u32>().is_ok()).unwrap_or_else(|| {
+        Command::new("git")
+            .args(["log", "-1", "--format=%ct"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|t| t.trim().to_string())
+            .filter(|t| t.parse::<u32>().is_ok())
+            .unwrap_or_else(|| "0".to_string())
+    });
+    println!("cargo:rustc-env=FIRMWARE_TIME={time}");
+}
+
+/// The keys an update bundle is signed by, as the 64 bytes of each public
+/// point: `PI4_UPDATE_PUB` names one, and `keys/update.pub` is the one
+/// `scripts/genkeys.sh` makes. The test build also trusts the test key the
+/// scenarios sign their bundles with.
+fn update_keys(dir: &str) {
+    println!("cargo:rerun-if-env-changed=PI4_UPDATE_PUB");
+    let path = std::env::var("PI4_UPDATE_PUB")
+        .ok()
+        .filter(|p| !p.is_empty())
+        .unwrap_or_else(|| format!("{dir}/keys/update.pub"));
+    println!("cargo:rerun-if-changed={path}");
+    let mut keys = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    if std::env::var_os("CARGO_FEATURE_TEST_KEYS").is_some() {
+        let test = format!("{dir}/out/test-keys/update.pub");
+        println!("cargo:rerun-if-changed={test}");
+        keys.extend(std::fs::read(&test).unwrap_or_else(|e| panic!("{test}: {e}")));
+    }
+    assert!(!keys.is_empty() && keys.len() % 64 == 0, "{path}: an update key is the 64 bytes of a P-256 point");
+    let file = format!("{}/update-keys.bin", std::env::var("OUT_DIR").unwrap());
+    std::fs::write(&file, keys).unwrap();
+    println!("cargo:rustc-env=UPDATE_KEYS={file}");
 }
 
 /// What the firmware hands the ARM: the image the cores start in, which

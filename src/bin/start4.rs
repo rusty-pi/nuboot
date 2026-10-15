@@ -16,7 +16,7 @@ use core::cell::Cell;
 use pi4_server_firmware::board::{Board, Revision};
 use pi4_server_firmware::handover::{self, BootDevice};
 use pi4_server_firmware::{
-    arm, console, error, idle, info, mailbox, measure, otp, sched, stack, stc, thermal, timer, usb, warn, watchdog,
+    arm, console, error, idle, info, mailbox, measure, otp, sched, stack, stc, thermal, timer, update, usb, warn, watchdog,
 };
 
 /// What the ARM cores start in: an armstub and the compressed UEFI firmware
@@ -88,6 +88,7 @@ fn firmware_main() -> ! {
     console::init();
     pi4_server_firmware::spi_flash::set_divider(pi4_server_firmware::spi_flash::PLL_DIVIDER);
     announce();
+    chain_update();
     take_over_watchdog();
 
     let board = Board::read();
@@ -144,11 +145,37 @@ fn firmware_main() -> ! {
     }
 }
 
+/// Run the update the UEFI firmware staged, if a signed one that is newer
+/// than this image is there. Only what the bootloader loaded does this: an
+/// update that is already running has been through it.
+fn chain_update() {
+    if update::in_slot() {
+        info!("update", "running as an update"; version = update::VERSION);
+        return;
+    }
+    match update::staged() {
+        Ok(None) => {}
+        Ok(Some(staged)) if staged.version <= update::VERSION => {
+            warn!("update", "the staged bundle is not newer than this firmware"; bundle = staged.version, running = update::VERSION);
+            update::discard();
+        }
+        Ok(Some(staged)) => {
+            info!("update", "starting the staged bundle"; version = staged.version, image_bytes = staged.image_bytes());
+            console::drain();
+            update::chain(&staged)
+        }
+        Err(reason) => {
+            warn!("update", "the staged bundle is refused"; reason = reason);
+            update::discard();
+        }
+    }
+}
+
 /// The first lines of the log: what this is, and what it is running on.
 fn announce() {
     let revision = Revision::read();
     info!("boot", "pi4-server-firmware {}", COMMIT;
-        board = revision.model(), revision = revision, pcb = revision.pcb());
+        board = revision.model(), revision = revision, pcb = revision.pcb(), version = update::VERSION);
     if !handover::present() {
         error!("boot", "no handover from the bootloader, so no boot medium or memory size");
         return;

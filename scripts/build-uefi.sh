@@ -110,8 +110,12 @@ done
 # The test key: a self-signed certificate the test build puts in db.
 keys="$out/test-keys"
 test_key() {
-  [[ -f "$keys/db.key" && -f "$keys/db.der" ]] && return
   mkdir -p "$keys"
+  if [[ ! -f "$keys/update.pub" ]]; then
+    openssl ecparam -name prime256v1 -genkey -noout -out "$keys/update.key"
+    openssl ec -in "$keys/update.key" -pubout -outform DER 2>/dev/null | tail -c 64 >"$keys/update.pub"
+  fi
+  [[ -f "$keys/db.key" && -f "$keys/db.der" ]] && return
   openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 3650 \
     -subj "/CN=pi4-server-firmware test key" \
     -keyout "$keys/db.key" -out "$keys/db.crt" 2>/dev/null
