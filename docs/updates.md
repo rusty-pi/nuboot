@@ -32,9 +32,10 @@ the bootloader never sees it.
 1. fwupd puts the capsule in `\EFI\UpdateCapsule`. At boot, UEFI checks the `db`
    signature and the class, and that the version is newer than the running
    firmware's and not older than the newest update that has reached the OS. It
-   writes the bundle as `UPDATE.BIN` in the root of the file system the capsule
-   came from, removes the capsule, records the update as pending, copies the
-   bundle to ARM physical `0x3e000000` and resets.
+   writes the bundle in the root of the file system the capsule came from, as
+   its version in eight hex digits and `.UPD`, removes the capsule, records the
+   update as pending, copies the bundle to ARM physical `0x3e000000` and
+   resets. The bundle that was running stays where it is.
 2. The SDRAM keeps its contents through the reset. The loader checks the
    bundle's ECDSA P-256 signature against its update keys, copies the image to
    the update slot at `0x3ee00200`, leaves its own version and commit where the
@@ -42,11 +43,13 @@ the bootloader never sees it.
 3. The image boots as the firmware. It measures the loader's commit and version
    into PCR 0 ahead of its own, starts the ARM, and records the update as
    proven when UEFI reaches `ExitBootServices`.
-4. At every later power-up the loader runs first, and its UEFI stages `UPDATE.BIN`
-   again, so the update runs from the second start of each boot.
+4. At every later power-up the loader runs first, and its UEFI stages the newest
+   `.UPD` again, so the update runs from the second start of each boot. Once
+   the update has reached the OS, the older bundles are removed.
 
-A bundle that does not reach `ExitBootServices` is not staged again, and
-neither is one that no update key signed. A bundle with a version below the
+A bundle that does not reach `ExitBootServices` is removed, and the next
+newest, the one that was running before it, is staged instead; the loader runs
+when there is none. A bundle that no update key signed goes the same way. A bundle with a version below the
 newest that has reached the OS is refused.
 
 The update replaces what runs after the loader starts the ARM, the VPU's

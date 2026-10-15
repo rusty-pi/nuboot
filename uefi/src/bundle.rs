@@ -6,10 +6,12 @@
 //!
 //! A capsule for [`esrt::UPDATE_CLASS`] carries the bundle after the version
 //! (`P4FW`, the class, the version, the bundle), and `db` signs the capsule as
-//! it does every other. The bundle is kept as `UPDATE.BIN` in the root of the
-//! file system the capsule came from, because the firmware that runs first at
-//! every power-up is the one the bootloader loaded, and it stages the newest
-//! bundle again each time.
+//! it does every other. The bundle is kept in the root of the file system the
+//! capsule came from, as its version in eight hex digits and `.UPD`, because
+//! the firmware that runs first at every power-up is the one the bootloader
+//! loaded, and it stages the newest bundle again each time. A new bundle does
+//! not replace the one running: the older one stays until the newer has reached
+//! the OS, and is what runs when it does not.
 //!
 //! The record in the flash store keeps an update from running away: staging a
 //! bundle makes it pending, the updated firmware proves it at
@@ -35,7 +37,7 @@ const HEADER: usize = 88;
 const MAX_IMAGE: usize = 2 << 20;
 const PAGE: usize = 4096;
 
-const FILE: &str = "UPDATE.BIN";
+const EXTENSION: &str = ".UPD";
 const RECORD: &str = "BundleUpdate";
 const RESULT: &str = "BundleUpdateResult";
 /// The newest bundle that has reached the OS. It only grows, and nothing older
@@ -51,6 +53,20 @@ fn u32_at(b: &[u8], at: usize) -> Option<u32> {
 
 fn wide(text: &str) -> Vec<u16> {
     text.encode_utf16().collect()
+}
+
+/// The name a bundle is kept under: its version as eight hex digits, which an
+/// 8.3 name holds.
+fn file_name(version: u32) -> Vec<u16> {
+    wide(&alloc::format!("{version:08X}{EXTENSION}"))
+}
+
+/// The version a file name says, when it is one of these.
+fn version_in(name: &[u16]) -> Option<u32> {
+    if name.len() != 8 + EXTENSION.len() || !eq_ignore_case(&name[8..], &wide(EXTENSION)) {
+        return None;
+    }
+    name[..8].iter().try_fold(0u32, |version, &unit| Some(version << 4 | char::from_u32(unit as u32)?.to_digit(16)?))
 }
 
 /// The version a bundle carries, when it has the layout the VPU firmware
@@ -101,6 +117,9 @@ fn prove() {
             }
             set_result(version, esrt::SUCCESS);
             info!("bundle", "the updated firmware reached the OS"; version = version);
+            for older in kept().iter().filter(|k| k.version < version) {
+                older.remove();
+            }
         }
     }
 }
@@ -135,58 +154,86 @@ pub fn install(fs: efi::Handle, directory: &[u16], name: &[u16], bundle: &[u8], 
     if !var::keeps() {
         return failed("no device key or flash store to record the update in", efi::Status::UNSUPPORTED);
     }
-    if let Err(status) = fat::write_file(fs, &[], &wide(FILE), bundle) {
+    let file = file_name(version);
+    if let Err(status) = fat::write_file(fs, &[], &file, bundle) {
         return failed("the bundle could not be written", status);
     }
-    if !fat::read_file(fs, &wide(FILE), HEADER + MAX_IMAGE).is_ok_and(|read| read == bundle) {
+    if !fat::read_file(fs, &file, HEADER + MAX_IMAGE).is_ok_and(|read| read == bundle) {
         return failed("what was written does not read back", efi::Status::DEVICE_ERROR);
     }
     let _ = fat::remove_file(fs, directory, name);
     launch(bundle, version);
 }
 
-/// The newest bundle kept on any file system.
-fn kept() -> Option<(Vec<u8>, u32)> {
-    let file = wide(FILE);
-    proto::with(Some(&simple_file_system::PROTOCOL_GUID))
-        .into_iter()
-        .filter(|&fs| fat::list_files(fs, &[]).is_ok_and(|names| names.iter().any(|n| eq_ignore_case(n, &file))))
-        .filter_map(|fs| fat::read_file(fs, &file, HEADER + MAX_IMAGE).ok())
-        .filter_map(|bundle| version_of(&bundle).map(|version| (bundle, version)))
-        .max_by_key(|(_, version)| *version)
+/// A bundle kept on a file system.
+struct Kept {
+    fs: efi::Handle,
+    version: u32,
+}
+
+impl Kept {
+    fn read(&self) -> Option<Vec<u8>> {
+        let bundle = fat::read_file(self.fs, &file_name(self.version), HEADER + MAX_IMAGE).ok()?;
+        well_formed(&bundle, self.version).then_some(bundle)
+    }
+
+    fn remove(&self) {
+        let _ = fat::remove_file(self.fs, &[], &file_name(self.version));
+    }
+}
+
+/// Every bundle kept on any file system, the newest first. Only the names are
+/// read: a bundle's version is in its file's.
+fn kept() -> Vec<Kept> {
+    let mut all = Vec::new();
+    for fs in proto::with(Some(&simple_file_system::PROTOCOL_GUID)) {
+        let Ok(names) = fat::list_files(fs, &[]) else { continue };
+        all.extend(names.iter().filter_map(|name| version_in(name)).map(|version| Kept { fs, version }));
+    }
+    all.sort_by(|a, b| b.version.cmp(&a.version));
+    all
 }
 
 /// At every boot: say how an update an earlier boot started has gone, and
-/// stage the newest kept bundle when this firmware is older than it.
+/// stage the newest kept bundle that is newer than this firmware. A bundle that
+/// did not reach the OS is dropped, and the next newest is tried: the one that
+/// was running before the update.
 pub fn boot() {
     if let Some(data) = var::bytes(RESULT, &esrt::FIRMWARE_CLASS) {
         if let (Some(version), Some(status)) = (u32_at(&data, 0), u32_at(&data, 4)) {
             esrt::attempted(&esrt::UPDATE_CLASS, version, status);
         }
     }
-    let state = record();
+    let mut state = record();
     if let Some((PENDING, version)) = state {
         if version == esrt::VERSION {
             tables::before_exit_boot_services(prove);
         }
     }
-    let Some((bundle, version)) = kept() else { return };
-    if version <= esrt::VERSION || !var::keeps() {
+    if !var::keeps() {
         return;
     }
-    if version < newest() {
-        warn!("bundle", "a bundle older than the one installed is not staged"; version = version, installed = newest());
-        return;
-    }
-    match state {
-        Some((REFUSED, recorded)) if recorded == version => {
-            warn!("bundle", "a refused update is not staged again"; version = version);
+    for candidate in kept() {
+        let version = candidate.version;
+        if version <= esrt::VERSION || version < newest() {
+            break;
         }
-        Some((PENDING, recorded)) if recorded == version => {
-            warn!("bundle", "the update did not reach the OS, not staged again"; version = version);
-            set_record(REFUSED, version);
-            set_result(version, esrt::UNSUCCESSFUL);
+        match state {
+            Some((PENDING, recorded)) if recorded == version => {
+                warn!("bundle", "the update did not reach the OS, it is dropped"; version = version);
+                set_record(REFUSED, version);
+                set_result(version, esrt::UNSUCCESSFUL);
+                candidate.remove();
+                state = Some((REFUSED, version));
+            }
+            Some((REFUSED, recorded)) if recorded == version => {
+                warn!("bundle", "a refused update is dropped"; version = version);
+                candidate.remove();
+            }
+            _ => match candidate.read() {
+                Some(bundle) => launch(&bundle, version),
+                None => warn!("bundle", "a kept bundle is not the one its name says"; version = version),
+            },
         }
-        _ => launch(&bundle, version),
     }
 }
