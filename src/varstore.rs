@@ -312,7 +312,7 @@ pub fn persist(kind: u32, attributes: u32, guid: &[u8; 16], name: &[u8], data: &
     record[data_at..data_at + data.len()].copy_from_slice(data);
 
     let mut digest = Sha256::new();
-    digest.update(b"pi4-server-firmware runtime variable record v2");
+    digest.update(b"nuboot runtime variable record v2");
     digest.update(&kind.to_le_bytes());
     digest.update(&attributes.to_le_bytes());
     digest.update(guid);

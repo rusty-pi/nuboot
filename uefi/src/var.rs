@@ -241,8 +241,8 @@ enum Origin {
     Runtime,
 }
 
-const FIRMWARE_LABEL: &[u8] = b"pi4-server-firmware variable store record v4";
-const RUNTIME_LABEL: &[u8] = b"pi4-server-firmware runtime variable record v2";
+const FIRMWARE_LABEL: &[u8] = b"nuboot variable store record v4";
+const RUNTIME_LABEL: &[u8] = b"nuboot runtime variable record v2";
 /// The device key's HMAC-SHA256 of a record's digest.
 const SEAL: usize = 32;
 

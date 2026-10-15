@@ -290,7 +290,7 @@ const ETHERNET_NODE: &[&[u8]] = &[b"", b"scb", b"ethernet@7d580000"];
 /// a board: locally administered and unicast, from the board's serial number.
 pub fn ethernet_address(serial: u32) -> [u8; 6] {
     let mut message = [0u8; 32];
-    let label = b"pi4-server-firmware ethernet";
+    let label = b"nuboot ethernet";
     message[..label.len()].copy_from_slice(label);
     message[label.len()..label.len() + 4].copy_from_slice(&serial.to_le_bytes());
     let digest = crate::sha256::digest(&message[..label.len() + 4]);

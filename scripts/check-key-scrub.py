@@ -19,7 +19,7 @@ import subprocess
 import sys
 
 ROWS = [0xC0DE2001 + 0x1111 * i for i in range(8)]
-LABEL = b"pi4-server-firmware boot key v1"
+LABEL = b"nuboot boot key v1"
 IMAGE = 0x3EC00000
 MASK_IMAGES = 0x10
 SHA_ENV = {**os.environ}

@@ -40,7 +40,7 @@ to bind it to goes in, 32 bytes of key come out. The VPU reads rows 56-63
 then, computes
 
 ```text
-HMAC-SHA256(private key, "pi4-server-firmware boot key v1" || mask || the selected PCRs)
+HMAC-SHA256(private key, "nuboot boot key v1" || mask || the selected PCRs)
 ```
 
 overwrites everything the computation touched and writes the zeros out of the

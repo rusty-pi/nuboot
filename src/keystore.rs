@@ -30,8 +30,8 @@ use crate::{cache, critical, otp, p256, rng, sha256};
 
 const FIRST_ROW: u32 = 56;
 const ROWS: usize = 8;
-const LABEL: &[u8] = b"pi4-server-firmware boot key v1";
-const TPM_LABEL: &[u8] = b"pi4-server-firmware TPM secret v1";
+const LABEL: &[u8] = b"nuboot boot key v1";
+const TPM_LABEL: &[u8] = b"nuboot TPM secret v1";
 pub const PCRS: usize = 24;
 /// The PCRs of dynamic root of trust measurements, which nothing here does and
 /// which no caller of the mailbox or the TPM may extend.

@@ -212,8 +212,8 @@ privileged ARM code ([below](#what-is-not-protected)).
 - **Each use has its own label** in what the key HMACs. The store's seals for
   the firmware's writes and for the OS's cover different labels
   (`variable store record v4` and `runtime variable record v2`), the boot key's
-  message begins `pi4-server-firmware boot key v1` and the TPM's seeds'
-  `pi4-server-firmware TPM secret v1`, so an HMAC made for one use is not valid
+  message begins `nuboot boot key v1` and the TPM's seeds'
+  `nuboot TPM secret v1`, so an HMAC made for one use is not valid
   for another.
 - **The boot key is released once per boot**: the first request with a valid mask
   of PCRs gets it, and a request that names a register that does not exist does

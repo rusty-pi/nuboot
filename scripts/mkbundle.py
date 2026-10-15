@@ -21,7 +21,7 @@ MAGIC = b"P4UB"
 FORMAT = 1
 SLOT_BASE = 0x3EE00200
 MAX_IMAGE = 2 << 20
-LABEL = b"pi4-server-firmware update\0"
+LABEL = b"nuboot update\0"
 
 
 def der_signature(key, message):

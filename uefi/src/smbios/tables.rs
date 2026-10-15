@@ -150,7 +150,7 @@ fn uuid(serial: &[u8]) -> [u8; 16] {
     if serial.is_empty() {
         return [0xff; 16];
     }
-    let mut message = b"pi4-server-firmware smbios uuid ".to_vec();
+    let mut message = b"nuboot smbios uuid ".to_vec();
     message.extend(serial);
     let digest = crate::sha256::digest(&message);
     let mut uuid = [0u8; 16];

@@ -34,8 +34,8 @@ SET = 1
 ATTRIBUTES = 0x1 | 0x2 | 0x4
 GUID = uuid.UUID("5d0f3a58-1c0e-4d1b-9a44-0123456789ab").bytes_le
 ROWS = [0xC0DE2001, 0xC0DE3112, 0xC0DE4223, 0xC0DE5334, 0xC0DE6445, 0xC0DE7556, 0xC0DE8667, 0xC0DE9778]
-LABEL = b"pi4-server-firmware variable store record v4"
-RUNTIME_LABEL = b"pi4-server-firmware runtime variable record v2"
+LABEL = b"nuboot variable store record v4"
+RUNTIME_LABEL = b"nuboot runtime variable record v2"
 DELETE = 2
 GLOBAL = uuid.UUID("8be4df61-93ca-11d2-aa0d-00e098032b8c").bytes_le
 

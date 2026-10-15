@@ -37,7 +37,7 @@ const MAGIC: [u8; 4] = *b"P4UB";
 const FORMAT: u32 = 1;
 const HEADER: usize = 40;
 const SIGNATURE: usize = 64;
-const LABEL: &[u8] = b"pi4-server-firmware update\0";
+const LABEL: &[u8] = b"nuboot update\0";
 
 /// What replaces the bundle's header once it runs: `P4UH`, the version of the
 /// firmware that started it, the length of its commit and the commit.
