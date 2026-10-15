@@ -178,7 +178,10 @@ a `.crt` and the `.der` the firmware embeds) for any that is missing, and
 `scripts/build-uefi.sh` runs it. `keys/` is never committed. The platform key
 is built in and cannot be replaced, so it is valid for 50 years. A build
 that has the certificates but not the keys, such as CI, names them in
-`PI4_PK_CERT`, `PI4_KEK_CERT` and `PI4_DB_CERT` (DER files) instead. Sign
+`PI4_PK_CERT`, `PI4_KEK_CERT` and `PI4_DB_CERT` (DER files) instead, and
+`PI4_UPDATE_PUB` for the update key's public half (`keys/update.pub`, the 64
+bytes of a P-256 point, which `genkeys.sh` makes with `keys/update.key`;
+[updates.md](updates.md#updates-the-owner-does-not-sign)). Sign
 what the firmware boots with `keys/db.key` and `keys/db.crt`, for example
 `sbsign --key keys/db.key --cert keys/db.crt`.
 

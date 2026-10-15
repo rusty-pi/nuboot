@@ -44,7 +44,9 @@ fn update_keys(dir: &str) {
         .filter(|p| !p.is_empty())
         .unwrap_or_else(|| format!("{dir}/keys/update.pub"));
     println!("cargo:rerun-if-changed={path}");
-    let mut keys = std::fs::read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let mut keys = std::fs::read(&path).unwrap_or_else(|e| {
+        panic!("{path}: {e}; the firmware carries an update key: PI4_UPDATE_PUB names its public half, and scripts/genkeys.sh makes keys/update.pub")
+    });
     if std::env::var_os("CARGO_FEATURE_TEST_KEYS").is_some() {
         let test = format!("{dir}/out/test-keys/update.pub");
         println!("cargo:rerun-if-changed={test}");
