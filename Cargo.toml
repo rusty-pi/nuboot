@@ -17,7 +17,7 @@ bench = false
 
 [[bin]]
 name = "start4-update"
-path = "src/bin/start4.rs"
+path = "src/bin/start4-update.rs"
 test = false
 bench = false
 

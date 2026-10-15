@@ -168,6 +168,9 @@ fn check(file: &[u8]) -> Result<Capsule, (u32, &'static str)> {
         if version <= kind.running() {
             return Err((esrt::INCORRECT_VERSION, "version is not newer than the running one's"));
         }
+        if version < crate::bundle::newest() {
+            return Err((esrt::INCORRECT_VERSION, "version is older than the update installed"));
+        }
         return Ok(Capsule { kind, version, sig: Vec::new(), img: bundle.to_vec() });
     }
     let sig_len = u32_at(image, 24).ok_or(invalid("no boot.sig"))? as usize;

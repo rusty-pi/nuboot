@@ -38,6 +38,9 @@ const PAGE: usize = 4096;
 const FILE: &str = "UPDATE.BIN";
 const RECORD: &str = "BundleUpdate";
 const RESULT: &str = "BundleUpdateResult";
+/// The newest bundle that has reached the OS. It only grows, and nothing older
+/// is staged after it.
+const NEWEST: &str = "BundleNewest";
 const PENDING: u8 = 1;
 const PROVEN: u8 = 2;
 const REFUSED: u8 = 3;
@@ -76,6 +79,11 @@ fn set_record(state: u8, version: u32) -> efi::Status {
     var::keep(RECORD, esrt::FIRMWARE_CLASS, &data)
 }
 
+/// The version of the newest bundle that has reached the OS, 0 for none.
+pub fn newest() -> u32 {
+    var::bytes(NEWEST, &esrt::FIRMWARE_CLASS).and_then(|data| u32_at(&data, 0)).unwrap_or(0)
+}
+
 fn set_result(version: u32, status: u32) {
     let mut data = version.to_le_bytes().to_vec();
     data.extend_from_slice(&status.to_le_bytes());
@@ -88,6 +96,9 @@ fn prove() {
     if let Some((PENDING, version)) = record() {
         if version == esrt::VERSION {
             set_record(PROVEN, version);
+            if newest() < version {
+                var::keep(NEWEST, esrt::FIRMWARE_CLASS, &version.to_le_bytes());
+            }
             set_result(version, esrt::SUCCESS);
             info!("bundle", "the updated firmware reached the OS"; version = version);
         }
@@ -161,6 +172,10 @@ pub fn boot() {
     }
     let Some((bundle, version)) = kept() else { return };
     if version <= esrt::VERSION || !var::keeps() {
+        return;
+    }
+    if version < newest() {
+        warn!("bundle", "a bundle older than the one installed is not staged"; version = version, installed = newest());
         return;
     }
     match state {

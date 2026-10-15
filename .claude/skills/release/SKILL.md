@@ -14,10 +14,13 @@ final push, so every decision can be changed before anything is public.
 There is no bot and no API key in CI: you read the changes and decide the bump
 yourself.
 
-The release build refuses to run without the `PI4_PK_CERT`, `PI4_KEK_CERT` and
-`PI4_DB_CERT` repository secrets, where `build.yml` makes keys of its own: a
-`start4.elf` with throwaway Secure Boot keys boots nothing signed on a board, so
-it is not worth publishing. If the repository has none set
+The release build refuses to run without the `PI4_PK_CERT`, `PI4_KEK_CERT`,
+`PI4_DB_CERT` and `PI4_UPDATE_PUB` repository secrets, where `build.yml` makes
+keys of its own: a `start4.elf` with throwaway keys boots nothing signed on a
+board and takes no update, so it is not worth publishing. It also signs the
+update with the `PI4_UPDATE_KEY` and `PI4_DB_KEY` secrets. The certificates and
+`PI4_UPDATE_PUB` (base64 of `keys/update.pub`) are public; the two keys are
+private, and only the user sets those. If the repository has none set
 (`gh api repos/{owner}/{repo}/actions/secrets --jq .total_count`), say so
 before tagging.
 
@@ -88,6 +91,9 @@ changing to keep working:
 - a mailbox tag, a device tree node or an ACPI table an operating system
   drives was changed or removed
 - the `boot.img`, `boot.sig` or capsule format changed
+- the update bundle's format, its key or the update slot's address changed, so
+  that the `start4.elf` an owner signed earlier takes no update of this release
+  and the owner has to sign this one
 
 **Feature** — something new that an old user does not notice: a device the
 firmware now describes or serves to the OS, a boot that reaches further than it
@@ -135,7 +141,7 @@ Structure:
 - Name hardware by board type and revision (`Raspberry Pi 4B d03115`), never by
   hostname, and do not paste OTP dumps or anything secret.
 
-The workflow appends what the published file is, so leave that out of the
+The workflow appends what each published file is (`start4.elf` and the update's cabinet), so leave that out of the
 notes. For the first release, describe what the firmware is and how far it
 boots today rather than listing the whole history.
 

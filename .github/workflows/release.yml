@@ -111,7 +111,7 @@ jobs:
         if: runner.environment == 'github-hosted'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3 sbsigntool openssl mtools dosfstools make gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+          sudo apt-get install -y --no-install-recommends python3 sbsigntool openssl mtools dosfstools make gcab gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Rust
@@ -144,17 +144,19 @@ jobs:
           key: ${{ steps.key.outputs.key }}
           path: ~/src/rustc_codegen_gcc/target/release/librustc_codegen_gcc.so
 
-      # The firmware's own PK, KEK and db certificates, as in `build.yml`. A
-      # release made without them would carry keys of its own, which sign
-      # nothing a board will trust, so this job stops instead.
+      # The firmware's own PK, KEK and db certificates, as in `build.yml`, and
+      # the public half of the update key. A release made without them would
+      # carry keys of its own, which sign nothing a board will trust, so this
+      # job stops instead.
       - name: Secure Boot certificates
         env:
           PK: ${{ secrets.PI4_PK_CERT }}
           KEK: ${{ secrets.PI4_KEK_CERT }}
           DB: ${{ secrets.PI4_DB_CERT }}
+          UPDATE: ${{ secrets.PI4_UPDATE_PUB }}
         run: |
-          if [ -z "$PK" ] || [ -z "$KEK" ] || [ -z "$DB" ]; then
-            echo "::error::the PI4_PK_CERT, PI4_KEK_CERT and PI4_DB_CERT secrets are not all set"
+          if [ -z "$PK" ] || [ -z "$KEK" ] || [ -z "$DB" ] || [ -z "$UPDATE" ]; then
+            echo "::error::the PI4_PK_CERT, PI4_KEK_CERT, PI4_DB_CERT and PI4_UPDATE_PUB secrets are not all set"
             exit 1
           fi
           mkdir -p "$RUNNER_TEMP/certs"
@@ -163,16 +165,45 @@ jobs:
             echo "$value" | base64 -d >"$RUNNER_TEMP/certs/$name.der"
             echo "PI4_${name}_CERT=$RUNNER_TEMP/certs/$name.der" >> "$GITHUB_ENV"
           done
+          echo "$UPDATE" | base64 -d >"$RUNNER_TEMP/certs/update.pub"
+          echo "PI4_UPDATE_PUB=$RUNNER_TEMP/certs/update.pub" >> "$GITHUB_ENV"
 
       - name: Build
         run: |
           scripts/setup-toolchain.sh
           scripts/build.sh
 
+      # The update the loader carries the key of: the same firmware linked
+      # for the update slot, signed by the update key, in a capsule that `db`
+      # signs, in the cabinet fwupd installs. The private keys exist on disk
+      # only for these commands.
+      - name: Sign the update
+        env:
+          UPDATE_KEY: ${{ secrets.PI4_UPDATE_KEY }}
+          DB_KEY: ${{ secrets.PI4_DB_KEY }}
+        run: |
+          if [ -z "$UPDATE_KEY" ] || [ -z "$DB_KEY" ]; then
+            echo "::error::the PI4_UPDATE_KEY and PI4_DB_KEY secrets are not both set"
+            exit 1
+          fi
+          certs="$RUNNER_TEMP/certs"
+          trap 'rm -f "$certs/update.key" "$certs/db.key"' EXIT
+          printf '%s\n' "$UPDATE_KEY" >"$certs/update.key"
+          printf '%s\n' "$DB_KEY" >"$certs/db.key"
+          chmod 600 "$certs/update.key" "$certs/db.key"
+          openssl x509 -inform DER -in "$certs/DB.der" -out "$certs/db.crt"
+          version="$(git log -1 --format=%ct)"
+          scripts/mkbundle.py "$certs/update.key" out/start4-update.bin "$version" "$RUNNER_TEMP/bundle.bin"
+          scripts/mkcapsule.py "$certs/db.key" "$certs/db.crt" "$version" "$RUNNER_TEMP/update.cap" \
+            --class update --bundle "$RUNNER_TEMP/bundle.bin"
+          scripts/mkcab.py "$RUNNER_TEMP/update.cap" "out/pi4-server-firmware-update-$version.cab" "$version" --class update
+
       - uses: actions/upload-artifact@v7
         with:
           name: start4
-          path: out/start4.elf
+          path: |
+            out/start4.elf
+            out/*.cab
           if-no-files-found: error
           retention-days: 1
 
@@ -213,7 +244,8 @@ jobs:
 
           ---
 
-          - \`start4.elf\`: the VPU firmware with the UEFI firmware and the board's device tree in it, for a board's boot partition under Raspberry Pi's own bootloader.
+          - \`start4.elf\`: the VPU firmware with the UEFI firmware and the board's device tree in it, for a board's boot partition under Raspberry Pi's own bootloader. A board's owner signs it once (\`scripts/mkbootimg.py\`).
+          - \`pi4-server-firmware-update-*.cab\`: this release as an update for a board that already runs a \`start4.elf\` of this project, for \`fwupdmgr install\`. It needs no signature by the owner.
           EOF
 
           # A re-dispatch on a tag whose release already exists replaces it
@@ -221,8 +253,8 @@ jobs:
           # again.
           if gh release view "$VERSION" >/dev/null 2>&1; then
             gh release edit "$VERSION" --title "$VERSION" --notes-file notes.md
-            gh release upload "$VERSION" out/start4.elf --clobber
+            gh release upload "$VERSION" out/start4.elf out/*.cab --clobber
           else
             gh release create "$VERSION" --verify-tag --title "$VERSION" \
-              --notes-file notes.md out/start4.elf
+              --notes-file notes.md out/start4.elf out/*.cab
           fi

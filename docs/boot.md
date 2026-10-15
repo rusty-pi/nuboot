@@ -18,10 +18,15 @@ firmware and the board's device tree inside it.
 3. It leaves the handover block (the SDRAM size, the boot medium, the
    watchdog's budget) at ARM physical `0x40000` and enters `start4.elf` at its
    ELF entry point.
-4. `start4.elf` brings up the PCIe link, gives the VL805 its firmware out of
+4. `start4.elf` looks for an update bundle that UEFI left in RAM at ARM
+   physical `0x3e000000` before a reset. A bundle that an update key signed and
+   that is newer than this firmware replaces it: the image goes to the update
+   slot at `0x3ee00200` and starts as `start4.elf` does from here on
+   ([updates.md](updates.md#updates-the-owner-does-not-sign)).
+5. `start4.elf` brings up the PCIe link, gives the VL805 its firmware out of
    the EEPROM's `vl805hub.bin` and `vl805mcu.bin` on a board that needs it, and
    puts the controller's registers in the outbound window at `0x6_0200_0000`.
-5. It starts the ARM in UEFI ([uefi.md](uefi.md)).
+6. It starts the ARM in UEFI ([uefi.md](uefi.md)).
 
 ## Signed boot
 

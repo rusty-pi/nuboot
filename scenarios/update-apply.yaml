@@ -31,5 +31,7 @@ milestones:
     line: "starting the staged bundle  version=2147483000"
   - why: "The build the bundle carried runs in the update slot."
     line: "running as an update  version=2147483000"
+  - why: "It measures the firmware that started it into PCR 0."
+    line: "measuring the firmware that started this one"
   - why: "It reached ExitBootServices."
     line: "the updated firmware reached the OS  version=2147483000"

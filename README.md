@@ -22,8 +22,10 @@ for:
   `boot.img` under Raspberry Pi's own bootloader ([docs/boot.md](docs/boot.md)).
 
 - **Updates through fwupd.** The firmware and the EEPROM bootloader are ESRT
-  resources, and a signed capsule that fwupd stages is applied as a tryboot
-  and committed once it has reached the OS ([docs/updates.md](docs/updates.md)).
+  resources. A board's owner signs `start4.elf` once, and a bundle that an
+  update key signs then replaces the whole firmware, VPU and UEFI, with no
+  signature by the owner; a capsule the owner signs is applied as a tryboot and
+  committed once it has reached the OS ([docs/updates.md](docs/updates.md)).
 
 - **Wake-on-LAN.** The VPU firmware stays up after the OS powers the board
   off, and a magic packet for the board's address boots it
@@ -182,7 +184,7 @@ pimu boot --eeprom out/stock-pieeprom.bin --sd boot/
 
 | | |
 |---|---|
-| `src/bin/start4.rs` | The firmware: the boot, then the threads |
+| `src/firmware.rs`, `src/bin/` | The firmware: the boot, then the threads, linked where the bootloader loads it and for the update slot |
 | `src/log.rs` | The structured log and its console rendering |
 | `src/sched.rs`, `src/critical.rs`, `src/sync.rs`, `src/stack.rs` | Threads, critical sections, semaphores, queues and locks, stack guards |
 | `src/idle.rs`, `src/timer.rs`, `src/stc.rs` | Interrupts, sleeping, the system timer |
@@ -196,9 +198,11 @@ pimu boot --eeprom out/stock-pieeprom.bin --sd boot/
 | `src/mailbox.rs` | The property mailbox |
 | `src/tpm_crb.rs` | The TPM's command response buffer, a page of the ARM's memory the VPU answers commands in |
 | `src/arm.rs`, `src/fdt.rs` | Starting the ARM, and the device tree it gets |
+| `src/update.rs` | Checking and running an update bundle that UEFI left in RAM |
 | `scripts/mkcapsule.py` | Puts a signed `boot.img` and `boot.sig` in a firmware update capsule |
 | `scripts/mkcab.py` | Puts a capsule in the cabinet `fwupdmgr install` takes ([docs/updates.md](docs/updates.md)) |
 | `scripts/mkbootimg.py` | Puts `start4.elf` in a signed `boot.img` and `boot.sig` |
+| `scripts/mkbundle.py` | Signs an update bundle with the update key ([docs/updates.md](docs/updates.md#updates-the-owner-does-not-sign)) |
 | `uefi/` | The UEFI firmware, its Secure Boot keys and ACPI tables, and the armstub and decompressor the ARM starts in |
 
 ## Licence
