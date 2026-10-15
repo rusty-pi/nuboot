@@ -114,11 +114,18 @@ pub fn read_section(s: &Section, out: &mut [u8]) -> Result<usize, Error> {
     })
 }
 
-/// The SHA-256 of what `name` holds in the flash, as it is stored, or `None`
-/// if there is no such section.
-pub fn digest(name: &[u8]) -> Option<[u8; 32]> {
+/// What a section holds in the flash, as it is stored: where it is, how long it
+/// is and its SHA-256.
+pub struct Digest {
+    pub at: u32,
+    pub len: u32,
+    pub sha256: [u8; 32],
+}
+
+/// The [`Digest`] of `name`, or `None` if there is no such section.
+pub fn digest(name: &[u8]) -> Option<Digest> {
     let s = find(name)?;
-    Some(spi_flash::with_pins(|| {
+    let sha256 = spi_flash::with_pins(|| {
         let mut hash = sha256::Sha256::new();
         let mut chunk = [0u8; 256];
         let mut done = 0;
@@ -129,5 +136,6 @@ pub fn digest(name: &[u8]) -> Option<[u8; 32]> {
             done += n as u32;
         }
         hash.finish()
-    }))
+    });
+    Some(Digest { at: s.data, len: s.len, sha256 })
 }

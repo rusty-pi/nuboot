@@ -129,6 +129,8 @@ def main():
     for want in needed:
         if not any(t.startswith(want) and pcr == 1 for t, pcr in by_text.items()):
             fail(f"the log has no {want} event in PCR 1")
+    if not any(pcr == 0 and kind == 0x8000000A and data[1:1 + data[0]] == b"eeprom-bootcode" for pcr, kind, digest, data in events):
+        fail("the log has no event for the EEPROM's bootloader in PCR 0")
     separated = sorted(pcr for pcr, kind, digest, data in events if kind == 0x4)
     if separated != list(range(8)):
         fail(f"the log has separators in PCRs {separated}, not in each of 0 to 7")

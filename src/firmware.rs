@@ -115,7 +115,8 @@ fn firmware_main() -> ! {
         otp::read(otp::BOOTMODE),
         if handover::present() { handover::sdram_mib() } else { 0 },
     );
-    measure::eeprom_config(eeprom::digest(b"bootconf.txt"));
+    measure::eeprom_bootcode(eeprom::digest(b"bootcode.bin").as_ref());
+    measure::eeprom_config(eeprom::digest(b"bootconf.txt").map(|d| d.sha256));
     nuboot::keystore::seed();
     usb::bring_up(&board);
     let started = match arm::start(ARM_IMAGE, ARM_TREE, board.serial, board.revision) {

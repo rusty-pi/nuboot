@@ -4,14 +4,15 @@
 //! replays to the PCRs the way a TPM's event log does.
 //!
 //! PCR 0 holds the firmware: its version, the UEFI image and the device tree
-//! it starts the ARM with, and the VL805's images when the VPU loads them. PCR
-//! 1 holds the board: the revision code, the serial number, the extended
-//! revision, the MAC address fuses, the SDRAM size, the boot mode row and the
-//! EEPROM's `bootconf.txt`, each as a `name=value` event.
+//! it starts the ARM with, the EEPROM's bootloader and the VL805's images when
+//! the VPU loads them. PCR 1 holds the board: the revision code, the serial
+//! number, the extended revision, the MAC address fuses, the SDRAM size, the
+//! boot mode row and the EEPROM's `bootconf.txt`, each as a `name=value` event.
 
 use core::fmt::Write;
 use core::ptr::{read_volatile, write_volatile};
 
+use crate::eeprom;
 use crate::keystore;
 use crate::sha256;
 
@@ -88,13 +89,18 @@ fn setting(args: core::fmt::Arguments) {
 /// `UEFI_PLATFORM_FIRMWARE_BLOB2`: what is measured is the blob, and the
 /// event says which it is.
 pub fn blob(description: &str, blob: &[u8]) {
+    blob_at(description, sha256::digest(blob), blob.as_ptr() as u64, blob.len() as u64);
+}
+
+/// A blob event for a blob that was hashed where it is, `len` bytes at `base`.
+fn blob_at(description: &str, digest: [u8; 32], base: u64, len: u64) {
     let mut data = [0u8; MAX_DATA];
     data[0] = description.len() as u8;
     data[1..1 + description.len()].copy_from_slice(description.as_bytes());
     let at = 1 + description.len();
-    data[at..at + 8].copy_from_slice(&(blob.as_ptr() as u64).to_le_bytes());
-    data[at + 8..at + 16].copy_from_slice(&(blob.len() as u64).to_le_bytes());
-    record(PCR_FIRMWARE, EV_EFI_PLATFORM_FIRMWARE_BLOB2, sha256::digest(blob), &data[..at + 16]);
+    data[at..at + 8].copy_from_slice(&base.to_le_bytes());
+    data[at + 8..at + 16].copy_from_slice(&len.to_le_bytes());
+    record(PCR_FIRMWARE, EV_EFI_PLATFORM_FIRMWARE_BLOB2, digest, &data[..at + 16]);
 }
 
 /// A firmware version event: `text` as UTF-16.
@@ -132,6 +138,15 @@ pub fn eeprom_config(digest: Option<[u8; 32]>) {
     setting(format_args!("eeprom.bootconf={value}"));
 }
 
+/// The EEPROM's bootloader, `bootcode.bin`, which ran before this firmware: the
+/// SHA-256 of the section as the flash stores it, `at` and `len` placing it in
+/// the flash. Nothing when the EEPROM has none.
+pub fn eeprom_bootcode(bootcode: Option<&eeprom::Digest>) {
+    if let Some(b) = bootcode {
+        blob_at("eeprom-bootcode", b.sha256, b.at as u64, b.len as u64);
+    }
+}
+
 /// The images the VPU loaded into the VL805, which is the firmware the
 /// controller runs.
 pub fn vl805(hub: &[u8], mcu: &[u8]) {
@@ -144,14 +159,7 @@ pub fn vl805(hub: &[u8], mcu: &[u8]) {
 /// it ran it, which `base` and `len` place in memory.
 pub fn loader(commit: &str, version: u32, digest: [u8; 32], base: u32, len: u32) {
     crtm_version(format_args!("nuboot-loader {commit} {version}"));
-    let description = "start4-update";
-    let mut data = [0u8; MAX_DATA];
-    data[0] = description.len() as u8;
-    data[1..1 + description.len()].copy_from_slice(description.as_bytes());
-    let at = 1 + description.len();
-    data[at..at + 8].copy_from_slice(&(base as u64).to_le_bytes());
-    data[at + 8..at + 16].copy_from_slice(&(len as u64).to_le_bytes());
-    record(PCR_FIRMWARE, EV_EFI_PLATFORM_FIRMWARE_BLOB2, digest, &data[..at + 16]);
+    blob_at("start4-update", digest, base as u64, len as u64);
 }
 
 /// Measure the firmware and the board. Once, before the ARM starts.
