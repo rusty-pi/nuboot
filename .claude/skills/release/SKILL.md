@@ -102,6 +102,10 @@ did, a stand-by behaviour, a new published file.
 **Fix** — everything else: a corrected register sequence, a timing fix, docs,
 scripts, CI, refactors.
 
+The tag is the firmware's version, packed as `X<<24 | Y<<16 | Z` so that
+releases order as numbers: a release is at most `255.255.65535`, and the
+workflow builds with `FIRMWARE_VERSION` set to the tag.
+
 Then map that to a version. **While the version is `0.x`, the minor field is
 the incompatible slot**, so both breaking and feature bump it:
 

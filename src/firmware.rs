@@ -180,7 +180,8 @@ fn chain_update() {
 fn announce() {
     let revision = Revision::read();
     info!("boot", "pi4-server-firmware {}", COMMIT;
-        board = revision.model(), revision = revision, pcb = revision.pcb(), version = update::VERSION);
+        board = revision.model(), revision = revision, pcb = revision.pcb(), version = update::VERSION,
+        release = if update::RELEASE.is_empty() { "none" } else { update::RELEASE });
     if !handover::present() {
         error!("boot", "no handover from the bootloader, so no boot medium or memory size");
         return;

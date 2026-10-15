@@ -121,7 +121,7 @@ From the boot ROM to the threads that run for as long as the board is up:
 | A shutdown through the runtime services, after `ExitBootServices`, ends in the bootloader's halt | ✅ | ➖ | ➖ | ➖ |
 | A boot key from the fused private key, handed over once, nothing of it left in the VPU's memory | ✅ | ➖ | ➖ | ➖ |
 | Update bundles: an update capsule's bundle is kept, left in RAM across a reset, checked against the update key and run in the update slot by the firmware the bootloader loaded, and proven at `ExitBootServices`; one no update key signed is refused | ✅ | ✅ | ➖ | ➖ |
-| A kept update bundle is staged again at the next power-up and runs, and one that did not reach the OS is not staged again | ➖ | ✅ | ➖ | ➖ |
+| A kept update bundle is staged again at the next power-up and runs; one that does not reach the OS is tried three times, counted in its file name, and then dropped for the one that ran before it; one that does is blessed and the older ones are removed | ✅ | ✅ | ➖ | ➖ |
 | Wake-on-LAN: the OS powers the board off, the VPU waits on the Ethernet port, a magic packet boots the board | ✅ | ✅ | ➖ | ➖ |
 
 The Pi 4B column is a rev 1.5 (`d03115`).

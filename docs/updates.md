@@ -32,41 +32,62 @@ the bootloader never sees it.
 1. fwupd puts the capsule in `\EFI\UpdateCapsule`. At boot, UEFI checks the `db`
    signature and the class, and that the version is newer than the running
    firmware's and not older than the newest update that has reached the OS. It
-   writes the bundle in the root of the file system the capsule came from, as
-   its version in eight hex digits and `.UPD`, removes the capsule, records the
-   update as pending, copies the bundle to ARM physical `0x3e000000` and
-   resets. The bundle that was running stays where it is.
+   writes the bundle in the root of the file system UEFI boots from, as
+   `pi4-server-firmware-0.2.0+2-1.upd` (or its version in eight hex digits, for
+   a build with no release), removes the capsule, copies the bundle to ARM
+   physical `0x3e000000` and resets. The bundle that was running stays where it
+   is. The `+2-1` is the bundle's tries left and tries done.
 2. The SDRAM keeps its contents through the reset. The loader checks the
    bundle's ECDSA P-256 signature against its update keys, copies the image to
    the update slot at `0x3ee00200`, leaves its own version and commit where the
    image finds them, and enters it.
 3. The image boots as the firmware. It measures the loader's commit and version
-   into PCR 0 ahead of its own, starts the ARM, and records the update as
-   proven when UEFI reaches `ExitBootServices`.
+   into PCR 0 ahead of its own and starts the ARM. When UEFI reaches
+   `ExitBootServices` it blesses the bundle, by dropping the counter from its
+   name, and removes the older bundles.
 4. At every later power-up the loader runs first, and its UEFI stages the newest
-   `.UPD` again, so the update runs from the second start of each boot. Once
-   the update has reached the OS, the older bundles are removed.
+   `.upd` again, so the update runs from the second start of each boot. The
+file system UEFI boots from is the first, the SD card then a USB drive, that has
+`\EFI\BOOT\BOOTAA64.EFI`; no other volume is read for bundles.
 
-A bundle that does not reach `ExitBootServices` is removed, and the next
-newest, the one that was running before it, is staged instead; the loader runs
-when there is none. A bundle that no update key signed goes the same way. A bundle with a version below the
-newest that has reached the OS is refused.
+The counter works as boot assessment does in systemd
+(<https://systemd.io/AUTOMATIC_BOOT_ASSESSMENT/>). A new bundle has three
+tries. Every attempt to run a bundle that is not blessed renames it to take one
+(`+3`, `+2-1`, `+1-2`, `+0-3`) before it starts, so a failure that comes and
+goes, a power cut or a card that was slow to answer, costs a try and not the
+update. A bundle that reaches `ExitBootServices` is blessed whatever the try. A
+bundle at `+0` is removed, and the next newest, the one that was running before
+it, is staged instead; the loader runs when there is none. A bundle that no
+update key signed goes the same way, after its tries. A bundle with a version
+below the newest that has reached the OS is refused.
 
 The update replaces what runs after the loader starts the ARM, the VPU's
 services included. It does not replace the loader's own code: the part that
 reads the file systems and checks the capsule, and the update keys. A change
 there is a new `start4.elf`, which the owner signs.
 
+## Versions
+
+A release is `X.Y.Z`, the release tag, and its version is the number
+`X<<24 | Y<<16 | Z`, so that the order of two releases is the order of their
+numbers (`0.10.0` is above `0.9.0`) and fwupd shows the number as `X.Y.Z` in its
+`triplet` format. A release is at most `255.255.65535`. A build that is no
+release has the number `FIRMWARE_TIME` gives it, or the commit's time, which no
+release is above: a board that runs such a build takes no release as an update.
+
+The loader takes a bundle only when its version is above its own, and the file
+says the version: the release in its name, or the eight hex digits.
+
 ## Making a bundle
 
-The version is the build's commit time, and the bundle carries the same number:
+The version is what the build is given, and the bundle carries the same:
 
 ```bash
-version=$(date +%s)
-FIRMWARE_TIME=$version scripts/build.sh
-scripts/mkbundle.py keys/update.key out/start4-update.bin $version out/bundle.bin
-scripts/mkcapsule.py keys/db.key keys/db.crt $version out/update.cap --class update --bundle out/bundle.bin
-scripts/mkcab.py out/update.cap out/pi4-server-firmware-update-$version.cab $version --class update
+release=0.2.0
+FIRMWARE_VERSION=$release scripts/build.sh
+scripts/mkbundle.py keys/update.key out/start4-update.bin $release out/bundle.bin
+scripts/mkcapsule.py keys/db.key keys/db.crt $release out/update.cap --class update --bundle out/bundle.bin
+scripts/mkcab.py out/update.cap out/pi4-server-firmware-update-$release.cab $release --class update
 ```
 
 `keys/update.key` is the key whose public half, `keys/update.pub`, the loader

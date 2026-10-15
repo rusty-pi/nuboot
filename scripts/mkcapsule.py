@@ -26,6 +26,8 @@ import sys
 import tempfile
 import uuid
 
+import fwversion
+
 CLASSES = {
     "firmware": uuid.UUID("7d1c0a4e-5b83-4f2a-9c61-e2084a3d95b7"),
     "eeprom": uuid.UUID("3f8a0c5e-91d2-4b7a-a6c3-5d1e08f2b947"),
@@ -70,10 +72,11 @@ def main():
     if len(args) != 4:
         sys.exit(__doc__)
     key, cert, version, out = args
+    version = fwversion.parse(version)[0]
     if bundle is not None:
-        image = b"P4FW" + CLASSES[resource].bytes_le + struct.pack("<I", int(version, 0)) + bundle
+        image = b"P4FW" + CLASSES[resource].bytes_le + struct.pack("<I", version) + bundle
     else:
-        image = b"P4FW" + CLASSES[resource].bytes_le + struct.pack("<II", int(version, 0), len(sig)) + sig + img
+        image = b"P4FW" + CLASSES[resource].bytes_le + struct.pack("<II", version, len(sig)) + sig + img
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "image")
         open(path, "wb").write(image)

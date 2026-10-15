@@ -83,6 +83,8 @@ jobs:
       VC4_PREFIX: /opt/vc4
       CLONE_BASE: https://github.com/
       GH_TOKEN: ${{ github.token }}
+      # The tag is the release, and what orders it: X.Y.Z as a number.
+      FIRMWARE_VERSION: ${{ needs.check.outputs.version }}
     steps:
       - uses: actions/checkout@v7
 
@@ -192,7 +194,7 @@ jobs:
           printf '%s\n' "$DB_KEY" >"$certs/db.key"
           chmod 600 "$certs/update.key" "$certs/db.key"
           openssl x509 -inform DER -in "$certs/DB.der" -out "$certs/db.crt"
-          version="$(git log -1 --format=%ct)"
+          version="$FIRMWARE_VERSION"
           scripts/mkbundle.py "$certs/update.key" out/start4-update.bin "$version" "$RUNNER_TEMP/bundle.bin"
           scripts/mkcapsule.py "$certs/db.key" "$certs/db.crt" "$version" "$RUNNER_TEMP/update.cap" \
             --class update --bundle "$RUNNER_TEMP/bundle.bin"

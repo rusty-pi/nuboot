@@ -16,10 +16,11 @@
 //! | 12 | the address the image is linked at, [`SLOT_BASE`] |
 //! | 16 | length of the image |
 //! | 20 | zero |
-//! | 24 | ECDSA P-256 signature, `r` then `s` |
-//! | 88 | the image |
+//! | 24 | the release as text, `X.Y.Z`, padded with zeros; none for a build with no release |
+//! | 40 | ECDSA P-256 signature, `r` then `s` |
+//! | 104 | the image |
 //!
-//! The signature is over the SHA-256 of [`LABEL`], the first 24 bytes and
+//! The signature is over the SHA-256 of [`LABEL`], the first 40 bytes and
 //! the image.
 
 use crate::{cache, mmio, p256, sha256};
@@ -34,7 +35,7 @@ pub const MAX_IMAGE: usize = 2 << 20;
 
 const MAGIC: [u8; 4] = *b"P4UB";
 const FORMAT: u32 = 1;
-const HEADER: usize = 24;
+const HEADER: usize = 40;
 const SIGNATURE: usize = 64;
 const LABEL: &[u8] = b"pi4-server-firmware update\0";
 
@@ -55,6 +56,9 @@ pub const VERSION: u32 = match u32::from_str_radix(env!("FIRMWARE_TIME"), 10) {
     Ok(time) => time,
     Err(_) => 0,
 };
+
+/// The release this build is, `X.Y.Z`, or nothing for a build with none.
+pub const RELEASE: &str = env!("FIRMWARE_RELEASE");
 
 /// The update keys, each the 64 bytes of a P-256 point's coordinates.
 static KEYS: &[u8] = include_bytes!(env!("UPDATE_KEYS"));

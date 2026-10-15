@@ -310,7 +310,7 @@ carries a bundle after the version (`P4FW`, the class, the version, the
 bundle) in place of `boot.sig` and `boot.img`. It is checked the same way, and
 its bundle must have the layout `src/update.rs` reads, and the version the
 capsule names. It is not staged as a tryboot: UEFI keeps it under its
-version in the file system's root and leaves it in RAM for the VPU firmware ([updates.md](updates.md#updates-the-owner-does-not-sign)).
+version in the root of the file system it boots from and leaves it in RAM for the VPU firmware ([updates.md](updates.md#updates-the-owner-does-not-sign)).
 
 A capsule that fails sets the ESRT's last attempt version and status
 (`4` invalid format, `5` authentication error, `3` incorrect version, `2`

@@ -1,0 +1,33 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "update-counting"
+description: "A bundle kept on the card with its three tries is tried: UEFI spends a try, leaves it in RAM and resets, the VPU firmware the bootloader loaded runs it, and the update, once it reaches ExitBootServices, blesses it by dropping the counter from its name."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  otp_row:
+    - "56=0xc0de2001"
+    - "57=0xc0de3112"
+    - "58=0xc0de4223"
+    - "59=0xc0de5334"
+    - "60=0xc0de6445"
+    - "61=0xc0de7556"
+    - "62=0xc0de8667"
+    - "63=0xc0de9778"
+  sd:
+    files:
+      start4.elf: "../out/start4-test.elf"
+      EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-takeover.efi"
+      pi4-server-firmware-200.0.0+3.upd: "../out/bundle-next.bin"
+  until: "the updated firmware reached the OS  version=3355443200"
+  wall_secs: 1800
+
+milestones:
+  - why: "UEFI takes a try off the bundle before it stages it."
+    line: "trying the update  version=3355443200 tries_left=2"
+  - why: "The VPU firmware the bootloader loaded runs the bundle."
+    line: "starting the staged bundle  version=3355443200"
+  - why: "The build the bundle carried runs in the update slot."
+    line: "running as an update  version=3355443200"
+  - why: "It reached ExitBootServices and blessed the bundle."
+    line: "the updated firmware reached the OS  version=3355443200"

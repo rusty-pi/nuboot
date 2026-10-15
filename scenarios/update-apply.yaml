@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "update-apply"
-description: "A board with its device private key fused (a test key, not a board's) finds an update capsule for a later build on the card. UEFI keeps the bundle, leaves it in RAM and resets; the VPU firmware the bootloader loaded checks the update key's signature, runs the bundle's image in the update slot, and that build reaches ExitBootServices and records the update as proven."
+description: "A board with its device private key fused (a test key, not a board's) finds an update capsule for a later build on the card. UEFI keeps the bundle, leaves it in RAM and resets; the VPU firmware the bootloader loaded checks the update key's signature, runs the bundle's image in the update slot, and that build starts."
 
 boot:
   eeprom: "../out/stock-pieeprom.bin"
@@ -19,19 +19,21 @@ boot:
       start4.elf: "../out/start4-test.elf"
       EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-takeover.efi"
       EFI/UpdateCapsule/next.cap: "../out/capsule-update.cap"
-  until: "the updated firmware reached the OS  version=2147483000"
+  until: "measuring the firmware that started this one"
   wall_secs: 1800
 
 milestones:
   - why: "The capsule is for a later build and signed by the test key."
     line: "capsule verified"
+  - why: "UEFI spends the first of three tries."
+    line: "trying the update  version=3355443200 tries_left=2"
   - why: "The bundle is on the card and in RAM, and the reset follows."
-    line: "update staged, resetting into it  version=2147483000"
+    line: "update staged, resetting into it  version=3355443200"
   - why: "The firmware the bootloader loaded found the bundle after the reset and checked its signature."
-    line: "starting the staged bundle  version=2147483000"
+    line: "starting the staged bundle  version=3355443200"
   - why: "The build the bundle carried runs in the update slot."
-    line: "running as an update  version=2147483000"
+    line: "running as an update  version=3355443200"
+  - why: "It is the release the bundle names."
+    line: "release=200.0.0"
   - why: "It measures the firmware that started it into PCR 0."
     line: "measuring the firmware that started this one"
-  - why: "It reached ExitBootServices."
-    line: "the updated firmware reached the OS  version=2147483000"

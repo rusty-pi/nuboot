@@ -5,14 +5,17 @@ update key, in the layout src/update.rs describes.
 
     mkbundle.py KEY IMAGE VERSION OUT
 
-KEY is the update key (PEM, P-256). VERSION is the commit time the image was
-built with, which `scripts/build.sh` prints. The bundle is what a capsule
-carries, and what the UEFI firmware stages in RAM for the next boot.
+KEY is the update key (PEM, P-256). VERSION is what the image was built with:
+a release `X.Y.Z`, or the number `FIRMWARE_TIME` gave it, the commit's time
+when it has none. The bundle is what a capsule carries, and what the UEFI
+firmware stages in RAM for the next boot.
 """
 
 import struct
 import subprocess
 import sys
+
+import fwversion
 
 MAGIC = b"P4UB"
 FORMAT = 1
@@ -37,13 +40,14 @@ def der_signature(key, message):
 
 
 def main():
-    if len(sys.argv) != 5 or not sys.argv[3].isdigit():
+    if len(sys.argv) != 5:
         sys.exit(__doc__)
-    key, image_path, version, out = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+    key, image_path, out = sys.argv[1], sys.argv[2], sys.argv[4]
+    version, release = fwversion.parse(sys.argv[3])
     image = open(image_path, "rb").read()
     if not image or len(image) > MAX_IMAGE:
         sys.exit(f"{image_path}: an image is 1 to {MAX_IMAGE} bytes")
-    header = MAGIC + struct.pack("<IIIII", FORMAT, version, SLOT_BASE, len(image), 0)
+    header = MAGIC + struct.pack("<IIIII", FORMAT, version, SLOT_BASE, len(image), 0) + (release or "").encode().ljust(16, b"\0")
     signature = der_signature(key, LABEL + header + image)
     open(out, "wb").write(header + signature + image)
 

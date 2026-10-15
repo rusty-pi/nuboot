@@ -972,6 +972,101 @@ fn short_slot(name: &[u16]) -> Option<[u8; 11]> {
     Some(slot)
 }
 
+/// Whether `name` can be a long name: UTF-16 without the characters a name
+/// cannot hold, at most 64 units, which is five long-name entries.
+fn long_name_ok(name: &[u16]) -> bool {
+    let bad = |c: u16| c < 0x20 || (c < 0x80 && b"\"*/:<>?\\|".contains(&(c as u8)));
+    !name.is_empty()
+        && name.len() <= 64
+        && !name.iter().any(|&c| bad(c))
+        && !matches!(name.last(), Some(&c) if c == b'.' as u16 || c == b' ' as u16)
+}
+
+/// The 8.3 name a long one is filed under besides: the first characters of
+/// its stem, `~` and a number that no entry of the directory has, and its
+/// extension.
+fn alias_for(name: &[u16], dir: &[u8]) -> [u8; 11] {
+    let clean = |units: &[u16], most: usize| -> Vec<u8> {
+        units
+            .iter()
+            .filter_map(|&c| u8::try_from(c).ok())
+            .map(|b| b.to_ascii_uppercase())
+            .filter(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || *b == b'_')
+            .take(most)
+            .collect()
+    };
+    let (stem, extension) = match name.iter().rposition(|&c| c == b'.' as u16) {
+        Some(dot) => (&name[..dot], &name[dot + 1..]),
+        None => (name, &[][..]),
+    };
+    let mut base = clean(stem, 6);
+    if base.is_empty() {
+        base = b"FILE".to_vec();
+    }
+    let extension = clean(extension, 3);
+    let taken = |slot: &[u8; 11]| {
+        dir.chunks_exact(32).any(|e| e[0] != 0 && e[0] != 0xe5 && e[11] & 0x3f != ATTR_LFN && e[..11] == slot[..])
+    };
+    let mut number = 1u32;
+    loop {
+        let tail = alloc::format!("~{number}").into_bytes();
+        let keep = base.len().min(8 - tail.len());
+        let mut slot = [b' '; 11];
+        slot[..keep].copy_from_slice(&base[..keep]);
+        slot[keep..keep + tail.len()].copy_from_slice(&tail);
+        slot[8..8 + extension.len()].copy_from_slice(&extension);
+        if !taken(&slot) || number == 999_999 {
+            return slot;
+        }
+        number += 1;
+    }
+}
+
+/// The long-name entries of `name`, in the order they sit in a directory
+/// before the entry of `alias`: the last piece first, each carrying the
+/// alias's checksum.
+fn long_entries(name: &[u16], alias: &[u8; 11]) -> Vec<[u8; 32]> {
+    let sum = alias.iter().fold(0u8, |sum, &b| (sum >> 1).wrapping_add((sum & 1) << 7).wrapping_add(b));
+    let count = name.len().div_ceil(13);
+    (1..=count)
+        .rev()
+        .map(|seq| {
+            let mut e = [0u8; 32];
+            e[0] = seq as u8 | if seq == count { 0x40 } else { 0 };
+            e[11] = ATTR_LFN;
+            e[13] = sum;
+            for (i, off) in [1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30].into_iter().enumerate() {
+                let at = (seq - 1) * 13 + i;
+                let unit = match at.cmp(&name.len()) {
+                    core::cmp::Ordering::Less => name[at],
+                    core::cmp::Ordering::Equal => 0,
+                    core::cmp::Ordering::Greater => 0xffff,
+                };
+                e[off..off + 2].copy_from_slice(&unit.to_le_bytes());
+            }
+            e
+        })
+        .collect()
+}
+
+/// Where `need` free slots in a row start in a directory's bytes, if they do.
+fn free_run(bytes: &[u8], need: usize) -> Option<usize> {
+    let mut run = 0;
+    for (i, e) in bytes.chunks_exact(32).enumerate() {
+        run = if e[0] == 0 || e[0] == 0xe5 { run + 1 } else { 0 };
+        if run == need {
+            return Some(i + 1 - need);
+        }
+    }
+    None
+}
+
+/// The first slot of the free slots that end a directory's bytes.
+fn trailing_free(bytes: &[u8]) -> usize {
+    let slots = bytes.len() / 32;
+    (0..slots).rev().take_while(|&i| bytes[i * 32] == 0 || bytes[i * 32] == 0xe5).last().unwrap_or(slots).min(slots)
+}
+
 fn fs_of(handle: efi::Handle) -> Result<&'static mut Fs, efi::Status> {
     let p = proto::get(handle, &simple_file_system::PROTOCOL_GUID).ok_or(efi::Status::NOT_FOUND)?;
     Ok(unsafe { &mut *(p as *mut Fs) })
@@ -1001,9 +1096,17 @@ pub fn write_file(handle: efi::Handle, dir: &[u16], name: &[u16], data: &[u8]) -
         return Err(efi::Status::ACCESS_DENIED);
     }
     let short = short_slot(name);
-    if found.is_none() && short.is_none() {
+    if found.is_none() && short.is_none() && !long_name_ok(name) {
         return Err(efi::Status::UNSUPPORTED);
     }
+    let (alias, long) = match short {
+        Some(slot) => (slot, Vec::new()),
+        None if found.is_none() => {
+            let alias = alias_for(name, &bytes);
+            (alias, long_entries(name, &alias))
+        }
+        None => ([b' '; 11], Vec::new()),
+    };
     let old_dir = bytes.clone();
     let mut fat = fs.load_fat()?;
     let before = fat.clone();
@@ -1013,11 +1116,15 @@ pub fn write_file(handle: efi::Handle, dir: &[u16], name: &[u16], data: &[u8]) -
     let at = match &found {
         Some(f) => f.slot,
         None => {
-            let free = bytes.chunks_exact(32).position(|e| e[0] == 0 || e[0] == 0xe5);
-            match free {
-                Some(i) => i,
+            let need = long.len() + 1;
+            match free_run(&bytes, need) {
+                Some(start) => start + long.len(),
                 None => {
                     if dir.cluster == 0 && fs.kind != Kind::Fat32 {
+                        return Err(efi::Status::OUT_OF_RESOURCES);
+                    }
+                    let start = trailing_free(&bytes);
+                    if start * 32 + need * 32 > bytes.len() + fs.cluster_size as usize {
                         return Err(efi::Status::OUT_OF_RESOURCES);
                     }
                     let extra = fs.allocate(&mut fat, 1)?[0];
@@ -1027,9 +1134,8 @@ pub fn write_file(handle: efi::Handle, dir: &[u16], name: &[u16], data: &[u8]) -
                     }
                     fs.put(&mut fat, last, extra);
                     grown = Some(extra);
-                    let at = bytes.len() / 32;
                     bytes.resize(bytes.len() + fs.cluster_size as usize, 0);
-                    at
+                    start + long.len()
                 }
             }
         }
@@ -1040,10 +1146,14 @@ pub fn write_file(handle: efi::Handle, dir: &[u16], name: &[u16], data: &[u8]) -
     }
     fs.store_fat(&before, &fat)?;
     let first = clusters.first().copied().unwrap_or(0);
+    for (i, entry) in long.iter().enumerate() {
+        let to = (at - long.len() + i) * 32;
+        bytes[to..to + 32].copy_from_slice(entry);
+    }
     let slot = &mut bytes[at * 32..at * 32 + 32];
     if found.is_none() {
         slot.fill(0);
-        slot[..11].copy_from_slice(&short.unwrap_or([b' '; 11]));
+        slot[..11].copy_from_slice(&alias);
         slot[11] = 0x20;
         slot[16..18].copy_from_slice(&0x0021u16.to_le_bytes());
         slot[18..20].copy_from_slice(&0x0021u16.to_le_bytes());
@@ -1093,6 +1203,46 @@ pub fn remove_file(handle: efi::Handle, dir: &[u16], name: &[u16]) -> Result<(),
     }
     fs.forget_free_count();
     Ok(())
+}
+
+/// Give the file `from` in `dir` the name `to`, with the clusters it has: the
+/// old entries are freed and the new ones written in one directory update, so
+/// that nothing of the file is copied.
+pub fn rename_file(handle: efi::Handle, dir: &[u16], from: &[u16], to: &[u16]) -> Result<(), efi::Status> {
+    let fs = fs_of(handle)?;
+    let dir = fs.resolve(dir).ok_or(efi::Status::NOT_FOUND)?;
+    let mut bytes = fs.dir_bytes(&dir);
+    let old = bytes.clone();
+    let all = fs.parse(&bytes);
+    let source = all.iter().find(|f| eq_ignore_case(&f.entry.name, from)).ok_or(efi::Status::NOT_FOUND)?;
+    if source.entry.attr & ATTR_DIR != 0 || all.iter().any(|f| eq_ignore_case(&f.entry.name, to)) {
+        return Err(efi::Status::ACCESS_DENIED);
+    }
+    let short = short_slot(to);
+    if short.is_none() && !long_name_ok(to) {
+        return Err(efi::Status::UNSUPPORTED);
+    }
+    let mut entry = [0u8; 32];
+    entry.copy_from_slice(&bytes[source.slot * 32..source.slot * 32 + 32]);
+    for i in source.first..=source.slot {
+        bytes[i * 32] = 0xe5;
+    }
+    let (alias, long) = match short {
+        Some(slot) => (slot, Vec::new()),
+        None => {
+            let alias = alias_for(to, &bytes);
+            (alias, long_entries(to, &alias))
+        }
+    };
+    let start = free_run(&bytes, long.len() + 1).ok_or(efi::Status::OUT_OF_RESOURCES)?;
+    for (i, e) in long.iter().enumerate() {
+        bytes[(start + i) * 32..(start + i) * 32 + 32].copy_from_slice(e);
+    }
+    entry[..11].copy_from_slice(&alias);
+    entry[12] = 0;
+    let at = start + long.len();
+    bytes[at * 32..at * 32 + 32].copy_from_slice(&entry);
+    fs.store_dir(&dir, &old, &bytes)
 }
 
 /// Make each `to` in `dir` the file `from` is, and remove `from`: the entries

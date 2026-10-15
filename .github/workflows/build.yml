@@ -163,6 +163,7 @@ jobs:
             out/capsule-relabeled.cap
             out/capsule-junk.cap
             out/capsule-update.cap
+            out/bundle-next.bin
             out/capsule-update-stranger.cap
             out/runtime-variables.efi
             out/crypto.efi

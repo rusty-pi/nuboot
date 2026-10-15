@@ -4,8 +4,8 @@ metadata that says which device it is for.
 
     mkcab.py CAPSULE OUT.cab VERSION [--class firmware|eeprom|update] [--date YYYY-MM-DD] [--notes TEXT]
 
-CAPSULE is what scripts/mkcapsule.py wrote and VERSION the number it carries,
-which the ESRT reports once the update is applied. `fwupdmgr install OUT.cab`
+CAPSULE is what scripts/mkcapsule.py wrote and VERSION what it carries, a
+release `X.Y.Z` or a number, which the ESRT reports once the update is applied. `fwupdmgr install OUT.cab`
 installs it, and `fwupdtool get-details OUT.cab` shows what fwupd makes of it.
 Needs `gcab`.
 """
@@ -16,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 from xml.sax.saxutils import escape
+
+import fwversion
 
 RESOURCES = {
     "firmware": (
@@ -39,7 +41,7 @@ RESOURCES = {
 }
 
 
-def metainfo(resource, version, date, notes):
+def metainfo(resource, version, date, notes, release):
     component, name, summary, guid = RESOURCES[resource]
     return f"""<?xml version="1.0" encoding="UTF-8"?>
 <component type="firmware">
@@ -57,7 +59,7 @@ def metainfo(resource, version, date, notes):
   <project_license>MIT</project_license>
   <developer_name>rusty-pi</developer_name>
   <releases>
-    <release version="{version}" date="{date}">
+    <release version="{release or version}" date="{date}">
       <description>
         <p>{escape(notes)}</p>
       </description>
@@ -65,7 +67,7 @@ def metainfo(resource, version, date, notes):
   </releases>
   <custom>
     <value key="LVFS::UpdateProtocol">org.uefi.capsule</value>
-    <value key="LVFS::VersionFormat">number</value>
+    <value key="LVFS::VersionFormat">{"triplet" if release else "number"}</value>
   </custom>
 </component>
 """
@@ -82,14 +84,14 @@ def main():
     if len(args) != 3 or options["--class"] not in RESOURCES:
         sys.exit(__doc__)
     capsule, out, version = args
-    if not version.isdigit():
-        sys.exit("VERSION is a number")
+    number, release = fwversion.parse(version)
     resource = options["--class"]
-    date = options["--date"] or datetime.datetime.fromtimestamp(int(version), datetime.timezone.utc).strftime("%Y-%m-%d")
-    notes = options["--notes"] or f"Version {version}."
+    today = datetime.datetime.now(datetime.timezone.utc)
+    date = options["--date"] or (today if release else datetime.datetime.fromtimestamp(number, datetime.timezone.utc)).strftime("%Y-%m-%d")
+    notes = options["--notes"] or f"Version {release or number}."
     stamp = datetime.datetime.fromisoformat(date).replace(tzinfo=datetime.timezone.utc).timestamp()
     with tempfile.TemporaryDirectory() as tmp:
-        files = {"firmware.bin": open(capsule, "rb").read(), "firmware.metainfo.xml": metainfo(resource, version, date, notes).encode()}
+        files = {"firmware.bin": open(capsule, "rb").read(), "firmware.metainfo.xml": metainfo(resource, number, date, notes, release).encode()}
         for name, data in files.items():
             path = os.path.join(tmp, name)
             open(path, "wb").write(data)

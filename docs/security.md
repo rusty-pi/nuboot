@@ -170,15 +170,18 @@ Three things hold the loader's side together:
 - **The signature is the only gate.** UEFI's checks (the version, the class, the
   `db` signature of the capsule) keep a bad update from being tried, and decide
   nothing: the loader checks the bundle after the reset as if no check had run.
-- **A failed update is not retried, and the one before it comes back.** The flash
-  store holds a pending record from the moment a bundle is staged. A firmware
-  that finds a bundle pending that is not the one running marks it refused and
-  removes it, then stages the next newest bundle on the disk, the one that ran
-  before. The older bundles are removed once the newer has reached the OS, so
-  the loader itself runs only when no bundle works.
+- **A failed update is tried three times, and the one before it comes back.** A
+  bundle's file name carries its tries left and tries done, and UEFI spends one
+  before it stages the bundle. A bundle that reaches `ExitBootServices` is
+  blessed, by dropping the counter from its name, and the older bundles are
+  removed; one with no tries left is removed, and the next newest bundle on the
+  disk, the one that ran before, is staged. The loader itself runs only when no
+  bundle works. The counter is a limit on retries and nothing more: whoever can
+  write the medium can reset or remove it, and can still only run what an update
+  key signed.
 - **A bundle does not go backwards.** The flash store holds the version of the
-  newest bundle that has reached the OS, and a capsule or a kept bundle below it
-  is refused. The store is sealed by the device key, so an attacker who can
+  newest bundle that has reached the OS, which is all of the update's state it
+  keeps, and a capsule or a kept bundle below it is refused. The store is sealed by the device key, so an attacker who can
   only write the boot medium cannot lower it.
 
 The loader's own code is not updated this way. What reads the medium before the
@@ -376,8 +379,10 @@ bounded.
   boot.
 - The UEFI image does not carry the builder's paths: they are remapped to the
   names of the prebuilt standard library's.
-- The update version is the commit's time or `FIRMWARE_TIME`; a build outside a
-  git checkout must set it, or its version is zero.
+- The update version is the release `FIRMWARE_VERSION` (`X.Y.Z`, packed as
+  `X<<24 | Y<<16 | Z`), else `FIRMWARE_TIME`, else the commit's time, which no
+  release is above; a build outside a git checkout must set one, or its version
+  is zero.
 - CI holds `contents: read`, pins its third-party actions by commit (pimu is
   taken from its main branch), and uploads no private key. The VC4 compiler (`rusty-pi/gcc-vc4` and `binutils-vc4`) is
   installed from the latest release of its repositories with no checksum, which is
@@ -436,7 +441,7 @@ Not defended, and not claimed:
    than the minutes it takes to guess it.
 5. Use a boot loader without a prompt on the serial console (a unified kernel
    image under systemd-boot), or one that asks for a password.
-6. Set `FIRMWARE_TIME` for every release, and keep `dbx` fresh with each one.
+6. Build every release with `FIRMWARE_VERSION`, and keep `dbx` fresh with each one.
 
 ## Checks
 
