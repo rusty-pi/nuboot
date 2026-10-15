@@ -194,6 +194,13 @@ pub struct Xhci {
 
 const EVENT_TRBS: usize = 256;
 const CONTROL_BUF: usize = 4096;
+/// How long after the controller started a new device is still brought up: a
+/// hub or a drive that answers slowly, or not at all, is not followed by more
+/// of them past it. What is under way ends by its own timeouts. The boot
+/// watchdog allows 300 s.
+const ENUMERATION_BUDGET_US: u64 = 60_000_000;
+/// The most ports of a hub that are used, however many its descriptor claims.
+const MAX_HUB_PORTS: u32 = 15;
 
 static XHCI: Global<Option<Xhci>> = Global::new(None);
 static REGISTERS: Global<Option<u64>> = Global::new(None);
@@ -434,7 +441,7 @@ impl Xhci {
 
     fn get_descriptor(&mut self, slot: u32, ty: u8, index: u8, len: u16) -> Result<Vec<u8>, Error> {
         self.control(slot, 0x80, 6, (ty as u16) << 8 | index as u16, 0, len)?;
-        Ok(self.control_data(len as usize).to_vec())
+        Ok(self.control_data((len as usize).min(CONTROL_BUF as usize)).to_vec())
     }
 
     /// A bulk transfer of `len` bytes at DMA address `buf` on endpoint `dci`;
@@ -448,7 +455,7 @@ impl Xhci {
             let addr = buf + at as u64;
             let n = ((0x1_0000 - (addr & 0xffff)) as usize).min(len - at);
             let end = at + n == len;
-            let td_size = (((len - at - n) as u32).div_ceil(max_packet)).min(31);
+            let td_size = (((len - at - n) as u32).div_ceil(max_packet.max(1))).min(31);
             let trb = ring.push([
                 addr as u32,
                 (addr >> 32) as u32,
@@ -526,6 +533,9 @@ impl Xhci {
         let mut last = 1;
         for &(addr, attrs, mps, interval) in eps {
             let dci = 2 * (addr & 0xf) as u32 + (addr >> 7) as u32;
+            if dci < 2 || mps & 0x7ff == 0 {
+                return Err(Error::Completion(0));
+            }
             let ty = (attrs & 3) as u32 + if addr & 0x80 != 0 { 4 } else { 0 };
             let ring = Ring::new().ok_or(Error::NoMemory)?;
             let ctx = 0x20 + 0x20 * dci as u64;
@@ -624,6 +634,10 @@ fn usb_node(path: &[u8], port: u32) -> Vec<u8> {
 /// hubs), and whatever is behind it if it is a hub.
 fn enumerate(root_port: u32, route: u32, depth: u32, speed: u32, tt: (u32, u32), path: Vec<u8>) {
     let x = controller();
+    if counter_us() - x.started_at > ENUMERATION_BUDGET_US {
+        warn!("usb", "enumeration out of time, device left alone"; root_port = root_port, route = Hex(route));
+        return;
+    }
     let slot = match x.address(root_port, route, speed, tt) {
         Ok(s) => s,
         Err(e) => {
@@ -675,7 +689,7 @@ fn hub(slot: u32, root_port: u32, route: u32, depth: u32, speed: u32, tt: (u32, 
         warn!("usb", "hub did not describe itself"; slot = slot);
         return;
     };
-    let ports = desc[2] as u32;
+    let ports = (desc[2] as u32).min(MAX_HUB_PORTS);
     let power_good_us = desc[5] as u64 * 2000;
     if x.make_hub(slot, ports, multi_tt).is_err() {
         warn!("usb", "hub could not be set up"; slot = slot);

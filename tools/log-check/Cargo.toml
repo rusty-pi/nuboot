@@ -1,0 +1,16 @@
+[package]
+name = "log-check"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+description = "The firmware's log renderer (src/log.rs) built for the host, to check what it writes for text it does not control."
+
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+
+[features]
+color = []

@@ -162,12 +162,14 @@ impl Map {
         if pages == 0 {
             return Err(efi::Status::INVALID_PARAMETER);
         }
+        let len = pages.checked_mul(PAGE).ok_or(efi::Status::INVALID_PARAMETER)?;
         let start = match kind {
             efi::ALLOCATE_ADDRESS => {
                 if addr % PAGE != 0 {
                     return Err(efi::Status::INVALID_PARAMETER);
                 }
-                if !self.all(addr, addr + pages * PAGE, is_free) {
+                let end = addr.checked_add(len).ok_or(efi::Status::INVALID_PARAMETER)?;
+                if !self.all(addr, end, is_free) {
                     return Err(efi::Status::NOT_FOUND);
                 }
                 addr
@@ -179,7 +181,7 @@ impl Map {
                 .ok_or(efi::Status::OUT_OF_RESOURCES)?,
             _ => return Err(efi::Status::INVALID_PARAMETER),
         };
-        self.set(start, start + pages * PAGE, ty, false);
+        self.set(start, start + len, ty, false);
         Ok(start)
     }
 
@@ -187,7 +189,7 @@ impl Map {
         if addr % PAGE != 0 {
             return Err(efi::Status::INVALID_PARAMETER);
         }
-        let end = addr + pages * PAGE;
+        let end = pages.checked_mul(PAGE).and_then(|len| addr.checked_add(len)).ok_or(efi::Status::INVALID_PARAMETER)?;
         if !self.all(addr, end, |t| !is_free(t) && t != efi::RESERVED_MEMORY_TYPE) {
             return Err(efi::Status::NOT_FOUND);
         }
@@ -324,6 +326,9 @@ impl Heap {
     }
 
     pub fn alloc(&mut self, size: u64, align: u64) -> *mut u8 {
+        if size > MAX_ALLOCATION {
+            return null_mut();
+        }
         let size = size.max(1).next_multiple_of(GRAIN);
         let align = align.max(GRAIN);
         let p = self.take(size, align);
@@ -374,9 +379,13 @@ struct PoolHeader {
 
 const POOL_MAGIC: u32 = 0x6c6f_6f70;
 
+/// More than any memory this firmware runs on has: a request for more is
+/// refused before its size is added to anything.
+const MAX_ALLOCATION: u64 = 1 << 40;
+
 pub fn pool_alloc(ty: u32, size: usize) -> Result<*mut u8, efi::Status> {
     let heap = heap(ty).ok_or(efi::Status::INVALID_PARAMETER)?;
-    let total = size as u64 + 16;
+    let total = (size as u64).checked_add(16).filter(|&n| n <= MAX_ALLOCATION).ok_or(efi::Status::OUT_OF_RESOURCES)?;
     let p = heap.alloc(total, 16);
     if p.is_null() {
         return Err(efi::Status::OUT_OF_RESOURCES);

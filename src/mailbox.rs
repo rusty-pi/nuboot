@@ -124,10 +124,20 @@ pub fn request_pending() -> bool {
 /// change: each tag is parsed from this copy, and an answer goes to both.
 static mut REQUEST: [u32; (MAX_BUFFER / 4) as usize] = [0; (MAX_BUFFER / 4) as usize];
 
-/// Answer the buffer at bus address `bus`, in place. A buffer that is not
-/// wholly in memory the ARM owns is not touched: the firmware's own memory is
-/// not the ARM's to have read or written through the mailbox.
+/// Answer the buffer at bus address `bus`, in place, and leave nothing of it
+/// in [`REQUEST`]: an answer can hold the boot key or a MAC.
 fn answer(bus: u32, runtime: bool) {
+    respond(bus, runtime);
+    let copy = (&raw mut REQUEST).cast::<u32>();
+    for n in 0..MAX_BUFFER / 4 {
+        unsafe { core::ptr::write_volatile(copy.add(n as usize), 0) };
+    }
+}
+
+/// The buffer at bus address `bus`. A buffer that is not wholly in memory the
+/// ARM owns is not touched: the firmware's own memory is not the ARM's to have
+/// read or written through the mailbox.
+fn respond(bus: u32, runtime: bool) {
     // The ARM's bus addresses alias SDRAM at 0xC000_0000, uncached, as the
     // VPU's own do.
     let physical = bus & 0x3fff_ffff;

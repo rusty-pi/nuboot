@@ -44,8 +44,9 @@ HMAC-SHA256(private key, "pi4-server-firmware boot key v1" || mask || the select
 ```
 
 overwrites everything the computation touched and writes the zeros out of the
-VPU's caches to SDRAM. It answers once. A board without a fused private key
-answers nothing, and so does an empty mask.
+VPU's caches to SDRAM, and the copy of the answer the mailbox kept to parse
+the request from. It answers once. A board without a fused private key
+answers nothing, and so does a mask that names a register that does not exist.
 
 - An empty mask binds it to nothing: the key is
   `HMAC-SHA256(private key, label || 0)`, one stable key per board, whatever
@@ -64,12 +65,25 @@ hostile loader that Secure Boot accepts can report whatever it likes. What
 keeps the key from such a payload is the same as for anything else on this
 board (see below).
 
-The firmware answers no tag that returns a fuse, and the ARM cannot reach the
-OTP block, so the private key itself never reaches the ARM, whatever
-`config.txt` says. Stock `start4.elf` answers such tags unless `config.txt`
-sets `lock_device_private_key=1`: without it Linux reads rows 56-63 through
+The firmware answers no tag that returns a fuse, whatever `config.txt` says.
+Stock `start4.elf` answers such tags unless `config.txt` sets
+`lock_device_private_key=1`: without it Linux reads rows 56-63 through
 `nvmem_priv0`, with it they read as blank. Measured on a Raspberry Pi 4
 Model B d03115.
+
+That does not keep privileged ARM code from the fuses. The OTP block at
+`0x7E20_F000` (`0xFE20_F000` to the ARM) answers the VPU's own read sequence
+from ARM code at EL1 and EL2, and no firmware locks it. On a Raspberry Pi 4B
+d03115 started by this firmware, `uefi/test-apps/otp-probe` reads row 17 as
+`vcgencmd otp_dump` shows it, row 30 as the revision code `0x00d03115`, and
+rows 56 and 57, the first of the device private key, as non-zero and different
+from those. A bare-metal program at EL2 under Raspberry Pi's `start4.elf` reads
+rows 17 and 30 the same way. The hardware answers every unprivileged (EL0) access to the page
+with `0xec0de000` instead, under either firmware, which is why root's `mmap` of
+`/dev/mem` under Raspberry Pi OS reads that constant for every register and row.
+Code that runs privileged on the ARM (a loader before `ExitBootServices`, a
+kernel without lockdown that loads a module, a kernel exploit) reads the key
+itself, not only what the VPU computes with it.
 
 ## What it does not protect
 

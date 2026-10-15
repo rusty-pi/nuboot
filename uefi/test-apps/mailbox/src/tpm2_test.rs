@@ -239,6 +239,28 @@ pub extern "efiapi" fn efi_main(_image: Handle, system_table: *mut SystemTable) 
     verify.u32(rsa_key).u16(32).put(&digest).u16(0x14).u16(0x0b).u16(256).put(&forged);
     run("verify-rsa-forged", verify.done());
     run("sign-external", Command::new(0x8002, 0x15d).u32(rsa_key).password().u16(32).put(&digest).u16(0x10).u16(0x8024).u32(0x4000_0007).u16(0).done());
+    // A public area with a policy, which is longer than a slot holds.
+    let mut modulus = [0xc3u8; 256];
+    modulus[255] |= 1;
+    run(
+        "load-external-long",
+        Command::new(0x8001, 0x167)
+            .u16(0)
+            .u16(310)
+            .u16(1)
+            .u16(0xb)
+            .u32(0x0004_0000)
+            .u16(32)
+            .put(&[0xaa; 32])
+            .u16(0x10)
+            .u16(0x10)
+            .u16(2048)
+            .u32(0)
+            .u16(256)
+            .put(&modulus)
+            .u32(0x4000_0001)
+            .done(),
+    );
     run("flush-external", Command::new(0x8001, 0x165).u32(rsa_key).done());
     run("flush-item", Command::new(0x8001, 0x165).u32(item).done());
     run("flush-primary", Command::new(0x8001, 0x165).u32(primary).done());

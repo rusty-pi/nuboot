@@ -287,10 +287,11 @@ pub fn append(record: &Record, live: impl FnOnce() -> Vec<Record>) -> bool {
         if spiflash::program(state.tail, &bytes) {
             let mut back = alloc::vec![0u8; bytes.len()];
             spiflash::read(state.tail, &mut back);
-            if back != bytes {
-                warn!("store", "record read back differs"; at = state.tail);
-            }
             state.tail += bytes.len() as u32;
+            if back != bytes {
+                warn!("store", "record read back differs, not taken"; at = state.tail - bytes.len() as u32);
+                return false;
+            }
             return true;
         }
         warn!("store", "record not written");

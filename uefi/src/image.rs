@@ -15,6 +15,9 @@ use crate::mem::{self, PAGE};
 use crate::util::Global;
 use crate::{debug, info, proto, warn};
 
+/// The most of a file `LoadImage` reads to run it.
+const MAX_LOADED: usize = 256 * 1024 * 1024;
+
 const SUBSYSTEM_APPLICATION: u16 = 10;
 const SUBSYSTEM_BOOT_DRIVER: u16 = 11;
 const SUBSYSTEM_RUNTIME_DRIVER: u16 = 12;
@@ -158,6 +161,12 @@ fn layout(file: &[u8]) -> Result<Loaded, PeError> {
     if !align.is_power_of_two() || size == 0 || headers > file.len() || headers as u64 > size || entry_rva >= size {
         return Err(PeError::Layout);
     }
+    // The optional header's fields and the data directories read below, and the
+    // section table, lie inside the headers, which the signature's hash covers.
+    let table_end = (opt + opt_size).saturating_add(40 * sections);
+    if opt_size < 112 || opt + 112 + 8 * dirs > opt + opt_size || table_end > headers {
+        return Err(PeError::Layout);
+    }
     let ty = code_type(subsystem);
     let pages = (size + align - PAGE).div_ceil(PAGE);
     let at = mem::map().allocate(efi::ALLOCATE_ANY_PAGES, ty, pages, 0, PAGE).map_err(|_| PeError::Memory)?;
@@ -183,7 +192,8 @@ fn layout(file: &[u8]) -> Result<Loaded, PeError> {
         if va + n > size as usize || va + vsize as usize > size as usize {
             return fail(PeError::Layout);
         }
-        image[va..va + n].copy_from_slice(&file[raw..raw + n]);
+        let Some(data) = file.get(raw..raw + n) else { return fail(PeError::Layout) };
+        image[va..va + n].copy_from_slice(data);
     }
 
     // Base relocations: data directory 5.
@@ -192,28 +202,28 @@ fn layout(file: &[u8]) -> Result<Loaded, PeError> {
         let (Some(rva), Some(len)) = (u32_at(file, opt + 112 + 40), u32_at(file, opt + 112 + 44)) else {
             return fail(PeError::Layout);
         };
-        let (mut at, end) = (rva as usize, (rva + len) as usize);
+        let (mut at, end) = (rva as usize, rva as usize + len as usize);
         if end > size as usize {
             return fail(PeError::Layout);
         }
         while at + 8 <= end {
-            let page = u32_at(image, at).unwrap() as usize;
-            let block = u32_at(image, at + 4).unwrap() as usize;
+            let (Some(page), Some(block)) = (u32_at(image, at), u32_at(image, at + 4)) else { return fail(PeError::Layout) };
+            let (page, block) = (page as usize, block as usize);
             if block < 8 || at + block > end {
                 break;
             }
             for e in (at + 8..at + block).step_by(2) {
-                let v = u16_at(image, e).unwrap();
+                let Some(v) = u16_at(image, e) else { return fail(PeError::Layout) };
                 let off = page + (v & 0xfff) as usize;
                 match v >> 12 {
                     0 => {}
                     10 if off + 8 <= size as usize => {
-                        let x = u64_at(image, off).unwrap().wrapping_add(delta);
-                        image[off..off + 8].copy_from_slice(&x.to_le_bytes());
+                        let Some(x) = u64_at(image, off) else { return fail(PeError::Layout) };
+                        image[off..off + 8].copy_from_slice(&x.wrapping_add(delta).to_le_bytes());
                     }
                     3 if off + 4 <= size as usize => {
-                        let x = u32_at(image, off).unwrap().wrapping_add(delta as u32);
-                        image[off..off + 4].copy_from_slice(&x.to_le_bytes());
+                        let Some(x) = u32_at(image, off) else { return fail(PeError::Layout) };
+                        image[off..off + 4].copy_from_slice(&x.wrapping_add(delta as u32).to_le_bytes());
                     }
                     _ => return fail(PeError::Layout),
                 }
@@ -292,7 +302,7 @@ pub fn load(parent: efi::Handle, path: *const u8, source: Option<&[u8]>) -> Resu
             if name.is_empty() {
                 return Err(efi::Status::NOT_FOUND);
             }
-            owned = Some(crate::fat::read_file(h, &name)?);
+            owned = Some(crate::fat::read_file(h, &name, MAX_LOADED)?);
             device = h;
             file_path = rest.to_vec();
         }

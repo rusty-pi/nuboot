@@ -215,7 +215,8 @@ pub fn render(out: &mut impl Write, record: &Record) -> fmt::Result {
     let (s, us) = (record.time_us / 1_000_000, (record.time_us % 1_000_000) as u32);
     let (dim, level, reset) = styles(record.level);
     write!(out, "{dim}{s:4}.{us:06}{reset} {level}{}{reset} ", record.level.name())?;
-    write!(out, "{:<width$} {}", record.target, record.message, width = TARGET_WIDTH)?;
+    write!(out, "{:<width$} ", record.target, width = TARGET_WIDTH)?;
+    write!(Printable(out), "{}", record.message)?;
     for (i, field) in record.fields.iter().enumerate() {
         let gap = if i == 0 { "  " } else { " " };
         write!(out, "{gap}{dim}{}={reset}", field.key)?;
@@ -256,7 +257,7 @@ struct Probe {
 impl Write for Probe {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         self.empty &= s.is_empty();
-        self.quote |= s.bytes().any(|b| b <= b' ' || b == b'"' || b == b'=');
+        self.quote |= s.bytes().any(|b| b <= b' ' || b == b'"' || b == b'=') || s.chars().any(char::is_control);
         Ok(())
     }
 }
@@ -272,7 +273,26 @@ impl<W: Write> Write for Escape<'_, W> {
                     self.0.write_char(c)?;
                 }
                 '\n' => self.0.write_str("\\n")?,
+                c if c.is_control() => write!(self.0, "\\x{:02x}", c as u32)?,
                 _ => self.0.write_char(c)?,
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Text as it is, but for control characters, which a terminal would act on
+/// (an escape sequence, a carriage return that overwrites the line) and which
+/// can come from a file name or a variable name: those are written as `\xNN`.
+struct Printable<'a, W: Write>(&'a mut W);
+
+impl<W: Write> Write for Printable<'_, W> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        for c in s.chars() {
+            if c.is_control() {
+                write!(self.0, "\\x{:02x}", c as u32)?;
+            } else {
+                self.0.write_char(c)?;
             }
         }
         Ok(())

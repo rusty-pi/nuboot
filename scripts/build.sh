@@ -33,7 +33,7 @@ if [ "${1:-}" = "--test-keys" ]; then
   suffix="-test"
   set -- --features test-keys "$@"
 fi
-cargo build --release "$@"
+cargo build --locked --release "$@"
 
 mkdir -p out
 # start4.elf goes on the medium without its debug information, but with the

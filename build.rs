@@ -27,6 +27,9 @@ fn arm_files(dir: &str) {
     println!("cargo:rerun-if-changed={dir}/keys");
     for var in ["PI4_PK_CERT", "PI4_KEK_CERT", "PI4_DB_CERT", "FIRMWARE_TIME"] {
         println!("cargo:rerun-if-env-changed={var}");
+        if let Some(path) = std::env::var_os(var).filter(|_| var.ends_with("_CERT")) {
+            println!("cargo:rerun-if-changed={}", path.to_string_lossy());
+        }
     }
     let test = std::env::var_os("CARGO_FEATURE_TEST_KEYS").is_some();
     build_uefi(dir, test);

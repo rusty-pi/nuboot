@@ -220,6 +220,11 @@ fn authenticode(img: &[u8]) -> Option<([u8; 32], &[u8])> {
     h.update(img.get(checksum + 4..dir)?);
     h.update(img.get(dir + 8..headers)?);
     let table = opt + opt_size;
+    // The section table is part of the headers the hash covers: one that runs
+    // past them would be loaded without being hashed.
+    if table.checked_add(40 * sections)? > headers {
+        return None;
+    }
     let mut raw: Vec<(usize, usize)> = (0..sections)
         .map(|i| Some((u32_at(img, table + 40 * i + 20)? as usize, u32_at(img, table + 40 * i + 16)? as usize)))
         .collect::<Option<_>>()?;
@@ -227,8 +232,10 @@ fn authenticode(img: &[u8]) -> Option<([u8; 32], &[u8])> {
     raw.sort_unstable();
     let mut hashed = headers;
     for (at, size) in raw {
+        // Sections that overlap would be hashed once each: what is hashed is
+        // at most the file.
+        hashed = hashed.checked_add(size).filter(|&n| n <= img.len())?;
         h.update(img.get(at..at.checked_add(size)?)?);
-        hashed += size;
     }
     // Whatever follows the sections, short of the certificates at the end.
     let end = img.len().checked_sub(cert_size)?;

@@ -8,9 +8,12 @@
 //! firmware ([`esrt::FIRMWARE_CLASS`]) or the EEPROM bootloader
 //! ([`esrt::EEPROM_CLASS`]), then a
 //! `WIN_CERTIFICATE_UEFI_GUID` holding a detached PKCS #7 signature over what
-//! follows it: `P4FW`, the version as a little-endian `u32`, the length of
-//! `boot.sig` as one, `boot.sig`, and `boot.img`. The bootloader checks that
-//! pair against the EEPROM's customer key when it boots it.
+//! follows it: `P4FW`, the resource's class GUID again, the version as a
+//! little-endian `u32`, the length of `boot.sig` as one, `boot.sig`, and
+//! `boot.img`. The class is in the signed part so that a capsule signed for the
+//! EEPROM bootloader cannot be handed to the firmware, or the other way round.
+//! The bootloader checks the pair against the EEPROM's customer key when it
+//! boots it.
 //!
 //! An update of the firmware takes three boots:
 //!
@@ -43,8 +46,17 @@ const DIRECTORY: &str = "\\EFI\\UpdateCapsule";
 const MAGIC: &[u8; 4] = b"P4FW";
 const HEADER: usize = 28;
 /// The most an image may carry.
-const MAX_IMAGE: usize = 64 * 1024 * 1024;
+const MAX_IMAGE: usize = 16 * 1024 * 1024;
+/// The most capsules one scan reads, and how long it goes on: each is read
+/// whole before it is checked, and every volume is scanned, USB drives included.
+const MAX_CAPSULES: usize = 8;
+const SCAN_BUDGET_US: u64 = 30_000_000;
 const MAX_SIGNATURE: usize = 4096;
+/// The most a capsule file may be: the image, and the header and the signature
+/// around it.
+const MAX_CAPSULE: usize = MAX_IMAGE + 64 * 1024;
+/// The most a copy of the variable store may be.
+const MAX_BACKUP: usize = 1024 * 1024;
 
 /// What an update leaves in the flash store: the state and the version the
 /// update carries.
@@ -140,10 +152,13 @@ fn check(file: &[u8]) -> Result<Capsule, (u32, &'static str)> {
     if image.get(..4) != Some(MAGIC) {
         return Err(invalid("image is not firmware"));
     }
-    let version = u32_at(image, 4).ok_or(invalid("no version"))?;
-    let sig_len = u32_at(image, 8).ok_or(invalid("no boot.sig"))? as usize;
-    let sig = image.get(12..12 + sig_len).filter(|_| sig_len <= MAX_SIGNATURE).ok_or(invalid("boot.sig does not fit"))?;
-    let img = &image[12 + sig_len..];
+    if image.get(4..20) != Some(kind.class().as_bytes()) {
+        return Err(invalid("the signed image is for another resource than the capsule header names"));
+    }
+    let version = u32_at(image, 20).ok_or(invalid("no version"))?;
+    let sig_len = u32_at(image, 24).ok_or(invalid("no boot.sig"))? as usize;
+    let sig = image.get(28..28 + sig_len).filter(|_| sig_len <= MAX_SIGNATURE).ok_or(invalid("boot.sig does not fit"))?;
+    let img = &image[28 + sig_len..];
     if img.is_empty() || img.len() > MAX_IMAGE {
         return Err((esrt::INSUFFICIENT_RESOURCES, "boot.img is empty or too large"));
     }
@@ -192,12 +207,12 @@ fn staged(fs: efi::Handle) -> bool {
 
 /// Whether the file `name` on `fs` holds exactly `data`.
 fn holds(fs: efi::Handle, name: &str, data: &[u8]) -> bool {
-    fat::read_file(fs, &wide(name)).is_ok_and(|read| read == data)
+    fat::read_file(fs, &wide(name), MAX_IMAGE).is_ok_and(|read| read == data)
 }
 
 /// Whether the signature file `sig` on `fs` is the digest of the image `img`.
 fn pair(fs: efi::Handle, img: &str, sig: &str) -> bool {
-    let (Ok(img), Ok(sig)) = (fat::read_file(fs, &wide(img)), fat::read_file(fs, &wide(sig))) else { return false };
+    let (Ok(img), Ok(sig)) = (fat::read_file(fs, &wide(img), MAX_IMAGE), fat::read_file(fs, &wide(sig), MAX_SIGNATURE)) else { return false };
     core::str::from_utf8(&sig).is_ok_and(|text| text.starts_with(hex(&crate::sha256::digest(&img)).as_str()))
 }
 
@@ -302,7 +317,7 @@ fn restore_store() -> bool {
         return false;
     }
     let Some(fs) = boot_fs() else { return false };
-    let Ok(backup) = fat::read_file(fs, &wide(BACKUP)) else { return false };
+    let Ok(backup) = fat::read_file(fs, &wide(BACKUP), MAX_BACKUP) else { return false };
     let _ = fat::remove_file(fs, &[], &wide(BACKUP));
     if !crate::eeprom::restore(&backup) {
         warn!("capsule", "variable store not restored");
@@ -316,13 +331,19 @@ fn restore_store() -> bool {
 pub fn scan() {
     resume();
     let directory = wide(DIRECTORY);
+    let (started, mut read) = (crate::util::counter_us(), 0);
     for fs in proto::with(Some(&simple_file_system::PROTOCOL_GUID)) {
         let Ok(names) = fat::list_files(fs, &directory) else { continue };
         for name in names.into_iter().filter(|n| n.len() > 4 && eq_ignore_case(&n[n.len() - 4..], &wide(".cap"))) {
+            if read == MAX_CAPSULES || crate::util::counter_us() - started > SCAN_BUDGET_US {
+                warn!("capsule", "no more capsules are read at this boot"; read = read);
+                return;
+            }
+            read += 1;
             let mut path = directory.clone();
             path.push(b'\\' as u16);
             path.extend_from_slice(&name);
-            let file = match fat::read_file(fs, &path) {
+            let file = match fat::read_file(fs, &path, MAX_CAPSULE) {
                 Ok(file) => file,
                 Err(status) => {
                     warn!("capsule", "capsule unreadable"; path = W(&path), status = status.as_usize());

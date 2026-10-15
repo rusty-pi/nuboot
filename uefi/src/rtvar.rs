@@ -461,7 +461,7 @@ pub extern "efiapi" fn set_variable(
     if attributes & AUTH != 0 {
         return efi::Status::WRITE_PROTECTED;
     }
-    if attributes & BS == 0 || attributes & RT == 0 || size > MAX_VARIABLE {
+    if attributes & NV == 0 || attributes & BS == 0 || attributes & RT == 0 || size > MAX_VARIABLE {
         return efi::Status::INVALID_PARAMETER;
     }
     let kept = if append { existing.as_ref().map_or(0, |e| e.data_len) } else { 0 };

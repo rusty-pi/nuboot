@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Build a firmware update capsule, the file fwupd puts in \\EFI\\UpdateCapsule.
 
-    mkcapsule.py KEY CERT VERSION OUT [--class firmware|eeprom] [--boot-img FILE --boot-sig FILE] [--corrupt]
+    mkcapsule.py KEY CERT VERSION OUT [--class firmware|eeprom] [--header-class firmware|eeprom] [--boot-img FILE --boot-sig FILE] [--corrupt]
 
 KEY and CERT (PEM) are the signer's: a key one of the firmware's own `db`
 entries holds. VERSION is the number the ESRT carries once the capsule is
 applied: for the EEPROM the time in the pieeprom.sig its boot.img carries.
---class says which resource the capsule is for. The capsule carries a boot.img and its boot.sig
+--class says which resource the capsule is for. --header-class puts the other
+resource's class in the capsule header only, which the firmware refuses (the
+class is signed). The capsule carries a boot.img and its boot.sig
 (scripts/mkbootimg.py); without them a short test pattern with a signature
 line of the right shape that no bootloader would accept. --corrupt flips a
 byte after the signing.
@@ -39,6 +41,11 @@ def main():
         at = args.index("--class")
         resource = args[at + 1]
         del args[at : at + 2]
+    header = None
+    if "--header-class" in args:
+        at = args.index("--header-class")
+        header = args[at + 1]
+        del args[at : at + 2]
     for flag in ("--boot-img", "--boot-sig"):
         if flag in args:
             at = args.index(flag)
@@ -53,7 +60,7 @@ def main():
     if len(args) != 4:
         sys.exit(__doc__)
     key, cert, version, out = args
-    image = b"P4FW" + struct.pack("<II", int(version, 0), len(sig)) + sig + img
+    image = b"P4FW" + CLASSES[resource].bytes_le + struct.pack("<II", int(version, 0), len(sig)) + sig + img
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "image")
         open(path, "wb").write(image)
@@ -66,7 +73,7 @@ def main():
     if corrupt:
         image = image[:-1] + bytes([image[-1] ^ 1])
     body = descriptor + image
-    capsule = CLASSES[resource].bytes_le + struct.pack("<III", HEADER, 0x00010000, HEADER + len(body)) + body
+    capsule = CLASSES[header or resource].bytes_le + struct.pack("<III", HEADER, 0x00010000, HEADER + len(body)) + body
     open(out, "wb").write(capsule)
 
 

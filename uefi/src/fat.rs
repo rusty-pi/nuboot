@@ -14,7 +14,7 @@ use r_efi::protocols::{file, simple_file_system};
 
 use crate::block::{self, Volume};
 use crate::util::{eq_ignore_case, wstr};
-use crate::{debug, proto};
+use crate::{debug, proto, warn};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -74,6 +74,8 @@ const ATTR_DIR: u8 = 0x10;
 const ATTR_VOLUME: u8 = 0x08;
 const ATTR_LFN: u8 = 0x0f;
 const CHUNK: u64 = 4096;
+/// The most of a directory that is read.
+const MAX_DIRECTORY: u64 = 1 << 20;
 
 impl Fs {
     fn fat_byte(&mut self, at: u64) -> Option<u8> {
@@ -113,6 +115,9 @@ impl Fs {
 
     /// Read `buf.len()` bytes from `pos` of the chain starting at `first`.
     fn read_chain(&mut self, first: u32, pos: u64, buf: &mut [u8]) -> Result<(), ()> {
+        if first < 2 || first >= self.clusters + 2 {
+            return Err(());
+        }
         let target = pos / self.cluster_size;
         let (mut c, mut index) = if self.walk.0 == first && self.walk.1 <= target { (self.walk.2, self.walk.1) } else { (first, 0) };
         while index < target {
@@ -148,12 +153,16 @@ impl Fs {
         Ok(())
     }
 
+    /// The size of the chain from `first`, or of as much of it as a directory
+    /// is read in ([`MAX_DIRECTORY`]): a chain that loops back on itself ends
+    /// there, not after every cluster the volume claims to have.
     fn chain_len(&mut self, first: u32) -> u64 {
+        let most = MAX_DIRECTORY / self.cluster_size + 1;
         let mut n = 0;
         let mut c = Some(first);
         while let Some(x) = c {
             n += 1;
-            if n > self.clusters as u64 {
+            if n > self.clusters as u64 || n >= most {
                 break;
             }
             c = self.next(x);
@@ -169,7 +178,7 @@ impl Fs {
             let first = if dir.cluster == 0 { self.root_cluster } else { dir.cluster };
             (self.chain_len(first), false)
         };
-        let mut buf = vec![0u8; len.min(1 << 20) as usize];
+        let mut buf = vec![0u8; len.min(MAX_DIRECTORY) as usize];
         let ok = if root_fixed {
             self.vol.read_bytes(self.root_dir, &mut buf).is_ok()
         } else {
@@ -301,6 +310,18 @@ pub fn mount(vol: &'static Volume) {
     } else {
         Kind::Fat32
     };
+    // The FAT has to hold an entry for every cluster, with room for the byte
+    // after the last that a FAT12 entry spans.
+    let needed = match kind {
+        Kind::Fat12 => (clusters as u64 + 2) * 3 / 2 + 2,
+        Kind::Fat16 => (clusters as u64 + 2) * 2,
+        Kind::Fat32 => (clusters as u64 + 2) * 4,
+    };
+    if fat_size * bps < needed {
+        warn!("fat", "file system not mounted, its FAT is shorter than its clusters need"; path = crate::devpath::Text(&vol.path),
+            fat_bytes = fat_size * bps, clusters = clusters);
+        return;
+    }
     let mut label = [0u8; 11];
     label.copy_from_slice(if kind == Kind::Fat32 { &boot[71..82] } else { &boot[43..54] });
     let fs = Box::leak(Box::new(Fs {
@@ -335,6 +356,10 @@ struct File {
     /// The directories from the root down to this one's, for `..`.
     parents: Vec<Entry>,
     pos: u64,
+    /// A directory's entries, read when it is first read and again after
+    /// `SetPosition(0)`: each `Read` gives one, and reading the whole
+    /// directory for every one costs the square of its size.
+    listing: Option<Vec<Entry>>,
 }
 
 fn new_file(fs: *mut Fs, entry: Entry, parents: Vec<Entry>) -> *mut file::Protocol {
@@ -360,6 +385,7 @@ fn new_file(fs: *mut Fs, entry: Entry, parents: Vec<Entry>) -> *mut file::Protoc
         entry,
         parents,
         pos: 0,
+        listing: None,
     }));
     f as *mut file::Protocol
 }
@@ -505,13 +531,12 @@ extern "efiapi" fn read(this_: *mut file::Protocol, size: *mut usize, buf: *mut 
     let f = this(this_);
     let fs = unsafe { &mut *f.fs };
     if f.entry.attr & ATTR_DIR != 0 {
-        let entries = fs.entries(&f.entry);
-        let entries: Vec<&Entry> = entries.iter().collect();
-        let Some(e) = entries.get(f.pos as usize) else {
+        let entries = f.listing.get_or_insert_with(|| fs.entries(&f.entry));
+        let Some(e) = entries.get(f.pos as usize).cloned() else {
             unsafe { *size = 0 };
             return efi::Status::SUCCESS;
         };
-        let need = file_info(fs, e, buf as *mut u8, unsafe { *size });
+        let need = file_info(fs, &e, buf as *mut u8, unsafe { *size });
         if need > unsafe { *size } {
             unsafe { *size = need };
             return efi::Status::BUFFER_TOO_SMALL;
@@ -556,6 +581,7 @@ extern "efiapi" fn set_position(this_: *mut file::Protocol, pos: u64) -> efi::St
             return efi::Status::UNSUPPORTED;
         }
         f.pos = 0;
+        f.listing = None;
     } else {
         f.pos = if pos == u64::MAX { f.entry.size as u64 } else { pos };
     }
@@ -646,9 +672,11 @@ extern "efiapi" fn flush_ex(_this: *mut file::Protocol, _token: *mut file::IoTok
     efi::Status::UNSUPPORTED
 }
 
-/// Read a whole file from the file system on `handle`, for the boot manager
-/// and `LoadImage`.
-pub fn read_file(handle: efi::Handle, path: &[u16]) -> Result<Vec<u8>, efi::Status> {
+/// Read a whole file of at most `max` bytes from the file system on `handle`,
+/// for the boot manager and `LoadImage`. A size the directory entry claims is
+/// not trusted: it is checked against `max` and against what the volume can
+/// hold, and the memory for it is asked for without panicking.
+pub fn read_file(handle: efi::Handle, path: &[u16], max: usize) -> Result<Vec<u8>, efi::Status> {
     let sfs = proto::get(handle, &simple_file_system::PROTOCOL_GUID).ok_or(efi::Status::NOT_FOUND)?
         as *mut simple_file_system::Protocol;
     let mut root = core::ptr::null_mut();
@@ -669,7 +697,18 @@ pub fn read_file(handle: efi::Handle, path: &[u16]) -> Result<Vec<u8>, efi::Stat
         close(f);
         return Err(efi::Status::NOT_FOUND);
     }
-    let mut data = vec![0u8; file.entry.size as usize];
+    let size = file.entry.size as usize;
+    let capacity = unsafe { (*file.fs).clusters as u64 * (*file.fs).cluster_size };
+    if size > max || size as u64 > capacity {
+        close(f);
+        return Err(efi::Status::BAD_BUFFER_SIZE);
+    }
+    let mut data = Vec::new();
+    if data.try_reserve_exact(size).is_err() {
+        close(f);
+        return Err(efi::Status::OUT_OF_RESOURCES);
+    }
+    data.resize(size, 0);
     let mut n = data.len();
     let s = read(f, &mut n, data.as_mut_ptr() as *mut c_void);
     close(f);

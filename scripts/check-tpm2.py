@@ -313,6 +313,7 @@ def check_signing(r):
         fail(f"VerifySignature with an RSA key: {rc:#x} {body.hex()}")
     expect_rc(r, "verify-rsa-forged", 0x9B | 0x40 | 0x200)
     expect_rc(r, "sign-external", 0x9C | 0x100)
+    expect_rc(r, "load-external-long", 0x95 | 0x40 | 0x200)
     expect_rc(r, "flush-external", 0)
 
 

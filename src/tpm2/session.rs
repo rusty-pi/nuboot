@@ -10,7 +10,7 @@
 use super::object::{self, ALG_AES, ALG_CFB, ALG_ECC, RH_NULL, RH_PASSWORD};
 use super::{
     ALG_NULL, ALG_SHA256, In, Out, RC_ATTRIBUTES, RC_AUTH_FAIL, RC_AUTH_MISSING, RC_AUTH_TYPE, RC_AUTH_UNAVAILABLE, RC_BAD_AUTH,
-    RC_COMMAND_SIZE, RC_HANDLE, RC_POLICY_CC, RC_PCR_CHANGED, RC_POLICY_FAIL, RC_RANGE, RC_SESSION_MEMORY, RC_SIZE, RC_SYMMETRIC,
+    RC_COMMAND_SIZE, RC_FAILURE, RC_HANDLE, RC_POLICY_CC, RC_PCR_CHANGED, RC_POLICY_FAIL, RC_RANGE, RC_SESSION_MEMORY, RC_SIZE, RC_SYMMETRIC,
     RC_VALUE, RC_P, RC_S, RC_1, RC_2, ST_NO_SESSIONS, ST_SESSIONS,
 };
 use crate::{aes, kdf, keystore, p256, rng, sha256};
@@ -453,6 +453,9 @@ pub fn authorize(
             if session.sym_alg != ALG_AES {
                 return Err(session_error(RC_ATTRIBUTES, i));
             }
+            if wire.len() > unsafe { (*(&raw const PLAIN)).len() } {
+                return Err(session_error(RC_SIZE, i));
+            }
             a.plain_len = wire.len();
             let plain = unsafe { &mut (&mut *(&raw mut PLAIN))[..wire.len()] };
             plain.copy_from_slice(wire);
@@ -485,6 +488,19 @@ pub fn authorize(
 /// session asked) and the authorization area. The length.
 pub fn respond(a: &mut Authorization, code: u32, response: &mut [u8]) -> usize {
     let tagged_sessions = a.count != 0;
+    // The TPM nonces the response carries. A session that cannot be given a
+    // fresh one gets no response: the old nonce would let a command be replayed.
+    let mut nonces = [[0u8; 32]; MAX_SESSIONS];
+    for i in 0..a.count {
+        if !a.used[i].password {
+            if let Some(session) = session_of(a.used[i].handle) {
+                if !rng::fill(&mut session.nonce_tpm) {
+                    return super::fail(response, RC_FAILURE);
+                }
+                nonces[i] = session.nonce_tpm;
+            }
+        }
+    }
     let mut out = Out { buf: response, at: 10 };
     if let Some(handle) = a.new_handle {
         out.u32(handle);
@@ -492,16 +508,6 @@ pub fn respond(a: &mut Authorization, code: u32, response: &mut [u8]) -> usize {
     let mut wire = [0u8; 1000];
     wire[..a.params_len].copy_from_slice(&a.params[..a.params_len]);
     let len = a.params_len;
-    // The TPM nonces the response carries.
-    let mut nonces = [[0u8; 32]; MAX_SESSIONS];
-    for i in 0..a.count {
-        if !a.used[i].password {
-            if let Some(session) = session_of(a.used[i].handle) {
-                rng::fill(&mut session.nonce_tpm);
-                nonces[i] = session.nonce_tpm;
-            }
-        }
-    }
     if let Some(i) = a.encrypt {
         let used = a.used[i];
         let key = &used.key[..used.key_len];

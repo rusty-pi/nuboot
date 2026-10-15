@@ -33,6 +33,9 @@ const ROWS: usize = 8;
 const LABEL: &[u8] = b"pi4-server-firmware boot key v1";
 const TPM_LABEL: &[u8] = b"pi4-server-firmware TPM secret v1";
 pub const PCRS: usize = 24;
+/// The PCRs of dynamic root of trust measurements, which nothing here does and
+/// which no caller of the mailbox or the TPM may extend.
+const DRTM_PCRS: core::ops::RangeInclusive<usize> = 17..=22;
 
 static mut PCR: [[u8; 32]; PCRS] = [[0; 32]; PCRS];
 static mut COUNT: u32 = 0;
@@ -46,7 +49,7 @@ pub enum Refused {
 
 /// Fold `digest` into register `pcr`. How many extends that makes.
 pub fn extend(pcr: usize, digest: &[u8; 32]) -> Result<u32, Refused> {
-    if pcr >= PCRS {
+    if pcr >= PCRS || DRTM_PCRS.contains(&pcr) {
         return Err(Refused::NoSuchRegister);
     }
     let register = unsafe { &mut (*(&raw mut PCR))[pcr] };
@@ -111,15 +114,23 @@ pub fn tpm_secret(label: &[u8], stable: bool) -> [u8; 32] {
         }
         None => {
             if !unsafe { read_volatile(&raw const BOOT_SECRET_SET) } {
-                let mut fresh = [0u8; 32];
-                rng::fill(&mut fresh);
-                unsafe {
-                    write_volatile(&raw mut BOOT_SECRET, fresh);
-                    write_volatile(&raw mut BOOT_SECRET_SET, true);
-                }
+                seed();
             }
             sha256::hmac(unsafe { &*(&raw const BOOT_SECRET) }, message)
         }
+    }
+}
+
+/// Draw the secret that stands in for the device key where there is none, and
+/// for the null hierarchy. The firmware does it at its start, while a generator
+/// that has run dry is the board's fault and not the OS's doing; a board with no
+/// random numbers does not boot with a seed of zeros.
+pub fn seed() {
+    let mut fresh = [0u8; 32];
+    assert!(rng::fill(&mut fresh), "no random numbers for the TPM's seed");
+    unsafe {
+        write_volatile(&raw mut BOOT_SECRET, fresh);
+        write_volatile(&raw mut BOOT_SECRET_SET, true);
     }
 }
 

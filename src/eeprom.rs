@@ -62,11 +62,11 @@ pub fn find(name: &[u8]) -> Option<Section> {
             }
             let field = &hdr[8..24];
             let found = match magic {
-                MAGIC_BOOTCODE => (name == b"bootcode.bin").then(|| (off + 8, len - 20)),
-                MAGIC_FILE => name_eq(field, name).then(|| (off + 24, len - 16)),
-                MAGIC_FILE_SIGNED => name_eq(field, name).then(|| (off + 24, len - 36)),
+                MAGIC_BOOTCODE => (name == b"bootcode.bin").then(|| (off + 8, len.saturating_sub(20))),
+                MAGIC_FILE => name_eq(field, name).then(|| (off + 24, len.saturating_sub(16))),
+                MAGIC_FILE_SIGNED => name_eq(field, name).then(|| (off + 24, len.saturating_sub(36))),
                 MAGIC_PACKED_A | MAGIC_PACKED_B => {
-                    name_eq(field, name).then(|| (off + 24, len - 48))
+                    name_eq(field, name).then(|| (off + 24, len.saturating_sub(48)))
                 }
                 _ => None,
             };

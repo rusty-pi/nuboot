@@ -57,7 +57,7 @@ impl Volume {
     /// Read whole blocks of the volume.
     pub fn read_blocks(&self, lba: u64, buf: &mut [u8]) -> Result<(), ()> {
         let bs = self.block_size() as u64;
-        if buf.len() as u64 % bs != 0 || lba + buf.len() as u64 / bs > self.blocks() {
+        if buf.len() as u64 % bs != 0 || lba.checked_add(buf.len() as u64 / bs).is_none_or(|end| end > self.blocks()) {
             return Err(());
         }
         if buf.is_empty() {
@@ -69,7 +69,7 @@ impl Volume {
     /// Write whole blocks of the volume.
     pub fn write_blocks(&self, lba: u64, buf: &[u8]) -> Result<(), ()> {
         let bs = self.block_size() as u64;
-        if buf.len() as u64 % bs != 0 || lba + buf.len() as u64 / bs > self.blocks() {
+        if buf.len() as u64 % bs != 0 || lba.checked_add(buf.len() as u64 / bs).is_none_or(|end| end > self.blocks()) {
             return Err(());
         }
         if buf.is_empty() {
