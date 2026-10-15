@@ -75,6 +75,7 @@ const PKCS7: efi::Guid =
 enum Kind {
     Firmware,
     Eeprom,
+    Update,
 }
 
 impl Kind {
@@ -82,12 +83,13 @@ impl Kind {
         match self {
             Kind::Firmware => &esrt::FIRMWARE_CLASS,
             Kind::Eeprom => &esrt::EEPROM_CLASS,
+            Kind::Update => &esrt::UPDATE_CLASS,
         }
     }
 
     fn running(self) -> u32 {
         match self {
-            Kind::Firmware => esrt::VERSION,
+            Kind::Firmware | Kind::Update => esrt::VERSION,
             Kind::Eeprom => crate::eeprom::version(),
         }
     }
@@ -96,17 +98,19 @@ impl Kind {
         match self {
             Kind::Firmware => RESULT,
             Kind::Eeprom => "EepromUpdateResult",
+            Kind::Update => "BundleUpdateResult",
         }
     }
 
     fn of(class: &[u8]) -> Option<Kind> {
-        [Kind::Firmware, Kind::Eeprom].into_iter().find(|k| k.class().as_bytes() == class)
+        [Kind::Firmware, Kind::Eeprom, Kind::Update].into_iter().find(|k| k.class().as_bytes() == class)
     }
 
     fn name(self) -> &'static str {
         match self {
             Kind::Firmware => "firmware",
             Kind::Eeprom => "EEPROM",
+            Kind::Update => "update",
         }
     }
 }
@@ -156,6 +160,19 @@ fn check(file: &[u8]) -> Result<Capsule, (u32, &'static str)> {
         return Err(invalid("the signed image is for another resource than the capsule header names"));
     }
     let version = u32_at(image, 20).ok_or(invalid("no version"))?;
+    if kind == Kind::Update {
+        let bundle = &image[24..];
+        if !crate::bundle::well_formed(bundle, version) {
+            return Err(invalid("not an update bundle for the version the capsule carries"));
+        }
+        if version <= kind.running() {
+            return Err((esrt::INCORRECT_VERSION, "version is not newer than the running one's"));
+        }
+        if version < crate::bundle::newest() {
+            return Err((esrt::INCORRECT_VERSION, "version is older than the update installed"));
+        }
+        return Ok(Capsule { kind, version, sig: Vec::new(), img: bundle.to_vec() });
+    }
     let sig_len = u32_at(image, 24).ok_or(invalid("no boot.sig"))? as usize;
     let sig = image.get(28..28 + sig_len).filter(|_| sig_len <= MAX_SIGNATURE).ok_or(invalid("boot.sig does not fit"))?;
     let img = &image[28 + sig_len..];
@@ -251,6 +268,7 @@ pub fn resume() {
     match kind {
         Kind::Firmware => resume_firmware(state, version),
         Kind::Eeprom => resume_eeprom(version),
+        Kind::Update => {}
     }
 }
 
@@ -330,6 +348,7 @@ fn restore_store() -> bool {
 /// Look for capsules on every file system and check each one.
 pub fn scan() {
     resume();
+    crate::bundle::boot();
     let directory = wide(DIRECTORY);
     let (started, mut read) = (crate::util::counter_us(), 0);
     for fs in proto::with(Some(&simple_file_system::PROTOCOL_GUID)) {
@@ -353,7 +372,10 @@ pub fn scan() {
             match check(&file) {
                 Ok(capsule) => {
                     info!("capsule", "capsule verified"; path = W(&path), version = capsule.version, bytes = capsule.img.len());
-                    stage(fs, &directory, &name, &capsule);
+                    match capsule.kind {
+                        Kind::Update => crate::bundle::install(fs, &directory, &name, &capsule.img, capsule.version),
+                        _ => stage(fs, &directory, &name, &capsule),
+                    }
                 }
                 Err((status, why)) => {
                     warn!("capsule", "capsule refused"; path = W(&path), reason = why);

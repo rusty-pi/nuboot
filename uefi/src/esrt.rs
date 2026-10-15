@@ -23,6 +23,11 @@ pub const FIRMWARE_CLASS: efi::Guid =
 pub const EEPROM_CLASS: efi::Guid =
     efi::Guid::from_fields(0x3f8a0c5e, 0x91d2, 0x4b7a, 0xa6, 0xc3, &[0x5d, 0x1e, 0x08, 0xf2, 0xb9, 0x47]);
 
+/// What a capsule for an update bundle names: the VPU firmware and this one,
+/// signed by an update key instead of the board owner's.
+pub const UPDATE_CLASS: efi::Guid =
+    efi::Guid::from_fields(0xb4c1e7a2, 0x6d39, 0x4f58, 0x8e, 0x10, &[0x72, 0xa9, 0xc5, 0xd3, 0xf0, 0xb6]);
+
 const FIRMWARE_TYPE_SYSTEM: u32 = 1;
 const FIRMWARE_TYPE_DEVICE: u32 = 2;
 /// `ESRT` entry's version: 1.
@@ -60,7 +65,7 @@ struct Table {
     count: u32,
     count_max: u32,
     version: u64,
-    entries: [Entry; 2],
+    entries: [Entry; 3],
 }
 
 static TABLE: Global<*mut Table> = Global::new(core::ptr::null_mut());
@@ -85,12 +90,21 @@ pub fn init() {
     let at = mem::alloc_pages(efi::BOOT_SERVICES_DATA, 1).expect("ESRT page") as *mut Table;
     unsafe {
         at.write(Table {
-            count: 2,
-            count_max: 2,
+            count: 3,
+            count_max: 3,
             version: TABLE_VERSION,
             entries: [
                 Entry {
                     class: FIRMWARE_CLASS,
+                    kind: FIRMWARE_TYPE_SYSTEM,
+                    version: VERSION,
+                    lowest_supported: 1,
+                    capsule_flags: 0,
+                    last_attempt_version: 0,
+                    last_attempt_status: SUCCESS,
+                },
+                Entry {
+                    class: UPDATE_CLASS,
                     kind: FIRMWARE_TYPE_SYSTEM,
                     version: VERSION,
                     lowest_supported: 1,

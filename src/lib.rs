@@ -49,6 +49,7 @@ pub mod timer;
 pub mod thermal;
 pub mod tpm2;
 pub mod tpm_crb;
+pub mod update;
 pub mod usb;
 pub mod varstore;
 pub mod vl805;

@@ -7,8 +7,75 @@ fn main() {
     // USB boot.
     println!("cargo:rustc-link-arg-bin=start4=-Wl,-q");
     println!("cargo:rerun-if-changed=start4.ld");
+    println!("cargo:rustc-link-arg-bin=start4-update=-T{dir}/start4-update.ld");
+    println!("cargo:rerun-if-changed=start4-update.ld");
     commit();
+    firmware_time();
     arm_files(&dir);
+    update_keys(&dir);
+}
+
+/// What orders one build after another, as a number: `FIRMWARE_TIME` when it
+/// is set, else the release `FIRMWARE_VERSION` (`X.Y.Z`, the tag) packed as
+/// `X<<24 | Y<<16 | Z`, else the commit's time, which no release is above. The
+/// UEFI firmware reads the same, so both halves of a build report one version.
+fn firmware_time() {
+    println!("cargo:rerun-if-env-changed=FIRMWARE_TIME");
+    println!("cargo:rerun-if-env-changed=FIRMWARE_VERSION");
+    let release = std::env::var("FIRMWARE_VERSION").ok().filter(|v| !v.is_empty());
+    let number = std::env::var("FIRMWARE_TIME")
+        .ok()
+        .and_then(|t| t.parse::<u32>().ok())
+        .or_else(|| release.as_deref().map(pack_release))
+        .unwrap_or_else(|| {
+            Command::new("git")
+                .args(["log", "-1", "--format=%ct"])
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .and_then(|t| t.trim().parse().ok())
+                .unwrap_or(0)
+        });
+    println!("cargo:rustc-env=FIRMWARE_TIME={number}");
+    println!("cargo:rustc-env=FIRMWARE_RELEASE={}", release.unwrap_or_default());
+}
+
+/// `X.Y.Z` as a number that orders releases: at most 255.255.65535.
+fn pack_release(release: &str) -> u32 {
+    let parts: Vec<u32> = release
+        .split('.')
+        .map(|part| part.parse().ok().filter(|n: &u32| part == n.to_string()))
+        .collect::<Option<_>>()
+        .unwrap_or_default();
+    match parts[..] {
+        [major, minor, patch] if major <= 0xff && minor <= 0xff && patch <= 0xffff => major << 24 | minor << 16 | patch,
+        _ => panic!("FIRMWARE_VERSION={release}: a release is X.Y.Z, at most 255.255.65535"),
+    }
+}
+
+/// The keys an update bundle is signed by, as the 64 bytes of each public
+/// point: `PI4_UPDATE_PUB` names one, and `keys/update.pub` is the one
+/// `scripts/genkeys.sh` makes. The test build also trusts the test key the
+/// scenarios sign their bundles with.
+fn update_keys(dir: &str) {
+    println!("cargo:rerun-if-env-changed=PI4_UPDATE_PUB");
+    let path = std::env::var("PI4_UPDATE_PUB")
+        .ok()
+        .filter(|p| !p.is_empty())
+        .unwrap_or_else(|| format!("{dir}/keys/update.pub"));
+    println!("cargo:rerun-if-changed={path}");
+    let mut keys = std::fs::read(&path).unwrap_or_else(|e| {
+        panic!("{path}: {e}; the firmware carries an update key: PI4_UPDATE_PUB names its public half, and scripts/genkeys.sh makes keys/update.pub")
+    });
+    if std::env::var_os("CARGO_FEATURE_TEST_KEYS").is_some() {
+        let test = format!("{dir}/out/test-keys/update.pub");
+        println!("cargo:rerun-if-changed={test}");
+        keys.extend(std::fs::read(&test).unwrap_or_else(|e| panic!("{test}: {e}")));
+    }
+    assert!(!keys.is_empty() && keys.len() % 64 == 0, "{path}: an update key is the 64 bytes of a P-256 point");
+    let file = format!("{}/update-keys.bin", std::env::var("OUT_DIR").unwrap());
+    std::fs::write(&file, keys).unwrap();
+    println!("cargo:rustc-env=UPDATE_KEYS={file}");
 }
 
 /// What the firmware hands the ARM: the image the cores start in, which

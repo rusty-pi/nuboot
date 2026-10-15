@@ -4,9 +4,13 @@
 # (scripts/build-uefi.sh) and the board's device tree. It also fetches
 # out/stock-pieeprom.bin, the EEPROM image the scenarios boot.
 #
+# It also leaves out/start4-update.bin: the same firmware linked for the
+# update slot, which scripts/mkbundle.py signs as an update.
+#
 # --test-keys builds out/start4-test.elf instead, whose UEFI firmware also
 # trusts the test key the scenarios' EFI applications are signed with
-# (`cargo build --features test-keys`).
+# (`cargo build --features test-keys`), and out/start4-update-test.bin, whose
+# updates a test update key may also sign.
 set -eu
 
 # The stock EEPROM image the scenarios boot.
@@ -40,6 +44,9 @@ mkdir -p out
 # relocations the bootloader needs to place it lower for a USB boot.
 toolchain/bin/vc4-elf-objcopy --strip-debug target/vc4-none-elf/release/start4 "out/start4$suffix.elf"
 toolchain/bin/vc4-elf-size "out/start4$suffix.elf"
+# The same firmware linked for the update slot, as the flat binary that
+# scripts/mkbundle.py signs.
+toolchain/bin/vc4-elf-objcopy -O binary target/vc4-none-elf/release/start4-update "out/start4-update$suffix.bin"
 # The test build's extras: the tamper scenario's EEPROM image, a variable store
 # with damage in it, and start4-test.elf as the signed boot.img of a board with
 # signed boot, once with a key the EEPROM trusts (out/boot-test-pubkey.bin) and

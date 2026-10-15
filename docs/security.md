@@ -53,6 +53,7 @@ above).
 | the boot ROM, and the customer key hash fused in the OTP | Raspberry Pi, and the board's owner | the bootloader in the EEPROM is Raspberry Pi's, and the public key it checks `boot.img` against is the owner's |
 | the EEPROM bootloader, with the owner's public key | the owner | `start4.elf` comes out of a `boot.img` whose `boot.sig` the owner's key made |
 | `start4.elf` | the firmware's builder | everything below |
+| the update keys, which `start4.elf` carries | the firmware's builder | which firmware replaces it at the next boot, with no signature by the owner |
 | `PK`, `KEK`, `db` | the firmware's builder | which images UEFI runs, and which updates it takes |
 
 **The guarantees need signed boot programmed in the OTP.** On a board without
@@ -145,6 +146,52 @@ does not verify the RSA signature of `boot.sig` itself, it hands the pair to the
 bootloader, which does. A `db` key can stage an update that the bootloader then
 refuses. Where signed boot is absent, the boot medium is writable by whoever
 holds it, and a capsule adds nothing to that.
+
+### Updates the owner does not sign
+
+A board's owner does not have to sign each firmware image. The `start4.elf` the
+owner signs, the loader, carries the update keys: P-256 public keys, built in
+from `PI4_UPDATE_PUB` or `keys/update.pub`. A capsule for the update resource
+(a `db` key signs it, as every capsule) carries a bundle, a whole firmware
+image linked for the update slot and signed by an update key
+([updates.md](updates.md#updates-the-owner-does-not-sign)).
+
+UEFI keeps the bundle and leaves it in RAM across a reset; it is never trusted
+for anything else. The loader checks the signature itself, over a digest of a
+fixed label, the header and the image, before it copies a byte to the update
+slot, and it runs a bundle only when its version is newer than its own. The
+bundle's image runs on the VPU with the same rights as the loader, so the update
+keys are as strong as the owner's key for what they can sign: a leaked update
+key lets its holder run firmware of their choice on every board whose loader
+carries it, and a replacement key needs a new `start4.elf` the owner signs.
+
+Three things hold the loader's side together:
+
+- **The signature is the only gate.** UEFI's checks (the version, the class, the
+  `db` signature of the capsule) keep a bad update from being tried, and decide
+  nothing: the loader checks the bundle after the reset as if no check had run.
+- **A failed update is tried three times, and the one before it comes back.** A
+  bundle's file name carries its tries left and tries done, and UEFI spends one
+  before it stages the bundle. A bundle that reaches `ExitBootServices` is
+  blessed, by dropping the counter from its name, and the older bundles are
+  removed; one with no tries left is removed, and the next newest bundle on the
+  disk, the one that ran before, is staged. The loader itself runs only when no
+  bundle works. The counter is a limit on retries and nothing more: whoever can
+  write the medium can reset or remove it, and can still only run what an update
+  key signed.
+- **A bundle does not go backwards.** The flash store holds the version of the
+  newest bundle that has reached the OS, which is all of the update's state it
+  keeps, and a capsule or a kept bundle below it is refused. The store is sealed by the device key, so an attacker who can
+  only write the boot medium cannot lower it.
+
+The loader's own code is not updated this way. What reads the medium before the
+bundle is staged (the file system, the capsule scan) stays as the owner signed
+it, so a flaw there stays until the owner signs a new `start4.elf`. It runs at
+every power-up, ahead of the update.
+
+The image the bundle carries measures the loader's commit and version into PCR 0
+ahead of its own events, so a policy bound to PCR 0 tells a board running an
+update from one running the loader.
 
 ## The device key and the TPM's secrets
 
@@ -332,8 +379,10 @@ bounded.
   boot.
 - The UEFI image does not carry the builder's paths: they are remapped to the
   names of the prebuilt standard library's.
-- The update version is the commit's time or `FIRMWARE_TIME`; a build outside a
-  git checkout must set it, or its version is zero.
+- The update version is the release `FIRMWARE_VERSION` (`X.Y.Z`, packed as
+  `X<<24 | Y<<16 | Z`), else `FIRMWARE_TIME`, else the commit's time, which no
+  release is above; a build outside a git checkout must set one, or its version
+  is zero.
 - CI holds `contents: read`, pins its third-party actions by commit (pimu is
   taken from its main branch), and uploads no private key. The VC4 compiler (`rusty-pi/gcc-vc4` and `binutils-vc4`) is
   installed from the latest release of its repositories with no checksum, which is
@@ -349,6 +398,7 @@ programmed and an OS that keeps lockdown on:
 |---|---|---|
 | replace the firmware | write access to the boot medium **on a board without signed boot in the OTP** | the VPU, the device key's HMAC, everything |
 | replace the firmware with an older signed one | write access to the boot medium; the bootloader has no anti-rollback for `boot.img` | the old firmware's bugs |
+| run firmware of one's choice on every board whose loader carries an update key | the update private key and a `db` key to sign the capsule, or write access to the medium and a bundle the key signed | the VPU, the device key's HMAC, everything |
 | sign what UEFI runs | the `db` private key, or `KEK`, or `PK` (each can add a `db` entry), or any key already in `db`; for firmware, also the owner's boot key | whatever it signs |
 | run a signed loader's bug | a signed shim, GRUB or kernel that is not in `dbx` and has a flaw (a bug in a loader before `ExitBootServices`, or a kernel with lockdown off) | code on the ARM, so the VPU and the key's HMAC |
 | take the VPU from a locked-down OS | a kernel exploit that gives arbitrary physical memory access; then the VPU's code or the mailbox's buffers are writable | the same |
@@ -391,7 +441,7 @@ Not defended, and not claimed:
    than the minutes it takes to guess it.
 5. Use a boot loader without a prompt on the serial console (a unified kernel
    image under systemd-boot), or one that asks for a password.
-6. Set `FIRMWARE_TIME` for every release, and keep `dbx` fresh with each one.
+6. Build every release with `FIRMWARE_VERSION`, and keep `dbx` fresh with each one.
 
 ## Checks
 
@@ -399,7 +449,8 @@ The parts of this that the repository runs:
 
 - the scenarios in `scenarios/` boot the firmware under Raspberry Pi's
   bootloader in pimu: Secure Boot's accepts and refusals, capsules (signed,
-  older, changed, by a stranger, relabelled, junk), the variable store's
+  older, changed, by a stranger, relabelled, junk), update bundles (run, and
+  refused when no update key signed them), the variable store's
   tampering and compaction, the runtime services' rules, the boot key and the
   device key's locks, the TPM's commands, the watchdog's spans, and Debian's
   kernel under lockdown

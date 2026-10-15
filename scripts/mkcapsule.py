@@ -2,6 +2,10 @@
 """Build a firmware update capsule, the file fwupd puts in \\EFI\\UpdateCapsule.
 
     mkcapsule.py KEY CERT VERSION OUT [--class firmware|eeprom] [--header-class firmware|eeprom] [--boot-img FILE --boot-sig FILE] [--corrupt]
+    mkcapsule.py KEY CERT VERSION OUT --class update --bundle FILE [--corrupt]
+
+An update capsule carries a bundle (scripts/mkbundle.py), which the update key
+signs and the board owner does not: VERSION is the one the bundle carries.
 
 KEY and CERT (PEM) are the signer's: a key one of the firmware's own `db`
 entries holds. VERSION is the number the ESRT carries once the capsule is
@@ -22,9 +26,12 @@ import sys
 import tempfile
 import uuid
 
+import fwversion
+
 CLASSES = {
     "firmware": uuid.UUID("7d1c0a4e-5b83-4f2a-9c61-e2084a3d95b7"),
     "eeprom": uuid.UUID("3f8a0c5e-91d2-4b7a-a6c3-5d1e08f2b947"),
+    "update": uuid.UUID("b4c1e7a2-6d39-4f58-8e10-72a9c5d3f0b6"),
 }
 CERT_TYPE_PKCS7 = uuid.UUID("4aafd29d-68df-49ee-8aa9-347d375665a7")
 HEADER = 28
@@ -46,6 +53,11 @@ def main():
         at = args.index("--header-class")
         header = args[at + 1]
         del args[at : at + 2]
+    bundle = None
+    if "--bundle" in args:
+        at = args.index("--bundle")
+        bundle = open(args[at + 1], "rb").read()
+        del args[at : at + 2]
     for flag in ("--boot-img", "--boot-sig"):
         if flag in args:
             at = args.index(flag)
@@ -60,7 +72,11 @@ def main():
     if len(args) != 4:
         sys.exit(__doc__)
     key, cert, version, out = args
-    image = b"P4FW" + CLASSES[resource].bytes_le + struct.pack("<II", int(version, 0), len(sig)) + sig + img
+    version = fwversion.parse(version)[0]
+    if bundle is not None:
+        image = b"P4FW" + CLASSES[resource].bytes_le + struct.pack("<I", version) + bundle
+    else:
+        image = b"P4FW" + CLASSES[resource].bytes_le + struct.pack("<II", version, len(sig)) + sig + img
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "image")
         open(path, "wb").write(image)

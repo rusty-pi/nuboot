@@ -37,7 +37,7 @@ Records at `INFO` and above are logged. A panic, and a thread that runs off
 its stack, end with an `ERROR` record and stop the VPU:
 
 ```text
-  12.004113 ERROR panic    index out of bounds: the len is 4 but the index is 4  at=src/bin/start4.rs:120
+  12.004113 ERROR panic    index out of bounds: the len is 4 but the index is 4  at=src/firmware.rs:120
 ```
 
 ## In the code

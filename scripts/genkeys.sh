@@ -4,6 +4,8 @@
 #   pk   the platform key, built into the firmware and never changeable
 #   kek  signs updates to db and dbx
 #   db   signs what the firmware boots: boot loaders, kernels and modules
+#   update  signs the bundles that update the firmware without the board
+#        owner's signature (below)
 #
 # Each has a .key (private), .crt (PEM) and .der (what the firmware embeds).
 # One whose .der is there is left alone, with or without its .key: a build host
@@ -42,3 +44,16 @@ generate() {
 generate pk "platform key" 4096 18250
 generate kek "key exchange key" 4096 7300
 generate db "signing key" 3072 7300
+
+# The update key is a P-256 key: update.key (PEM) signs the bundles, and
+# update.pub, the 64 bytes of the public point, is what the firmware carries.
+if [ ! -f "$keys/update.pub" ]; then
+  if [ -f "$keys/update.key" ]; then
+    echo "keys/update: update.key is there and update.pub is not; refusing to make a new update key beside it" >&2
+    exit 1
+  fi
+  openssl ecparam -name prime256v1 -genkey -noout -out "$keys/update.key"
+  openssl ec -in "$keys/update.key" -pubout -outform DER 2>/dev/null | tail -c 64 >"$keys/update.pub"
+  chmod 600 "$keys/update.key"
+  echo "keys/update: generated"
+fi

@@ -53,7 +53,7 @@ from `start4.elf`'s:
 | `EFI_RNG_PROTOCOL` | RNG200's FIFO, raw |
 | `ResetSystem` | The power manager's watchdog (`PM_RSTC`/`PM_WDOG`), halt through `PM_RSTS`: partition 63, which the EEPROM bootloader halts at (and powers off at when its `POWER_OFF_ON_HALT` is set). The same after `ExitBootServices`, which is how Linux resets and powers off in both modes |
 | `SetWatchdogTimer`, `ExitBootServices` | UEFI beats the board's watchdog from the hypervisor timer's interrupt and hands it back to `start4.elf` at `ExitBootServices` ([boot.md](boot.md#boot-watchdog)) |
-| ESRT | One system firmware resource, the firmware itself, in the `EFI_SYSTEM_RESOURCE_TABLE`, with the commit's time as its version. `OsIndicationsSupported` offers file capsule delivery, and `OsIndications` takes the OS's write |
+| ESRT | Three resources in the `EFI_SYSTEM_RESOURCE_TABLE`: the firmware as an update bundle, the firmware as an image the owner signs, and the EEPROM bootloader, the first two with the commit's time as their version. `OsIndicationsSupported` offers file capsule delivery, and `OsIndications` takes the OS's write |
 | Device tree | Passed on to the OS as the `EFI_DTB_TABLE` configuration table. Besides the stock tree's content it has the memory, the network address, the TPM, and the board's identity: `serial-number` and `rusty-pi,board-revision` in the root |
 | SMBIOS | Version 3.1.1, as the `EFI_SMBIOS3_TABLE` configuration table, whichever way the OS describes the board: the firmware (its vendor, the commit and its date), the system (maker, the board's name from its revision code, the revision code, the serial number and a UUID made from it), the board and its enclosure, the processor and the memory. `/sys/class/dmi/id`, `dmidecode`, `hostnamectl` and fwupd's hardware IDs read them, and an OS on the ACPI tables has no device tree to get the model and serial number from |
 | ACPI | The tables of the [next section](#acpi), as the `EFI_ACPI_20_TABLE_GUID` configuration table |
@@ -178,7 +178,10 @@ a `.crt` and the `.der` the firmware embeds) for any that is missing, and
 `scripts/build-uefi.sh` runs it. `keys/` is never committed. The platform key
 is built in and cannot be replaced, so it is valid for 50 years. A build
 that has the certificates but not the keys, such as CI, names them in
-`PI4_PK_CERT`, `PI4_KEK_CERT` and `PI4_DB_CERT` (DER files) instead. Sign
+`PI4_PK_CERT`, `PI4_KEK_CERT` and `PI4_DB_CERT` (DER files) instead, and
+`PI4_UPDATE_PUB` for the update key's public half (`keys/update.pub`, the 64
+bytes of a P-256 point, which `genkeys.sh` makes with `keys/update.key`;
+[updates.md](updates.md#updates-the-owner-does-not-sign)). Sign
 what the firmware boots with `keys/db.key` and `keys/db.crt`, for example
 `sbsign --key keys/db.key --cert keys/db.crt`.
 
@@ -301,6 +304,13 @@ there is checked:
    capsule made for one resource is refused as the other. `boot.sig` names the
    SHA-256 of that `boot.img`.
 4. The version is newer than the running firmware's.
+
+A capsule for the update resource, class `b4c1e7a2-6d39-4f58-8e10-72a9c5d3f0b6`,
+carries a bundle after the version (`P4FW`, the class, the version, the
+bundle) in place of `boot.sig` and `boot.img`. It is checked the same way, and
+its bundle must have the layout `src/update.rs` reads, and the version the
+capsule names. It is not staged as a tryboot: UEFI keeps it under its
+version in the root of the file system it boots from and leaves it in RAM for the VPU firmware ([updates.md](updates.md#updates-the-owner-does-not-sign)).
 
 A capsule that fails sets the ESRT's last attempt version and status
 (`4` invalid format, `5` authentication error, `3` incorrect version, `2`

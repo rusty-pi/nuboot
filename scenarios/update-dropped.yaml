@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "update-dropped"
+description: "The card holds a newer bundle that has used its three tries and the older one that was running, blessed. UEFI drops the newer one and stages the older."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  otp_row:
+    - "56=0xc0de2001"
+    - "57=0xc0de3112"
+    - "58=0xc0de4223"
+    - "59=0xc0de5334"
+    - "60=0xc0de6445"
+    - "61=0xc0de7556"
+    - "62=0xc0de8667"
+    - "63=0xc0de9778"
+  sd:
+    files:
+      start4.elf: "../out/start4-test.elf"
+      EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-takeover.efi"
+      pi4-server-firmware-200.1.0+0-3.upd: "../out/bundle-next.bin"
+      pi4-server-firmware-200.0.0.upd: "../out/bundle-next.bin"
+  until: "running as an update  version=3355443200"
+  wall_secs: 1800
+
+milestones:
+  - why: "The newer bundle has no tries left and is dropped."
+    line: "the update did not reach the OS in its tries, it is dropped  version=3355508736"
+  - why: "The older bundle, which needs no try, is staged."
+    line: "update staged, resetting into it  version=3355443200"
+  - why: "The VPU firmware the bootloader loaded runs it."
+    line: "starting the staged bundle  version=3355443200"
+  - why: "It runs in the update slot."
+    line: "running as an update  version=3355443200"
