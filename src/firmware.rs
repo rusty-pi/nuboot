@@ -10,13 +10,13 @@
 //!
 //! The image is linked twice, from `src/bin/start4.rs` and
 //! `src/bin/start4-update.rs`: at the address the bootloader loads it, and in
-//! the update slot ([`pi4_server_firmware::update`]).
+//! the update slot ([`nuboot::update`]).
 
 use core::cell::Cell;
 
-use pi4_server_firmware::board::{Board, Revision};
-use pi4_server_firmware::handover::{self, BootDevice};
-use pi4_server_firmware::{
+use nuboot::board::{Board, Revision};
+use nuboot::handover::{self, BootDevice};
+use nuboot::{
     arm, console, error, idle, info, mailbox, measure, otp, sched, stack, stc, thermal, timer, update, usb, warn, watchdog,
 };
 
@@ -87,7 +87,7 @@ static mut MONITOR_STACK: [u32; MONITOR_STACK_WORDS] = [0; MONITOR_STACK_WORDS];
 fn firmware_main() -> ! {
     let main_stack = unsafe { stack::Stack::paint_running(&raw mut __stack_bottom, &raw const __stack_top) };
     console::init();
-    pi4_server_firmware::spi_flash::set_divider(pi4_server_firmware::spi_flash::PLL_DIVIDER);
+    nuboot::spi_flash::set_divider(nuboot::spi_flash::PLL_DIVIDER);
     announce();
     chain_update();
     take_over_watchdog();
@@ -113,7 +113,7 @@ fn firmware_main() -> ! {
         otp::read(otp::BOOTMODE),
         if handover::present() { handover::sdram_mib() } else { 0 },
     );
-    pi4_server_firmware::keystore::seed();
+    nuboot::keystore::seed();
     usb::bring_up(&board);
     let started = match arm::start(ARM_IMAGE, ARM_TREE, board.serial, board.revision) {
         Ok(started) => {
@@ -179,7 +179,7 @@ fn chain_update() {
 /// The first lines of the log: what this is, and what it is running on.
 fn announce() {
     let revision = Revision::read();
-    info!("boot", "pi4-server-firmware {}", COMMIT;
+    info!("boot", "nuboot {}", COMMIT;
         board = revision.model(), revision = revision, pcb = revision.pcb(), version = update::VERSION,
         release = if update::RELEASE.is_empty() { "none" } else { update::RELEASE });
     if !handover::present() {

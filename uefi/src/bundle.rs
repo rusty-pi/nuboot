@@ -14,7 +14,7 @@
 //!
 //! The name of the file is the bundle's state, as with boot assessment in
 //! systemd (<https://systemd.io/AUTOMATIC_BOOT_ASSESSMENT/>): its release
-//! (`pi4-server-firmware-0.2.0`) or, for a build with none, its version in
+//! (`nuboot-0.2.0`) or, for a build with none, its version in
 //! eight hex digits, then `+` and the tries left, and `-` and the tries done
 //! once there are any, then `.upd`. A new bundle starts with three tries,
 //! `…+3.upd`, and every attempt to run it takes one before it starts. The
@@ -46,7 +46,7 @@ const MAX_IMAGE: usize = 2 << 20;
 const PAGE: usize = 4096;
 
 const EXTENSION: &str = ".upd";
-const PREFIX: &str = "pi4-server-firmware-";
+const PREFIX: &str = "nuboot-";
 /// The attempts a new bundle gets to reach the OS.
 const TRIES: u8 = 3;
 const RESULT: &str = "BundleUpdateResult";

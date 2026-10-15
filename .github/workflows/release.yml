@@ -198,7 +198,7 @@ jobs:
           scripts/mkbundle.py "$certs/update.key" out/start4-update.bin "$version" "$RUNNER_TEMP/bundle.bin"
           scripts/mkcapsule.py "$certs/db.key" "$certs/db.crt" "$version" "$RUNNER_TEMP/update.cap" \
             --class update --bundle "$RUNNER_TEMP/bundle.bin"
-          scripts/mkcab.py "$RUNNER_TEMP/update.cap" "out/pi4-server-firmware-update-$version.cab" "$version" --class update
+          scripts/mkcab.py "$RUNNER_TEMP/update.cap" "out/nuboot-update-$version.cab" "$version" --class update
 
       - uses: actions/upload-artifact@v7
         with:
@@ -247,7 +247,7 @@ jobs:
           ---
 
           - \`start4.elf\`: the VPU firmware with the UEFI firmware and the board's device tree in it, for a board's boot partition under Raspberry Pi's own bootloader. A board's owner signs it once (\`scripts/mkbootimg.py\`).
-          - \`pi4-server-firmware-update-*.cab\`: this release as an update for a board that already runs a \`start4.elf\` of this project, for \`fwupdmgr install\`. It needs no signature by the owner.
+          - \`nuboot-update-*.cab\`: this release as an update for a board that already runs a \`start4.elf\` of this project, for \`fwupdmgr install\`. It needs no signature by the owner.
           EOF
 
           # A re-dispatch on a tag whose release already exists replaces it

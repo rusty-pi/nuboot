@@ -117,7 +117,7 @@ test_key() {
   fi
   [[ -f "$keys/db.key" && -f "$keys/db.der" ]] && return
   openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 3650 \
-    -subj "/CN=pi4-server-firmware test key" \
+    -subj "/CN=nuboot test key" \
     -keyout "$keys/db.key" -out "$keys/db.crt" 2>/dev/null
   openssl x509 -in "$keys/db.crt" -outform DER -out "$keys/db.der"
 }
@@ -188,7 +188,7 @@ sign() {
 # does not hold KEK for.
 for name in x stranger; do
   [[ -f "$keys/$name.key" ]] || openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 3650 \
-    -subj "/CN=pi4-server-firmware $name test key" \
+    -subj "/CN=nuboot $name test key" \
     -keyout "$keys/$name.key" -out "$keys/$name.crt" 2>/dev/null
 done
 "$here/scripts/mkauth.py" "$keys/db.key" "$keys/db.crt" db "$keys/x.crt" "$out/db-x.auth"

@@ -1,5 +1,5 @@
 [package]
-name = "pi4-server-firmware"
+name = "nuboot"
 # Not the released version: nothing reads `CARGO_PKG_VERSION`, and the build
 # identifies itself by its commit (build.rs).
 version = "0.0.0"

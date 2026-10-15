@@ -27,7 +27,7 @@ that is empty or holds a space, `"` or `=` is quoted, with `"` and `\`
 escaped, so a line always splits back into its fields:
 
 ```text
-   2.764642 INFO  boot     pi4-server-firmware 1a2b3c4  board="Raspberry Pi 4 Model B" revision=d03115
+   2.764642 INFO  boot     nuboot 1a2b3c4  board="Raspberry Pi 4 Model B" revision=d03115
 ```
 
 Built with `--features color`, the level is coloured and the time and the

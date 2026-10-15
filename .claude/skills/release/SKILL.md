@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a pi4-server-firmware release - work out the version bump from what changed since the last tag, write the release notes, then tag and push so the release workflow builds and publishes start4.elf (no version commit). Use when asked to "make a release", "cut a release", "release the firmware" or "tag a version".
+description: Cut a nuboot release - work out the version bump from what changed since the last tag, write the release notes, then tag and push so the release workflow builds and publishes start4.elf (no version commit). Use when asked to "make a release", "cut a release", "release the firmware" or "tag a version".
 ---
 
 # Cutting a release

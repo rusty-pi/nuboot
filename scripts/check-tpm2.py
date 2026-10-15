@@ -130,7 +130,7 @@ def main():
         if not any(t.startswith(want) and pcr == 1 for t, pcr in by_text.items()):
             fail(f"the log has no {want} event in PCR 1")
     versions = [data for pcr, kind, digest, data in events if kind == 0x8]
-    if len(versions) != 1 or not versions[0].decode("utf-16-le").startswith("pi4-server-firmware "):
+    if len(versions) != 1 or not versions[0].decode("utf-16-le").startswith("nuboot "):
         fail("the log has no firmware version event")
     print(f"the event log of {len(events)} events replays to the PCRs the TPM holds, with the board's identity in PCR 1")
 

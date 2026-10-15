@@ -16,11 +16,11 @@ boot:
 
 milestones:
   - why: "UEFI verified systemd-boot against the test key."
-    line: "image verified  signer=\"pi4-server-firmware test key\" db=\"pi4-server-firmware test key\" path=VenHw/SD(0)/HD(1)\\EFI\\BOOT\\BOOTAA64.EFI"
+    line: "image verified  signer=\"nuboot test key\" db=\"nuboot test key\" path=VenHw/SD(0)/HD(1)\\EFI\\BOOT\\BOOTAA64.EFI"
   - why: "systemd-boot measured loader.conf into PCR 5 through EFI_TCG2_PROTOCOL."
     line: "boot measurement extended  pcr=5"
   - why: "UEFI verified the unified kernel image systemd-boot found, and measured it into PCR 4."
-    line: "image verified  signer=\"pi4-server-firmware test key\" db=\"pi4-server-firmware test key\" path=VenHw/SD(0)/HD(1)\\EFI\\Linux\\test.efi"
+    line: "image verified  signer=\"nuboot test key\" db=\"nuboot test key\" path=VenHw/SD(0)/HD(1)\\EFI\\Linux\\test.efi"
   - why: "systemd-stub measured the unified kernel image's sections into PCR 11."
     line: "boot measurement extended  pcr=11"
   - why: "The stub started the kernel inside the image, which here is the hello application, and it ran."

@@ -21,20 +21,20 @@ import fwversion
 
 RESOURCES = {
     "firmware": (
-        "org.rusty-pi.pi4-server-firmware.firmware",
-        "pi4-server-firmware",
+        "org.rusty-pi.nuboot.firmware",
+        "nuboot",
         "The UEFI firmware for headless Raspberry Pi 4 servers, in start4.elf",
         "7d1c0a4e-5b83-4f2a-9c61-e2084a3d95b7",
     ),
     "eeprom": (
-        "org.rusty-pi.pi4-server-firmware.eeprom",
+        "org.rusty-pi.nuboot.eeprom",
         "Raspberry Pi 4 EEPROM bootloader",
         "The stock EEPROM bootloader, updated with its configuration and keys kept",
         "3f8a0c5e-91d2-4b7a-a6c3-5d1e08f2b947",
     ),
     "update": (
-        "org.rusty-pi.pi4-server-firmware.update",
-        "pi4-server-firmware",
+        "org.rusty-pi.nuboot.update",
+        "nuboot",
         "The VPU and UEFI firmware for headless Raspberry Pi 4 servers, signed by the update key",
         "b4c1e7a2-6d39-4f58-8e10-72a9c5d3f0b6",
     ),
@@ -54,7 +54,7 @@ def metainfo(resource, version, date, notes, release):
   <provides>
     <firmware type="flashed">{guid}</firmware>
   </provides>
-  <url type="homepage">https://github.com/rusty-pi/pi4-server-firmware</url>
+  <url type="homepage">https://github.com/rusty-pi/nuboot</url>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <developer_name>rusty-pi</developer_name>

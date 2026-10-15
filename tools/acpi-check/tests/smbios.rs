@@ -129,7 +129,7 @@ fn the_firmware_has_its_version_and_the_date_it_was_built() {
     assert_eq!(date(4_102_444_800), "01/01/2100");
     let found = structures(&tables::assemble(&board(), 0));
     let bios = of_type(&found, 0);
-    assert_eq!(bios.text(4), "pi4-server-firmware");
+    assert_eq!(bios.text(4), "nuboot");
     assert_eq!(bios.text(5), "c7bd438");
     assert_ne!(bios.bytes[0x13] & 8, 0, "UEFI is supported");
 }
@@ -195,7 +195,7 @@ fn dmidecode_reads_the_tables() {
     assert!(output.status.success(), "{text}");
     for needed in [
         "SMBIOS 3.1.1 present",
-        "Vendor: pi4-server-firmware",
+        "Vendor: nuboot",
         "Release Date: 10/13/2026",
         "UEFI is supported",
         "Manufacturer: Raspberry Pi Ltd",

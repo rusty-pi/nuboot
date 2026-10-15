@@ -13,7 +13,7 @@ A capsule's own signature is `db`'s in all three.
 
 ```bash
 fwupdmgr get-devices
-fwupdmgr install pi4-server-firmware-1791753810.cab
+fwupdmgr install nuboot-1791753810.cab
 ```
 
 fwupd puts the capsule in `\EFI\UpdateCapsule` on the EFI system partition and
@@ -33,7 +33,7 @@ the bootloader never sees it.
    signature and the class, and that the version is newer than the running
    firmware's and not older than the newest update that has reached the OS. It
    writes the bundle in the root of the file system UEFI boots from, as
-   `pi4-server-firmware-0.2.0+2-1.upd` (or its version in eight hex digits, for
+   `nuboot-0.2.0+2-1.upd` (or its version in eight hex digits, for
    a build with no release), removes the capsule, copies the bundle to ARM
    physical `0x3e000000` and resets. The bundle that was running stays where it
    is. The `+2-1` is the bundle's tries left and tries done.
@@ -87,7 +87,7 @@ release=0.2.0
 FIRMWARE_VERSION=$release scripts/build.sh
 scripts/mkbundle.py keys/update.key out/start4-update.bin $release out/bundle.bin
 scripts/mkcapsule.py keys/db.key keys/db.crt $release out/update.cap --class update --bundle out/bundle.bin
-scripts/mkcab.py out/update.cap out/pi4-server-firmware-update-$release.cab $release --class update
+scripts/mkcab.py out/update.cap out/nuboot-update-$release.cab $release --class update
 ```
 
 `keys/update.key` is the key whose public half, `keys/update.pub`, the loader
@@ -106,7 +106,7 @@ FIRMWARE_TIME=$version scripts/build.sh
 scripts/mkbootimg.py customer-private.pem out/start4.elf out
 scripts/mkcapsule.py keys/db.key keys/db.crt $version out/firmware.cap \
     --boot-img out/boot.img --boot-sig out/boot.sig
-scripts/mkcab.py out/firmware.cap out/pi4-server-firmware-$version.cab $version
+scripts/mkcab.py out/firmware.cap out/nuboot-$version.cab $version
 ```
 
 `customer-private.pem` is the key whose public half the EEPROM holds
@@ -128,7 +128,7 @@ flowchart LR
     boot --> mkcapsule["mkcapsule.py<br/>signed with db.key / db.crt"]
     mkcapsule --> cap["firmware.cap"]
     cap --> mkcab["mkcab.py"]
-    mkcab --> cab["pi4-server-firmware-version.cab"]
+    mkcab --> cab["nuboot-version.cab"]
 ```
 
 ## Applying an update

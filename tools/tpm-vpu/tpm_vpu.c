@@ -2,7 +2,7 @@
 /*
  * A TPM 2.0 chip backed by the TPM on the Raspberry Pi 4's VPU.
  *
- * pi4-server-firmware's start4.elf answers TPM 2.0 commands over the
+ * nuboot's start4.elf answers TPM 2.0 commands over the
  * property mailbox (tag 0x000300a3): the command goes in the tag's value, and
  * the response comes back in the same place. Its device tree handed over a
  * "vpu-tpm" node for this driver to bind to, so a kernel with the module

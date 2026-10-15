@@ -18,7 +18,7 @@ boot:
     files:
       start4.elf: "../out/start4-test.elf"
       EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-takeover.efi"
-      pi4-server-firmware-200.0.0+3.upd: "../out/bundle-next.bin"
+      nuboot-200.0.0+3.upd: "../out/bundle-next.bin"
   until: "the updated firmware reached the OS  version=3355443200"
   wall_secs: 1800
 

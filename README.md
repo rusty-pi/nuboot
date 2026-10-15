@@ -1,6 +1,6 @@
-# pi4-server-firmware
+# nuboot
 
-Raspberry Pi 4 firmware for headless servers, written in Rust: its own VPU
+nuboot is Raspberry Pi 4 firmware for headless servers, written in Rust: its own VPU
 firmware (`start4.elf`) in place of Raspberry Pi's, started by Raspberry Pi's
 EEPROM bootloader as it ships, built around a small
 preemptive thread scheduler and with its own idea of what the firmware is
@@ -75,7 +75,7 @@ From the boot ROM to the threads that run for as long as the board is up:
    stack's high-water mark as it grows.
 
 ```text
-   0.267088 INFO  boot     pi4-server-firmware 1a2b3c4  board="Raspberry Pi 4 Model B" revision=d03115 pcb=1.5
+   0.267088 INFO  boot     nuboot 1a2b3c4  board="Raspberry Pi 4 Model B" revision=d03115 pcb=1.5
    0.267218 INFO  boot     started by the EEPROM bootloader  medium=sd ram_mib=8192 bootloader=1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d
    0.267905 INFO  thermal  temperature sensor running  celsius=43.8
    0.583645 INFO  usb      VL805 xHCI controller up  bus=1 firmware=loaded registers=0x602000000

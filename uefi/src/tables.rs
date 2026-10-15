@@ -802,7 +802,7 @@ pub fn init(console: efi::Handle, con_in: *mut r_efi::protocols::simple_text_inp
     let data = mem::alloc_pages(efi::RUNTIME_SERVICES_DATA, pages).expect("runtime data page") as *mut RuntimeData;
     unsafe { core::ptr::write_bytes(data as *mut u8, 0, (pages * mem::PAGE) as usize) };
     let d = unsafe { &mut *data };
-    for (i, c) in "pi4-server-firmware".encode_utf16().enumerate() {
+    for (i, c) in "nuboot".encode_utf16().enumerate() {
         d.vendor[i] = c;
     }
     d.rt_properties = RtProperties { version: 1, length: 8, supported: RT_VARIABLE_SERVICES | RT_RESET_SYSTEM };

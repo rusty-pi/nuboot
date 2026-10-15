@@ -113,7 +113,7 @@ milestones:
   - why: "It has the board's serial number."
     line: "linux test: dmi serial is eight hex digits"
   - why: "The firmware is named by its vendor and the commit it was built from."
-    line: "linux test: dmi firmware pi4-server-firmware built from a commit"
+    line: "linux test: dmi firmware nuboot built from a commit"
   - why: "The enclosure is an embedded PC (SMBIOS type 34)."
     line: "linux test: dmi chassis type 34"
   - why: "The board has a UUID of its own."

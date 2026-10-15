@@ -19,7 +19,7 @@ milestones:
   - why: "The bootloader started this firmware."
     line: "Starting start4.elf"
   - why: "The firmware logs what it runs on."
-    line: "INFO  boot     pi4-server-firmware"
+    line: "INFO  boot     nuboot"
   - why: "It started the temperature sensor's clock, and the sensor has a sample."
     line: "INFO  thermal  temperature sensor running"
   - why: "It found the bootloader's handover."

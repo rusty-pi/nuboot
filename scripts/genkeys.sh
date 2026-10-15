@@ -34,7 +34,7 @@ generate() {
     exit 1
   fi
   openssl req -x509 -newkey "rsa:$3" -sha256 -nodes -days "$4" \
-    -subj "/CN=pi4-server-firmware $2" \
+    -subj "/CN=nuboot $2" \
     -keyout "$keys/$1.key" -out "$keys/$1.crt" 2>/dev/null
   openssl x509 -in "$keys/$1.crt" -outform DER -out "$keys/$1.der"
   chmod 600 "$keys/$1.key"

@@ -121,7 +121,7 @@ pub fn loader(commit: &str, version: u32) {
 
 /// Measure the firmware and the board. Once, before the ARM starts.
 pub fn platform(commit: &str, uefi: &[u8], tree: &[u8], revision: u32, ext_revision: u32, serial: u32, mac: (u32, u32), bootmode: u32, sdram_mib: u32) {
-    crtm_version(format_args!("pi4-server-firmware {commit}"));
+    crtm_version(format_args!("nuboot {commit}"));
     blob("pi4-uefi", uefi);
     blob("device-tree", tree);
 

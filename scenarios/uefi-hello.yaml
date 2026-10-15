@@ -26,7 +26,7 @@ milestones:
   - why: "The SD driver brought up the card on EMMC2."
     line: "sd       card ready"
   - why: "The application's signature chains to the test key in db."
-    line: "image verified  signer=\"pi4-server-firmware test key\""
+    line: "image verified  signer=\"nuboot test key\""
   - why: "The application sees Secure Boot on."
     line: "hello test: Secure Boot is on"
   - why: "The application ran its checks and finished."

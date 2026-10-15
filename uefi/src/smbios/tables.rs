@@ -41,7 +41,7 @@ const CLOCK_MHZ: u16 = 600;
 
 const MAKER: &[u8] = b"Raspberry Pi Ltd";
 const FAMILY: &[u8] = b"Raspberry Pi 4";
-const VENDOR: &[u8] = b"pi4-server-firmware";
+const VENDOR: &[u8] = b"nuboot";
 const SOC: &[u8] = b"BCM2711";
 const CORE: &[u8] = b"Cortex-A72";
 const SOC_MAKER: &[u8] = b"Broadcom";
