@@ -4,9 +4,10 @@
 //! replays to the PCRs the way a TPM's event log does.
 //!
 //! PCR 0 holds the firmware: its version, the UEFI image and the device tree
-//! it starts the ARM with. PCR 1 holds the board: the revision code, the
-//! serial number, the extended revision, the MAC address fuses, the SDRAM
-//! size and the boot mode row, each as a `name=value` event.
+//! it starts the ARM with, and the VL805's images when the VPU loads them. PCR
+//! 1 holds the board: the revision code, the serial number, the extended
+//! revision, the MAC address fuses, the SDRAM size, the boot mode row and the
+//! EEPROM's `bootconf.txt`, each as a `name=value` event.
 
 use core::fmt::Write;
 use core::ptr::{read_volatile, write_volatile};
@@ -21,7 +22,7 @@ pub const EV_EFI_PLATFORM_FIRMWARE_BLOB2: u32 = 0x8000_000a;
 const PCR_FIRMWARE: usize = 0;
 const PCR_BOARD: usize = 1;
 
-pub const MAX_EVENTS: usize = 16;
+pub const MAX_EVENTS: usize = 24;
 pub const MAX_DATA: usize = 80;
 
 #[derive(Clone, Copy)]
@@ -86,7 +87,7 @@ fn setting(args: core::fmt::Arguments) {
 
 /// `UEFI_PLATFORM_FIRMWARE_BLOB2`: what is measured is the blob, and the
 /// event says which it is.
-fn blob(description: &str, blob: &[u8]) {
+pub fn blob(description: &str, blob: &[u8]) {
     let mut data = [0u8; MAX_DATA];
     data[0] = description.len() as u8;
     data[1..1 + description.len()].copy_from_slice(description.as_bytes());
@@ -112,6 +113,30 @@ fn crtm_version(args: core::fmt::Arguments) {
         len += 2;
     }
     record(PCR_FIRMWARE, EV_S_CRTM_VERSION, sha256::digest(&version[..len]), &version[..len]);
+}
+
+/// The EEPROM's boot configuration, `bootconf.txt`, as the SHA-256 of its
+/// bytes; `none` when the EEPROM has no such file.
+pub fn eeprom_config(digest: Option<[u8; 32]>) {
+    let mut hex = [0u8; 64];
+    let value = match &digest {
+        Some(digest) => {
+            for (i, byte) in digest.iter().enumerate() {
+                hex[2 * i] = b"0123456789abcdef"[(byte >> 4) as usize];
+                hex[2 * i + 1] = b"0123456789abcdef"[(byte & 15) as usize];
+            }
+            core::str::from_utf8(&hex).unwrap_or("")
+        }
+        None => "none",
+    };
+    setting(format_args!("eeprom.bootconf={value}"));
+}
+
+/// The images the VPU loaded into the VL805, which is the firmware the
+/// controller runs.
+pub fn vl805(hub: &[u8], mcu: &[u8]) {
+    blob("vl805-hub", hub);
+    blob("vl805-mcu", mcu);
 }
 
 /// Measure the firmware that started this one as an update, ahead of this one:

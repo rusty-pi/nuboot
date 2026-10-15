@@ -17,7 +17,7 @@ use core::cell::Cell;
 use nuboot::board::{Board, Revision};
 use nuboot::handover::{self, BootDevice};
 use nuboot::{
-    arm, console, error, idle, info, mailbox, measure, otp, sched, stack, stc, thermal, timer, update, usb, warn, watchdog,
+    arm, console, eeprom, error, idle, info, mailbox, measure, otp, sched, stack, stc, thermal, timer, update, usb, warn, watchdog,
 };
 
 /// What the ARM cores start in: an armstub and the compressed UEFI firmware
@@ -115,6 +115,7 @@ fn firmware_main() -> ! {
         otp::read(otp::BOOTMODE),
         if handover::present() { handover::sdram_mib() } else { 0 },
     );
+    measure::eeprom_config(eeprom::digest(b"bootconf.txt"));
     nuboot::keystore::seed();
     usb::bring_up(&board);
     let started = match arm::start(ARM_IMAGE, ARM_TREE, board.serial, board.revision) {

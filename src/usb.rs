@@ -3,7 +3,7 @@
 //! outbound window.
 
 use crate::board::Board;
-use crate::{eeprom, error, info, pcie, vl805, warn};
+use crate::{eeprom, error, info, measure, pcie, vl805, warn};
 
 const VL805_VENDOR: u32 = 0x1106;
 const VL805_DEVICE: u32 = 0x3483;
@@ -57,6 +57,8 @@ pub fn bring_up(board: &Board) -> bool {
             error!("usb", "the VL805's hub firmware did not read back");
             return false;
         }
+        let image = |at: u32, len: usize| unsafe { core::slice::from_raw_parts(at as usize as *const u8, len) };
+        measure::vl805(image(vl805::HUB_AT, hub), image(vl805::MCU_AT, mcu));
         vl805::keep(vl805::Images { hub: (vl805::HUB_AT, hub as u32), mcu: (vl805::MCU_AT, mcu as u32) });
         firmware = "loaded";
     }
