@@ -224,7 +224,6 @@ jobs:
       - name: Test
         run: scripts/test-acpi.sh
 
-  # Every `scenarios/*.yaml` is a job, so a new scenario needs no edit here.
   # The TPM's code on the host: its crypto against reference vectors, and the
   # whole TPM driven by tpm2-tools and systemd-cryptenroll over the
   # simulator's socket protocol.
@@ -244,6 +243,10 @@ jobs:
       - name: Test
         run: scripts/test-tpm.sh
 
+  # Every `scenarios/*.yaml` runs, so a new scenario needs no edit here. They
+  # are dealt out to `SCENARIO_SHARDS` jobs, the Linux ones first so that
+  # they start at once and are spread over the jobs, and each job boots as
+  # many at a time as it has CPUs.
   scenarios:
     runs-on: ${{ vars.RUNNER_BOOT || 'ubuntu-24.04' }}
     outputs:
@@ -251,20 +254,28 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - id: list
+        env:
+          SHARDS: ${{ vars.SCENARIO_SHARDS || 2 }}
         run: |
-          names=$(basename -s .yaml scenarios/*.yaml | jq -R . | jq -sc .)
-          echo "matrix=$names" >> "$GITHUB_OUTPUT"
+          names=$(basename -s .yaml scenarios/*.yaml | sort)
+          matrix=$({ grep '^linux' <<<"$names"; grep -v '^linux' <<<"$names"; } |
+            jq -R . | jq -sc --argjson n "$SHARDS" '
+              [to_entries[] | {shard: (.key % $n), name: .value}]
+              | group_by(.shard)
+              | map({shard: (.[0].shard + 1), scenarios: map(.name) | join(" ")})')
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   scenario:
     needs: [build, scenarios]
     # `RUNNER_BOOT` names a self-hosted pool. pimu's release is built on
     # ubuntu-24.04, so that is the hosted fallback.
     runs-on: ${{ vars.RUNNER_BOOT || 'ubuntu-24.04' }}
-    timeout-minutes: 30
+    timeout-minutes: 60
+    name: scenarios (shard ${{ matrix.shard }})
     strategy:
       fail-fast: false
       matrix:
-        scenario: ${{ fromJSON(needs.scenarios.outputs.matrix) }}
+        include: ${{ fromJSON(needs.scenarios.outputs.matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -274,5 +285,8 @@ jobs:
           path: out
 
       - uses: rusty-pi/pimu@main
-        with:
-          args: boot --scenario scenarios/${{ matrix.scenario }}.yaml
+
+      - name: Boot the scenarios
+        env:
+          SCENARIOS: ${{ matrix.scenarios }}
+        run: scripts/run-scenarios.sh $SCENARIOS

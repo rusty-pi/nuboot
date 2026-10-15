@@ -176,6 +176,13 @@ pimu boot --scenario scenarios/watchdog-stuck.yaml
 pimu boot --scenario scenarios/watchdog-fault.yaml
 ```
 
+`scripts/run-scenarios.sh` boots several by name, one a CPU at a time, as CI
+does:
+
+```bash
+scripts/run-scenarios.sh uefi-hello persist crypto
+```
+
 To run it by hand, boot the image with a directory as the SD card:
 
 ```bash
