@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "ethernet-address"
+description: "The network interface gets the address in the OTP's MAC rows, as Raspberry Pi's firmware gives it to the board: here a unicast address fused into rows 64 and 65."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  otp_row:
+    - "65=0xe45f0183"
+    - "64=0xfd680000"
+  sd:
+    files:
+      start4.elf: "../out/start4-test.elf"
+      EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+  until: "hello test: done"
+  wall_secs: 600
+
+milestones:
+  - why: "The address the ARM's device tree has is the one in the rows."
+    line: "ethernet=e4:5f:01:83:fd:68"

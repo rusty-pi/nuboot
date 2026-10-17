@@ -403,8 +403,9 @@ pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed b
   relocatable.
 - The device tree is Raspberry Pi's for the Pi 4B whatever the board, with
   the memory, the TPM's node and its reserved page, the board's serial number
-  and revision code and the Ethernet address filled in; that address is not
-  the one Raspberry Pi's firmware gives the board.
+  and revision code and the Ethernet address filled in; the address is the one
+  in the OTP's MAC rows, as Raspberry Pi's firmware gives it, and a board whose
+  rows are blank gets a locally administered one from its serial number.
 - The ACPI tables describe a Raspberry Pi 4B's devices whatever the board, and
   the SMBIOS tables a Pi 4's processor and memory, with the board named by its
   revision code.

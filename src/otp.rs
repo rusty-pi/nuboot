@@ -22,7 +22,8 @@ pub const SERIAL: u32 = 28;
 pub const REVISION: u32 = 30;
 /// The boot mode row, which the boot ROM reads as it starts.
 pub const BOOTMODE: u32 = 17;
-/// The MAC address rows: the customer's, or blank.
+/// The MAC address rows: the board's address, Raspberry Pi's or the
+/// customer's, or blank.
 pub const MAC_HIGH: u32 = 65;
 pub const MAC_LOW: u32 = 64;
 /// The extended revision: its bits 8-16 describe the SDRAM parts.

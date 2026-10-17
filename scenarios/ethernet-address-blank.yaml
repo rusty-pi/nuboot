@@ -1,0 +1,20 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "ethernet-address-blank"
+description: "A board whose MAC rows are blank, or hold a group address, gets a locally administered unicast address derived from its serial number, the same at every boot."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  otp_row:
+    - "65=0x00000000"
+    - "64=0x00000000"
+  sd:
+    files:
+      start4.elf: "../out/start4-test.elf"
+      EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+  until: "hello test: done"
+  wall_secs: 600
+
+milestones:
+  - why: "The address is the derived one."
+    line: "ethernet=02:c9:a8:cd:50:9f"

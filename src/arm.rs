@@ -6,7 +6,7 @@
 //! with the primary core going on to decompress the UEFI payload. The
 //! address of the tree goes in the image's word at [`IMAGE_TREE_WORD`].
 
-use crate::{cm, fdt, handover, mmio, timer, tpm_crb};
+use crate::{cm, fdt, handover, mmio, otp, timer, tpm_crb};
 
 /// The ARM control block, and the bit that lets the cores out of reset.
 const ARMCTRL: u32 = 0x7e00_b000;
@@ -286,9 +286,16 @@ pub struct Started {
 
 const ETHERNET_NODE: &[&[u8]] = &[b"", b"scb", b"ethernet@7d580000"];
 
-/// The address the network interface gets, which is the same at every boot of
-/// a board: locally administered and unicast, from the board's serial number.
+/// The address the network interface gets, the same at every boot of a board:
+/// the one in the OTP's MAC rows, which is the address Raspberry Pi's firmware
+/// gives the board. A board whose rows are blank or hold a group address gets a
+/// locally administered, unicast one from its serial number.
 pub fn ethernet_address(serial: u32) -> [u8; 6] {
+    let (high, low) = (otp::read(otp::MAC_HIGH).to_be_bytes(), otp::read(otp::MAC_LOW).to_be_bytes());
+    let fused = [high[0], high[1], high[2], high[3], low[0], low[1]];
+    if fused != [0; 6] && fused[0] & 1 == 0 {
+        return fused;
+    }
     let mut message = [0u8; 32];
     let label = b"nuboot ethernet";
     message[..label.len()].copy_from_slice(label);

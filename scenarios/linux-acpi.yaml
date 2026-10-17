@@ -82,7 +82,7 @@ milestones:
   - why: "The kernel's driver for the SD host (sdhci-iproc) takes the BRCME88C device the DSDT describes and finds the card."
     line: "linux test: sd card "
   - why: "The kernel's driver for the network interface (genet) takes the BCM6E4E device, with the address the DSDT gives it: the one the device tree has, locally administered and unicast."
-    line: "linux test: ethernet address 02c9a8cd509f"
+    line: "linux test: ethernet address 02005e005301"
   - why: "The kernel's generic xHCI driver takes the USB controller the DSDT describes as a platform device, with nothing of the PCIe root complex described, and finds the interrupt line the DSDT gives it."
     line: "xhci-hcd PNP0D10:00: new USB bus registered, assigned bus number 1"
   - why: "The controller's interrupts reach the kernel: the root hub finds the VL805's own hub on its USB 2 side."
