@@ -60,7 +60,7 @@ One bank, SHA-256, of 24 PCRs. Every PCR can be extended from locality 0 but
 | `TPM2_Startup`, `Shutdown`, `SelfTest`, `IncrementalSelfTest`, `GetTestResult`, `StirRandom` | accepted; there is no non-volatile state to save |
 | `TPM2_GetCapability` | algorithms, handles, commands, PCRs, ECC curves and the TPM properties; the other capabilities are empty lists |
 | `TPM2_GetRandom` | from the SoC's RNG200, up to 32 bytes |
-| `TPM2_PCR_Read`, `PCR_Extend`, `PCR_Event`, `PCR_Reset` | with a password session with an empty password; no other session |
+| `TPM2_PCR_Read`, `PCR_Extend`, `PCR_Event`, `PCR_Reset` | with a password session with an empty password; no other session. `PCR_Read` answers with the first eight registers of a selection and says which it read, and a caller asks again for the rest |
 | `TPM2_Hash` | SHA-256, with the null, owner, endorsement or platform hierarchy for the ticket |
 | `TPM2_ReadClock`, `TestParms` | |
 | `TPM2_CreatePrimary` | an ECC P-256 storage key under the owner, endorsement, platform or null hierarchy |

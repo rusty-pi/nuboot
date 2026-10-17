@@ -120,6 +120,8 @@ pub extern "efiapi" fn efi_main(_image: Handle, system_table: *mut SystemTable) 
 
     run("startup", Command::new(0x8001, 0x144).u16(0).done());
     run("pcr-read-all", Command::new(0x8001, 0x17e).u32(1).u16(0xb).put(&[3, 0xff, 0xff, 0xff]).done());
+    run("pcr-read-mid", Command::new(0x8001, 0x17e).u32(1).u16(0xb).put(&[3, 0, 0xff, 0]).done());
+    run("pcr-read-high", Command::new(0x8001, 0x17e).u32(1).u16(0xb).put(&[3, 0, 0, 0xff]).done());
     log_events(system_table, protocol);
     run("getcap-properties", Command::new(0x8001, 0x17a).u32(6).u32(0x100).u32(8).done());
     run("getcap-algs", Command::new(0x8001, 0x17a).u32(0).u32(0).u32(16).done());

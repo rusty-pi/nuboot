@@ -669,15 +669,19 @@ fn read_selection(input: &mut In) -> Result<u32, u32> {
     Ok(mask)
 }
 
+/// The most digests one `TPM2_PCR_Read` answers with (`TPML_DIGEST`).
+const PCR_READ_MAX: usize = 8;
+
 fn pcr_read(input: &mut In, out: &mut Out) -> Result<(), u32> {
     let wanted = read_selection(input).map_err(|rc| rc | RC_P | RC_1)?;
+    let selected = (0..PCRS).filter(|i| wanted >> i & 1 != 0).take(PCR_READ_MAX).fold(0u32, |mask, i| mask | 1 << i);
     out.u32(keystore::count());
     out.u32(1);
     out.u16(ALG_SHA256);
     out.u8(3);
-    out.put(&wanted.to_le_bytes()[..3]);
-    out.u32(wanted.count_ones());
-    for i in (0..PCRS).filter(|i| wanted >> i & 1 != 0) {
+    out.put(&selected.to_le_bytes()[..3]);
+    out.u32(selected.count_ones());
+    for i in (0..PCRS).filter(|i| selected >> i & 1 != 0) {
         out.u16(32);
         out.put(&keystore::pcr(i).ok_or(RC_RANGE)?);
     }

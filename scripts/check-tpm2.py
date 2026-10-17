@@ -52,6 +52,15 @@ def expect_rc(r, name, rc):
         fail(f"{name}: response code {got:#x}, wanted {rc:#x}")
 
 
+def pcr_read_selection(response):
+    """The PCRs a PCR_Read response says it read, as a mask."""
+    tag, rc, body = header(response)
+    (count,) = struct.unpack(">I", body[4:8])
+    if count != 1 or body[8:10] != b"\x00\x0b" or body[10] != 3:
+        fail(f"PCR_Read: selection {body[4:15].hex()}")
+    return int.from_bytes(body[11:14], "little")
+
+
 def pcr_read(response):
     """The counter and the digests in a PCR_Read response."""
     tag, rc, body = header(response)
@@ -112,7 +121,12 @@ def main():
     if not log or "pcr-read-all" not in r:
         fail("no event log or no PCR read of all registers")
     pcrs, events = replay(log)
-    counter, all_pcrs = pcr_read(r["pcr-read-all"])
+    counter, first = pcr_read(r["pcr-read-all"])
+    if pcr_read_selection(r["pcr-read-all"]) != 0xFF or len(first) != 8:
+        fail("a PCR_Read of all 24 registers does not answer with the first eight")
+    if pcr_read_selection(r["pcr-read-mid"]) != 0xFF00 or pcr_read_selection(r["pcr-read-high"]) != 0xFF0000:
+        fail("PCR_Read does not answer a selection of eight registers with those eight")
+    all_pcrs = first + pcr_read(r["pcr-read-mid"])[1] + pcr_read(r["pcr-read-high"])[1]
     if all_pcrs != pcrs:
         for i, (a, b) in enumerate(zip(all_pcrs, pcrs)):
             if a != b:
