@@ -27,6 +27,11 @@ for:
   signature by the owner; a capsule the owner signs is applied as a tryboot and
   committed once it has reached the OS ([docs/updates.md](docs/updates.md)).
 
+- **The ARM at its board's full rate.** The VPU measures the die's core voltage
+  and sets the rail for 1800 MHz on a Pi 400 and a 4B from rev 1.4, 1500 MHz on
+  the others, and slows the ARM while the SoC is hot or the supply is in trouble
+  ([docs/boot.md](docs/boot.md#arm-clock-and-core-voltage)).
+
 - **Wake-on-LAN.** The VPU firmware stays up after the OS powers the board
   off, and a magic packet for the board's address boots it
   ([docs/boot.md](docs/boot.md#wake-on-lan)).
@@ -117,6 +122,8 @@ From the boot ROM to the threads that run for as long as the board is up:
 | Linux 6.12 as above, started with `acpi=on` and no module: the kernel's own `tpm_crb` takes the TPM (the PCRs, the event log), the four cores start, the SD card, the network interface and the USB controller with a stick on it are there, the variable survives the reset, and the power off halts the board | ✅ | ✅ | ➖ | ➖ |
 | Linux 6.12 as above, given a device tree with nothing in it (a `.dtb` section in the unified kernel image) and no `acpi=on`: the kernel takes the ACPI tables by itself, and the TPM, the SD card, the network interface, the USB stick, the thermal zone, the SMBIOS tables and the power off are there | ✅ | ✅ | ➖ | ➖ |
 | Raspberry Pi OS (its own kernel 6.12.93+rpt, in a unified kernel image signed with a key in `db`, using the device tree): root on the SD card at the stock firmware's 44 MB/s, the network interface, the four cores and the USB controller | ➖ | ✅ | ➖ | ➖ |
+| The ARM at 1800 MHz on a 4B rev 1.5: the core rail characterised for the die and set for the rate, the ARM slowed to 600 MHz while the SoC is hot | ✅ | ✅ | ➖ | ➖ |
+| The ARM at 1800 MHz on a 4B rev 1.4 and at 1500 MHz on a 4B rev 1.2, whose core rail is on the system PMIC | ✅ | ➖ | ➖ | ➖ |
 | The GPIO expander's two SD pins over the property mailbox, every other pin refused | ✅ | ✅ | ➖ | ➖ |
 | Variables the OS writes through the runtime services, a signed `db` update among them, kept across a reset | ✅ | ✅ | ➖ | ➖ |
 | The flash variable store has room for the OS's writes after a boot: a bank the OS filled with the variables it replaced is started afresh with what the variables still need, and the OS writes again | ✅ | ✅ | ➖ | ➖ |
@@ -205,7 +212,8 @@ pimu boot --eeprom out/stock-pieeprom.bin --sd boot/
 | `src/spi_flash.rs`, `src/eeprom.rs`, `src/elf.rs`, `src/cache.rs` | The EEPROM and its sections, loading the ARM's image |
 | `src/pcie.rs`, `src/vl805.rs`, `src/usb.rs`, `src/lzss.rs` | The PCIe link, and the VL805 and its firmware |
 | `src/wake.rs`, `src/genet.rs` | Waiting for a magic packet after the OS powers the board off, and the Ethernet MAC and PHY that wait on |
-| `src/i2c.rs`, `src/expander.rs`, `src/pmic.rs` | The master the PMICs and the GPIO expander hang off, the power LED on the expander, and the SoC core rail's setpoint on the PMIC at `0x1E` |
+| `src/i2c.rs`, `src/expander.rs`, `src/pmic.rs` | The master the PMICs and the GPIO expander hang off, the expander's pins, and the SoC core rail and the PMICs' status |
+| `src/avs.rs`, `src/dvfs.rs`, `src/thermal.rs` | The SoC's speed monitors and the core voltage they set, the ARM's rate and the throttle that holds it back, and the temperature sensor |
 | `src/mailbox.rs` | The property mailbox |
 | `src/tpm_crb.rs` | The TPM's command response buffer, a page of the ARM's memory the VPU answers commands in |
 | `src/arm.rs`, `src/fdt.rs` | Starting the ARM, and the device tree it gets |

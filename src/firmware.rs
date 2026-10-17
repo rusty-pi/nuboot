@@ -17,7 +17,7 @@ use core::cell::Cell;
 use nuboot::board::{Board, Revision};
 use nuboot::handover::{self, BootDevice};
 use nuboot::{
-    arm, console, eeprom, error, idle, info, mailbox, measure, otp, sched, stack, stc, thermal, timer, update, usb, warn, watchdog,
+    arm, console, dvfs, eeprom, error, idle, info, mailbox, measure, otp, pmic, sched, stack, stc, thermal, timer, update, usb, warn, watchdog,
 };
 
 /// What the ARM cores start in: an armstub and the compressed UEFI firmware
@@ -119,9 +119,10 @@ fn firmware_main() -> ! {
     measure::eeprom_config(eeprom::digest(b"bootconf.txt").map(|d| d.sha256));
     nuboot::keystore::seed();
     usb::bring_up(&board);
-    let started = match arm::start(ARM_IMAGE, ARM_TREE, board.serial, board.revision) {
+    let arm_mhz = dvfs::start(&board);
+    let started = match arm::start(ARM_IMAGE, ARM_TREE, board.serial, board.revision, arm_mhz) {
         Ok(started) => {
-            info!("arm", "ARM started in UEFI";
+            info!("arm", "ARM started in UEFI"; arm_mhz = arm_mhz,
                 image_bytes = started.image_bytes, tree = format_args!("{:#x}", arm::TREE_ADDR),
                 tree_bytes = started.tree_bytes, memory_mib = started.memory_mib,
                 ethernet = format_args!("{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", started.ethernet[0], started.ethernet[1],
@@ -221,19 +222,21 @@ fn take_over_watchdog() {
 /// How often the monitor looks at the stacks.
 const MONITOR_US: u32 = 1_000_000;
 
-/// The low thread: beats the boot watchdog through the ARM's boot, watches
-/// what the firmware itself uses, and says when it changes.
+/// The low thread: beats the boot watchdog through the ARM's boot, keeps the
+/// ARM's clock inside what the SoC and the supply can do, watches what the
+/// firmware itself uses, and says when it changes.
 extern "C" fn monitor_thread() -> ! {
     let used: [Cell<u32>; sched::THREADS] = [const { Cell::new(0) }; sched::THREADS];
     let mut looked = timer::now();
     report_stacks(&used);
     loop {
         watchdog::carry_poll();
+        dvfs::poll();
         if timer::now().wrapping_sub(looked) >= MONITOR_US {
             report_stacks(&used);
             looked = timer::now();
         }
-        sched::park(MONITOR_US);
+        sched::park(pmic::POLL_US);
     }
 }
 

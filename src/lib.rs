@@ -10,9 +10,11 @@ use core::ptr::{addr_of, addr_of_mut, read_volatile, write_volatile};
 
 pub mod aes;
 pub mod arm;
+pub mod avs;
 pub mod board;
 pub mod cache;
 pub mod cm;
+pub mod dvfs;
 pub mod console;
 pub mod crypto;
 pub mod critical;

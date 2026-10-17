@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "arm-clock-rev12"
+description: "A Pi 4B rev 1.2 has its core rail on the system PMIC and no boost: the ARM runs at 1500 MHz."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  board_rev: "c03112"
+  stepping: "b0"
+  sd:
+    files:
+      start4.elf: "../out/start4-test.elf"
+      EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+  until: "hello test: done"
+  wall_secs: 600
+
+milestones:
+  - why: "The core rail is characterised and set for the board's rate, and the ARM starts at it."
+    line: "ARM started in UEFI  arm_mhz=1500"
+  - why: "The core rail took the setpoint."
+    line: "core rail set"

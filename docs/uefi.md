@@ -126,7 +126,8 @@ description:
   expander, which Raspberry Pi's VPU firmware serves over the mailbox and this
   firmware does not;
 - CPU frequency scaling, which Linux does through the VPU's clock services over
-  the same mailbox: the ARM runs at the one rate the VPU sets, 600 MHz;
+  the same mailbox: the ARM runs at the board's rate and only the VPU changes
+  it ([boot.md](boot.md#arm-clock-and-core-voltage));
 - the display, camera and audio.
 
 `scripts/test-acpi.sh` builds the table code for the host (`tools/acpi-check`)
@@ -412,7 +413,6 @@ pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed b
 - In ACPI mode `bcm2835-pm` logs errors at boot (its optional power-domain
   resources are not described), and the watchdog is the `bcm2835_wdt` driver
   that the device it makes takes.
-- The ARM runs at 600 MHz, the one rate the VPU sets.
 - Nothing reads `BootOrder`: the boot is always the removable-media path.
 - `dbx` holds image hashes only; a certificate in it is ignored.
 - Storage is read-only to EFI applications; the firmware writes only the files an update needs.

@@ -2,6 +2,7 @@
 //! at a time. The bootloader's timing: 100 kHz off the VPU's clock as it
 //! stands.
 
+use crate::sync::Lock;
 use crate::{cm, mmio, timer};
 
 const BASE: u32 = 0x7e20_5e00;
@@ -30,6 +31,14 @@ const S_CLEAR: u32 = S_CLKT | S_ERR | S_DONE;
 /// The master's state field, which the stock bootloader polls between the
 /// register byte of a read and its second start: 0, 4 and 5 take a new start.
 const S_STATE_SHIFT: u32 = 28;
+
+/// One transaction at a time: the master is polled, and the threads that use it
+/// (the mailbox's GPIO requests, the core rail's governor, the power LED) are
+/// preempted between its registers.
+static BUS: Lock = Lock::new();
+/// Longer than any transaction takes, so a wait this long is a transaction that
+/// never ended.
+const BUS_WAIT_US: u32 = 100_000;
 
 const BUS_HZ: u32 = 100_000;
 const CLOCK_STRETCH_TICKS: u32 = 0x100;
@@ -73,6 +82,7 @@ fn put(byte: u8) -> bool {
 
 /// Read register `reg` of the part at `addr`.
 pub fn read_reg(addr: u8, reg: u8) -> Option<u8> {
+    let _bus = BUS.lock(BUS_WAIT_US)?;
     setup(addr);
     start(1, false);
     if !timer::wait(TIMEOUT_US, || mmio::read(S) & (S_TA | S_ERR) != 0) {
@@ -99,6 +109,9 @@ pub fn read_reg(addr: u8, reg: u8) -> Option<u8> {
 /// Write `value` to register `reg` of the part at `addr`; whether it went
 /// through.
 pub fn write_reg(addr: u8, reg: u8, value: u8) -> bool {
+    let Some(_bus) = BUS.lock(BUS_WAIT_US) else {
+        return false;
+    };
     setup(addr);
     start(2, false);
     let queued = put(reg) && put(value);

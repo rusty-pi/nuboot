@@ -91,6 +91,32 @@ in the 160 µs before it fires, which is rare. `ResetSystem`, which Linux's
 `reboot` and `poweroff` call, asks for its count again as long as the board has
 not reset.
 
+## ARM clock and core voltage
+
+The ARM runs at the rate the board is made for: 1800 MHz on a Raspberry Pi 400
+and a 4B from rev 1.4, whose silicon and core PMIC take it, and 1500 MHz on the
+other boards. Before the ARM starts, the VPU sets the core rail for that rate:
+
+- It characterises the die. The SoC's speed monitors (24 ring oscillators and
+  18 more in the PVT block) are read at two rail voltages, and the rail is set
+  to the lowest voltage at which every monitor runs at its target speed, within
+  0.835 to 1.1 V and above the floor of the die's process corner. The result is
+  kept in the SoC across a reset, so only the first boot after power-up
+  measures; a later one only trims the rail.
+- The rail is that voltage, 880 mV plus what the characterisation added, plus
+  3.3 mV for each percent of 1500 MHz the rate is above. The PMIC at `0x1E` runs
+  in its fast mode above 600 MHz. The rail is read back, and the ARM stays at
+  600 MHz, which needs no more than the base voltage, if it does not hold the
+  setpoint or the board's power parts are not known.
+
+Every 100 ms the monitor thread reads the SoC temperature and the PMICs' status
+words. From 80 °C, or while any PMIC reports trouble with the power, it drops
+the ARM to 600 MHz and the rail to match; it gives the rate back below 75 °C
+with no trouble reported. The clock is the
+VPU's: Linux has no clock service to read or change it, so the kernel's
+`raspberrypi-cpufreq` finds none, and the OS's own thermal zone only has its
+critical trip.
+
 ## Wake-on-LAN
 
 When the OS powers the board off, the VPU firmware stays up and waits for a
@@ -196,4 +222,3 @@ they are signed with ([uefi.md](uefi.md#secure-boot)).
   card's power switch and its signalling voltage select), and no other tag. None
   returns a fuse. The expander's other pins, which belong to the radios, the
   power LED, the reset and the camera, are not answered.
-- The ARM runs at 600 MHz, the one rate the VPU sets.

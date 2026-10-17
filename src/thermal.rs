@@ -30,3 +30,9 @@ pub fn start() -> Option<i32> {
     cm::set_generator(TSENS_CTL, TSENS_DIV, cm::SRC_OSC | cm::ENAB);
     timer::wait(SAMPLE_US, || mmio::read(RESULT) & (VALID | SETTLED) == VALID | SETTLED).then(|| millicelsius(mmio::read(RESULT) & COUNT))
 }
+
+/// The sensor's latest sample in millidegrees Celsius, if it has one.
+pub fn latest() -> Option<i32> {
+    let result = mmio::read(RESULT);
+    (result & VALID != 0).then(|| millicelsius(result & COUNT))
+}

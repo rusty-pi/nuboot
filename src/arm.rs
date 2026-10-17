@@ -70,9 +70,6 @@ const BANK_STEP: u32 = 0x8000_0000;
 /// and up to 8 GiB above 4 GiB.
 const MEMORY_REG_MAX: usize = 12 * 6;
 
-/// The rate the ARM runs at, which needs no change to the core voltage.
-const ARM_RATE_MHZ: u32 = cm::ARM_SLOW_MHZ;
-
 /// The generators the ARM's timer reads, which start4 puts on PLLA's core
 /// channel before the ARM starts, and what it sets the PLLC-fed generator at
 /// 0x208 to then: 648 MHz over 8.640625, 75 MHz.
@@ -333,7 +330,7 @@ fn serial_text(serial: u32) -> [u8; 9] {
 /// Put `image` at ARM physical 0 and `tree`, with the board's memory, network
 /// address and identity filled in, at [`TREE_ADDR`], then let the cores out of
 /// reset.
-pub fn start(image: &[u8], tree: &[u8], serial: u32, revision: u32) -> Result<Started, Error> {
+pub fn start(image: &[u8], tree: &[u8], serial: u32, revision: u32, arm_mhz: u32) -> Result<Started, Error> {
     let total = if handover::present() { handover::sdram_mib() as u64 } else { 1024 } << 20;
     let mut reg = [0u8; MEMORY_REG_MAX];
     let reg_len = memory_reg(total, &mut reg);
@@ -426,7 +423,7 @@ pub fn start(image: &[u8], tree: &[u8], serial: u32, revision: u32) -> Result<St
 
     power_up();
     crate::rng::quiesce();
-    cm::start_arm_pll(ARM_RATE_MHZ);
+    cm::start_arm_pll(arm_mhz);
     for ctl in ARM_TIME_CLOCKS {
         cm::switch_generator(ctl, cm::DIV_ONE, cm::SRC_PLLA_CORE);
     }
@@ -437,7 +434,7 @@ pub fn start(image: &[u8], tree: &[u8], serial: u32, revision: u32) -> Result<St
     mmio::write(ARMCTRL + 0x41c, 0xa);
     mmio::write(ARMCTRL + 0x008, 0x3030);
     mmio::write(ARMCTRL, ARMCTRL_RELEASE);
-    after_release(ARM_RATE_MHZ);
+    after_release(arm_mhz);
 
     let memory_mib = reg[..reg_len]
         .chunks_exact(12)

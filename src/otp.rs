@@ -26,6 +26,8 @@ pub const BOOTMODE: u32 = 17;
 /// customer's, or blank.
 pub const MAC_HIGH: u32 = 65;
 pub const MAC_LOW: u32 = 64;
+/// The row whose set bits each add 10 mV to the core voltage.
+pub const CORE_BOOST: u32 = 44;
 /// The extended revision: its bits 8-16 describe the SDRAM parts.
 pub const EXT_REVISION: u32 = 33;
 
