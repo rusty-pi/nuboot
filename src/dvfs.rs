@@ -140,10 +140,11 @@ pub fn poll() {
         cm::speed_up_arm(g.mhz);
     }
     g.slowed = slow;
+    let core_mv = g.core.read_uv().map_or(0, |uv| uv / 1000);
     if slow {
-        info!("dvfs", "ARM slowed"; arm_mhz = cm::ARM_SLOW_MHZ, hot = g.hot, under_voltage = g.under_voltage);
+        info!("dvfs", "ARM slowed"; arm_mhz = cm::ARM_SLOW_MHZ, core_mv = core_mv, hot = g.hot, under_voltage = g.under_voltage);
     } else {
-        info!("dvfs", "ARM back to its rate"; arm_mhz = g.mhz);
+        info!("dvfs", "ARM back to its rate"; arm_mhz = g.mhz, core_mv = core_mv);
     }
 }
 
