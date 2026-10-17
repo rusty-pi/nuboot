@@ -38,6 +38,9 @@
 #   out/reboot-flags.efi
 #                     the same crate: set and read the reboot flags, as Linux's
 #                     reboot '0 tryboot' does
+#   out/gpio-tags.efi
+#                     the same crate: ask for the GPIO expander's pins, as the
+#                     OS's regulators do
 #   out/systemd-bootaa64.efi, out/uki.efi
 #                     Debian's systemd-boot, and a unified kernel image of its
 #                     systemd-stub around hello.efi, signed with the test key
@@ -229,6 +232,7 @@ sign "$mb/target/aarch64-unknown-uefi/release/boot-key-unbound.efi" "$out/boot-k
 sign "$mb/target/aarch64-unknown-uefi/release/boot-key-unbound-b.efi" "$out/boot-key-unbound-b.efi"
 sign "$mb/target/aarch64-unknown-uefi/release/tpm2-test.efi" "$out/tpm2-test.efi"
 sign "$mb/target/aarch64-unknown-uefi/release/reboot-flags.efi" "$out/reboot-flags.efi"
+sign "$mb/target/aarch64-unknown-uefi/release/gpio-tags.efi" "$out/gpio-tags.efi"
 
 rt="$here/uefi/test-apps/runtime"
 (cd "$rt" && cargo build --release --target aarch64-unknown-uefi)

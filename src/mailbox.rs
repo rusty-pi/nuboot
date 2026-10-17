@@ -12,7 +12,7 @@
 //! firmware does not know is left as it came, and the buffer is marked
 //! answered either way, which is what the stock firmware does.
 
-use crate::{arm, crypto, debug, error, idle, info, keystore, measure, mmio, tpm2, varstore, vl805, wake, warn, watchdog};
+use crate::{arm, crypto, debug, error, expander, idle, info, keystore, measure, mmio, tpm2, varstore, vl805, wake, warn, watchdog};
 
 const VPU_VIEW: u32 = 0x7e00_b980;
 /// Mailbox 0, which the ARM reads.
@@ -45,6 +45,12 @@ const TAG_NOTIFY_XHCI_RESET: u32 = 0x0003_0058;
 /// last of the devices shuts down, before a reboot and before a power off alike
 /// ([`wake`]).
 const TAG_NOTIFY_REBOOT: u32 = 0x0003_0048;
+/// The expander pins the OS may reach (`expander::pin`): its regulators switch
+/// the SD card's power and signalling voltage through them.
+const TAG_GET_GPIO_STATE: u32 = 0x0003_0041;
+const TAG_SET_GPIO_STATE: u32 = 0x0003_8041;
+const TAG_GET_GPIO_CONFIG: u32 = 0x0003_0043;
+const TAG_SET_GPIO_CONFIG: u32 = 0x0003_8043;
 
 /// Linux's `RPI_FIRMWARE_GET_REBOOT_FLAGS` and `SET_REBOOT_FLAGS`, which
 /// `reboot '0 tryboot'` sets: bit 0 asks the bootloader to boot the next time
@@ -238,6 +244,35 @@ fn respond(bus: u32, runtime: bool) {
                     error!("usb", "VL805 firmware reload failed"; device = format_args!("{device:#x}"));
                 }
                 set(i + 2, RESPONSE | 4);
+            }
+            TAG_GET_GPIO_STATE | TAG_SET_GPIO_STATE if room >= 8 => {
+                let level = expander::pin(word(value)).and_then(|pin| match tag {
+                    TAG_GET_GPIO_STATE => expander::pin_level(pin),
+                    _ => expander::drive_pin(pin, word(value + 1) != 0).then_some(word(value + 1) != 0),
+                });
+                if let Some(level) = level {
+                    set(value, 0);
+                    set(value + 1, u32::from(level));
+                    set(i + 2, RESPONSE | 8);
+                }
+            }
+            TAG_GET_GPIO_CONFIG if room >= 20 => {
+                if let Some(config) = expander::pin(word(value)).and_then(expander::pin_config) {
+                    set(value, 0);
+                    set(value + 1, u32::from(config.output));
+                    set(value + 2, 0);
+                    set(value + 3, u32::from(config.pull));
+                    set(value + 4, u32::from(config.pull_up));
+                    set(i + 2, RESPONSE | 20);
+                }
+            }
+            TAG_SET_GPIO_CONFIG if room >= 24 => {
+                let config = expander::PinConfig { output: word(value + 1) != 0, pull: word(value + 3) != 0, pull_up: word(value + 4) != 0 };
+                let done = expander::pin(word(value)).and_then(|pin| expander::set_pin_config(pin, config, word(value + 5) != 0));
+                if done.is_some() {
+                    set(value, 0);
+                    set(i + 2, RESPONSE | 4);
+                }
             }
             TAG_NOTIFY_REBOOT => {
                 wake::announce_shutdown();

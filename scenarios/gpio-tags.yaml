@@ -1,0 +1,25 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "gpio-tags"
+description: "The OS's regulators reach the SD card's power switch and signalling voltage select through the GPIO expander over the property mailbox: those two pins are answered, set and read back, and every other pin, which belongs to the radios, the power LED, the reset and the camera, is refused."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  sd:
+    files:
+      start4.elf: "../out/start4-test.elf"
+      EFI/BOOT/BOOTAA64.EFI: "../out/gpio-tags.efi"
+  until: "gpio test: done"
+  wall_secs: 600
+
+milestones:
+  - why: "GET_GPIO_CONFIG answers for the SD card's power pin, an output."
+    line: "gpio test: SD power pin is an output"
+  - why: "GET_GPIO_STATE reads the level the bootloader drove the power pin to."
+    line: "gpio test: SD power is on"
+  - why: "SET_GPIO_STATE changes the signalling voltage select, here to the level it has, and the level reads back."
+    line: "gpio test: SD signalling level set and read back"
+  - why: "SET_GPIO_CONFIG sets the signalling select up as an output."
+    line: "gpio test: SD signalling pin configured"
+  - why: "No other pin is answered by any of the four tags."
+    line: "gpio test: the other pins are refused"

@@ -27,6 +27,10 @@ name = "reboot-flags"
 path = "src/reboot_flags.rs"
 
 [[bin]]
+name = "gpio-tags"
+path = "src/gpio_tags.rs"
+
+[[bin]]
 name = "tpm2-test"
 path = "src/tpm2_test.rs"
 

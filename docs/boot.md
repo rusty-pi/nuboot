@@ -147,6 +147,7 @@ pimu boot --scenario scenarios/rev14-hello.yaml  # an EFI application on a 4B re
 pimu boot --scenario scenarios/usb-hello.yaml    # an EFI application off a USB drive
 pimu boot --scenario scenarios/xhci-reset.yaml   # NOTIFY_XHCI_RESET over the property mailbox
 pimu boot --scenario scenarios/reboot-flags.yaml  # the tryboot request over the property mailbox
+pimu boot --scenario scenarios/gpio-tags.yaml     # the SD card's pins on the GPIO expander over the property mailbox
 pimu boot --scenario scenarios/boot-key.yaml     # the boot key bound to PCR 4, once
 pimu boot --scenario scenarios/boot-key-unbound.yaml    # bound to PCR 7
 pimu boot --scenario scenarios/tpm2-commands.yaml  # TPM 2.0 commands on the VPU
@@ -190,5 +191,9 @@ they are signed with ([uefi.md](uefi.md#secure-boot)).
   `0x3EBFF000`, [tpm2.md](tpm2.md#the-command-response-buffer)), and, on channel 7 for the
   runtime services, the store's `0x000300a6` (append the record of a signed
   `KEK`, `db` or `dbx` update as it is) and `0x000300a7` (seal and append a
-  variable's write), and no other tag. None returns a fuse.
+  variable's write), and, for the SD card's regulators, the GPIO expander's
+  two SD pins (`0x00030041`, `0x00038041`, `0x00030043` and `0x00038043`: the
+  card's power switch and its signalling voltage select), and no other tag. None
+  returns a fuse. The expander's other pins, which belong to the radios, the
+  power LED, the reset and the camera, are not answered.
 - The ARM runs at 600 MHz, the one rate the VPU sets.

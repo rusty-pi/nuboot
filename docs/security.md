@@ -302,6 +302,7 @@ What a locked-down OS reaches:
 |---|---|---|
 | TPM commands, over the ACPI command buffer or the mailbox tag | the TPM 2.0 subset in [tpm2.md](tpm2.md) | a parser over checked reads, every size field bounded; a command that would overrun a slot or a buffer gets `TPM_RC_SIZE`; a command is at most 2048 bytes and none runs long |
 | the property mailbox, channel 8 | the tags in [boot.md](boot.md#known-limitations) | the request is copied once, from a buffer that must lie wholly below the VPU's memory, and parsed from the copy; no tag returns a fuse or the device key, and the one secret it gives, the boot key, it gives once |
+| the GPIO expander, over the same tags | the SD card's power switch and signalling voltage select, two of the expander's eight pins | any other pin gets no answer; each request is one bounded I2C transaction; the expander is the board's own, the OS has no other way to it |
 | the mailbox, channel 7 | the runtime services' two store tags | the OS's own mailbox driver does not use it, and the channel-8 path ignores these tags |
 | `GetVariable`, `GetNextVariableName`, `SetVariable`, `QueryVariableInfo`, `ResetSystem` | the runtime services | the rules above; every other runtime service returns `EFI_UNSUPPORTED` |
 | the TPM's command buffer page | one page the OS shares | the VPU takes the length from one read of the header, copies the command out and runs the copy; the buffer's place and size are the VPU's own |
@@ -311,7 +312,7 @@ memory is not in the device tree, the EFI memory map or the reservations the OS
 sees; hardware does not enforce that (see the first section).
 
 What a command can change in the VPU is small: the PCRs (extend-only, but for 16 and 23, which can be reset), a handful
-of TPM objects and sessions, and the boot-key and lock flags. A panic in the VPU
+of TPM objects and sessions, the boot-key and lock flags, and the level of the SD card's power and signalling pins. A panic in the VPU
 stops its service thread (the mailbox, the TPM and the watchdog's beats), so a
 TPM command that panics is a denial of service for everyone with `/dev/tpm0`;
 the parser answers an error for each shape of command that was found to

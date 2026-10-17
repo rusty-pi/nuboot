@@ -190,6 +190,7 @@ jobs:
             out/watchdog-fault.efi
             out/xhci-reset.efi
             out/reboot-flags.efi
+            out/gpio-tags.efi
             out/boot-key.efi
             out/boot-key-unbound.efi
             out/boot-key-unbound-b.efi

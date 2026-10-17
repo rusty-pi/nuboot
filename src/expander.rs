@@ -10,6 +10,9 @@ const ADDR: u8 = 0x43;
 const DIRECTION: u8 = 0x03;
 const OUTPUT: u8 = 0x05;
 const OUTPUT_HIGH_Z: u8 = 0x07;
+const PULL_ENABLE: u8 = 0x0b;
+const PULL_UP: u8 = 0x0d;
+const INPUT_STATUS: u8 = 0x0f;
 /// The power LED's pin, which lights the LED while it is driven low.
 const POWER_LED_OFF: u8 = 1 << 2;
 
@@ -90,4 +93,75 @@ fn set_pin_as(now: Registers, saved: u32) {
     i2c::write_reg(ADDR, OUTPUT, output);
     i2c::write_reg(ADDR, OUTPUT_HIGH_Z, high_z);
     i2c::write_reg(ADDR, DIRECTION, direction);
+}
+
+/// The number the property mailbox gives the expander's first pin; the pins
+/// follow in order.
+const FIRST_GPIO: u32 = 128;
+/// The pins the OS may reach: the SD card's power switch and its signalling
+/// voltage select. The radios', the power LED's, the reset's and the camera's
+/// stay with this firmware.
+const SD_IO_SELECT: u8 = 4;
+const SD_POWER_ON: u8 = 6;
+
+/// The expander pin the mailbox's GPIO number `gpio` names, if it names one the
+/// OS may reach.
+pub fn pin(gpio: u32) -> Option<u8> {
+    let pin = u8::try_from(gpio.checked_sub(FIRST_GPIO)?).ok()?;
+    matches!(pin, SD_IO_SELECT | SD_POWER_ON).then_some(pin)
+}
+
+/// What a pin is set up as.
+#[derive(Clone, Copy)]
+pub struct PinConfig {
+    pub output: bool,
+    pub pull: bool,
+    pub pull_up: bool,
+}
+
+fn flag(register: u8, pin: u8) -> bool {
+    register & 1 << pin != 0
+}
+
+fn with_flag(register: u8, pin: u8, set: bool) -> u8 {
+    if set { register | 1 << pin } else { register & !(1 << pin) }
+}
+
+/// How `pin` is set up, if the expander answers.
+pub fn pin_config(pin: u8) -> Option<PinConfig> {
+    Some(PinConfig {
+        output: flag(i2c::read_reg(ADDR, DIRECTION)?, pin),
+        pull: flag(i2c::read_reg(ADDR, PULL_ENABLE)?, pin),
+        pull_up: flag(i2c::read_reg(ADDR, PULL_UP)?, pin),
+    })
+}
+
+/// The level of `pin`: what it is driven to if it is an output, what it reads
+/// as if it is an input.
+pub fn pin_level(pin: u8) -> Option<bool> {
+    let register = if flag(i2c::read_reg(ADDR, DIRECTION)?, pin) { OUTPUT } else { INPUT_STATUS };
+    Some(flag(i2c::read_reg(ADDR, register)?, pin))
+}
+
+/// Drive `pin` to `level`; whether the expander took it.
+pub fn drive_pin(pin: u8, level: bool) -> bool {
+    i2c::read_reg(ADDR, OUTPUT).is_some_and(|output| i2c::write_reg(ADDR, OUTPUT, with_flag(output, pin, level)))
+}
+
+/// Set `pin` up as `config`. An output is driven to `level` before it becomes
+/// one, so it does not glitch. Whether the expander took it.
+pub fn set_pin_config(pin: u8, config: PinConfig, level: bool) -> Option<()> {
+    let output = i2c::read_reg(ADDR, OUTPUT)?;
+    let high_z = i2c::read_reg(ADDR, OUTPUT_HIGH_Z)?;
+    let direction = i2c::read_reg(ADDR, DIRECTION)?;
+    let pull = i2c::read_reg(ADDR, PULL_ENABLE)?;
+    let pull_up = i2c::read_reg(ADDR, PULL_UP)?;
+    let writes = [
+        (OUTPUT, with_flag(output, pin, level)),
+        (OUTPUT_HIGH_Z, with_flag(high_z, pin, !config.output)),
+        (PULL_ENABLE, with_flag(pull, pin, config.pull)),
+        (PULL_UP, with_flag(pull_up, pin, config.pull_up)),
+        (DIRECTION, with_flag(direction, pin, config.output)),
+    ];
+    writes.iter().all(|&(register, value)| i2c::write_reg(ADDR, register, value)).then_some(())
 }
