@@ -6,7 +6,7 @@
 //! with the primary core going on to decompress the UEFI payload. The
 //! address of the tree goes in the image's word at [`IMAGE_TREE_WORD`].
 
-use crate::{cm, fdt, handover, mmio, otp, timer, tpm_crb};
+use crate::{board, cm, fdt, handover, mmio, otp, timer, tpm_crb};
 
 /// The ARM control block, and the bit that lets the cores out of reset.
 const ARMCTRL: u32 = 0x7e00_b000;
@@ -304,6 +304,18 @@ pub fn ethernet_address(serial: u32) -> [u8; 6] {
     [0x02, digest[0], digest[1], digest[2], digest[3], digest[4]]
 }
 
+/// The nodes for the wireless chip, which a headless server does not use and
+/// whose SD host has no clock here: described as disabled, as the stock
+/// `disable-wifi` and `disable-bt` overlays do.
+const WIRELESS_NODES: &[&[&[u8]]] = &[&[b"", b"soc", b"mmcnr@7e300000"], &[b"", b"soc", b"serial@7e201000", b"bluetooth"]];
+
+/// The SD host's bus. The tree describes its DMA window as the first gigabyte at
+/// the bus address `0xC000_0000`, which is right for BCM2711 B0; C0 reaches the
+/// low 4 GiB, less the peripherals' window, at its own addresses, as the stock
+/// firmware tells the OS.
+const EMMC2_BUS_NODE: &[&[u8]] = &[b"", b"emmc2bus"];
+const C0_EMMC2_DMA_RANGES: [u8; 20] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xfc, 0, 0, 0];
+
 /// The root property the revision code goes in, which nothing but UEFI reads
 /// (for the identity SMBIOS gives).
 const REVISION_PROPERTY: &[u8] = b"rusty-pi,board-revision";
@@ -383,8 +395,23 @@ pub fn start(image: &[u8], tree: &[u8], serial: u32, revision: u32) -> Result<St
         Some(len) => (revision_at, len),
         None => (with_serial_at, with_serial),
     };
+    let (mut tree_at, mut tree_len) = (with_revision_at, with_revision);
+    for node in WIRELESS_NODES {
+        let to = spare(tree_at);
+        if let Some(len) = fdt::copy_with_property(arm_memory(tree_at, tree_len), arm_memory(to, window), node, b"status", b"disabled\0") {
+            (tree_at, tree_len) = (to, len);
+        }
+    }
+    if board::stepping() == board::Stepping::C0 {
+        let to = spare(tree_at);
+        if let Some(len) =
+            fdt::copy_with_property(arm_memory(tree_at, tree_len), arm_memory(to, window), EMMC2_BUS_NODE, b"dma-ranges", &C0_EMMC2_DMA_RANGES)
+        {
+            (tree_at, tree_len) = (to, len);
+        }
+    }
     let tree_bytes = fdt::copy_with_property(
-        arm_memory(with_revision_at, with_revision),
+        arm_memory(tree_at, tree_len),
         arm_memory(TREE_ADDR, window),
         &[b"", b"memory@0"],
         b"reg",
