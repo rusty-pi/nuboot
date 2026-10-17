@@ -81,7 +81,9 @@ which takes the dog back and beats it for 120 s, the time a kernel has to load
 `bcm2835_wdt`, a module in most distributions' kernels, and have it find the
 dog running. The VPU stops reloading as soon as the dog has less than 8 s left
 at a reload, which is the operating system having armed it with a timeout of its
-own.
+own. A kernel without the driver leaves the board to reset 120 s after
+`ExitBootServices`: Debian's arm64 kernel has it, Ubuntu's `-generic` one does
+not.
 
 The timer is the EL2 hypervisor timer (`CNTHP`, GIC interrupt 26), routed to EL2
 until `ExitBootServices`: a payload that uses either takes the beat from UEFI.
