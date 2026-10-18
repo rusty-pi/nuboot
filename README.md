@@ -68,15 +68,15 @@ From the boot ROM to the threads that run for as long as the board is up:
    and given the VL805 USB controller its firmware. UEFI finds the SD card and
    any USB drive and boots `\EFI\BOOT\BOOTAA64.EFI` from them.
    UEFI measures what it verifies into a TPM 2.0 on the VPU and offers
-   `EFI_TCG2_PROTOCOL` over it ([docs/tpm2.md](docs/tpm2.md)); the payload can
-   have a key from the device private key ([docs/keystore.md](docs/keystore.md)).
+   `EFI_TCG2_PROTOCOL` over it ([docs/tpm2.md](docs/tpm2.md)); the TPM's keys
+   come from the device private key ([docs/keystore.md](docs/keystore.md)).
    The OS finds that TPM through the ACPI tables UEFI builds, with its own
    driver, or through the device tree and a module
    ([docs/os-image.md](docs/os-image.md)). UEFI describes the board in SMBIOS
    tables too.
 6. Starts the scheduler: a service thread that answers the property mailbox
    (Linux's `NOTIFY_XHCI_RESET`, which has the VL805's firmware reloaded, and
-   the TPM's commands and the boot key), and a monitor thread that reports each
+   the TPM's commands), and a monitor thread that reports each
    stack's high-water mark as it grows.
 
 ```text
@@ -131,7 +131,6 @@ From the boot ROM to the threads that run for as long as the board is up:
 | Variables the OS writes through the runtime services, a signed `db` update among them, kept across a reset | ✅ | ✅ | ➖ | ➖ |
 | The flash variable store has room for the OS's writes after a boot: a bank the OS filled with the variables it replaced is started afresh with what the variables still need, and the OS writes again | ✅ | ✅ | ➖ | ➖ |
 | A shutdown through the runtime services, after `ExitBootServices`, ends in the bootloader's halt | ✅ | ➖ | ➖ | ➖ |
-| A boot key from the fused private key, handed over once, nothing of it left in the VPU's memory | ✅ | ➖ | ➖ | ➖ |
 | Update bundles: an update capsule's bundle is kept, left in RAM across a reset, checked against the update key and run in the update slot by the firmware the bootloader loaded, and proven at `ExitBootServices`; one no update key signed is refused | ✅ | ✅ | ➖ | ➖ |
 | A kept update bundle is staged again at the next power-up and runs; one that does not reach the OS is tried three times, counted in its file name, and then dropped for the one that ran before it; one that does is blessed and the older ones are removed | ✅ | ✅ | ➖ | ➖ |
 | Wake-on-LAN: the OS powers the board off, the VPU waits on the Ethernet port, a magic packet boots the board | ✅ | ✅ | ➖ | ➖ |
@@ -176,9 +175,6 @@ pimu boot --scenario scenarios/secure-boot-refused.yaml
 pimu boot --scenario scenarios/rev14-hello.yaml
 pimu boot --scenario scenarios/usb-hello.yaml
 pimu boot --scenario scenarios/xhci-reset.yaml
-pimu boot --scenario scenarios/boot-key.yaml
-pimu boot --scenario scenarios/boot-key-unbound.yaml
-pimu boot --scenario scenarios/boot-key-unbound-b.yaml
 pimu boot --scenario scenarios/tpm2-commands.yaml
 pimu boot --scenario scenarios/systemd-boot.yaml
 pimu boot --scenario scenarios/watchdog-hang.yaml
@@ -210,7 +206,7 @@ pimu boot --eeprom out/stock-pieeprom.bin --sd boot/
 | `src/sched.rs`, `src/critical.rs`, `src/sync.rs`, `src/stack.rs` | Threads, critical sections, semaphores, queues and locks, stack guards |
 | `src/idle.rs`, `src/timer.rs`, `src/stc.rs` | Interrupts, sleeping, the system timer |
 | `src/watchdog.rs`, `src/wdat.rs`, `src/handover.rs` | The boot watchdog, the register page of the watchdog the ACPI tables' WDAT describes, and the state the bootloader hands over |
-| `src/tpm2.rs`, `src/keystore.rs`, `src/crypto.rs`, `src/rng.rs` | The TPM 2.0 on the VPU, its PCRs, the boot key derived from the device private key and the firmware cryptography service for it, the random number generator |
+| `src/tpm2.rs`, `src/keystore.rs`, `src/crypto.rs`, `src/rng.rs` | The TPM 2.0 on the VPU, its PCRs, the secrets derived from the device private key and the firmware cryptography service for it, the random number generator |
 | `src/console.rs`, `src/cm.rs`, `src/otp.rs`, `src/board.rs` | The PL011, clock generators, OTP and the board's identity |
 | `src/spi_flash.rs`, `src/eeprom.rs`, `src/elf.rs`, `src/cache.rs` | The EEPROM and its sections, loading the ARM's image |
 | `src/pcie.rs`, `src/vl805.rs`, `src/usb.rs`, `src/lzss.rs` | The PCIe link, and the VL805 and its firmware |

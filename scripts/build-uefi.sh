@@ -23,11 +23,9 @@
 #   out/xhci-reset.efi
 #                     uefi/test-apps/mailbox: ask over the property mailbox
 #                     for the VL805's firmware to be reloaded, as Linux does
-#   out/boot-key.efi, out/boot-key-unbound.efi, out/boot-key-unbound-b.efi,
 #   out/tpm2-test.efi
-#                     the same crate: ask for the boot key bound to PCR 4 or
-#                     to nothing (two images) and try to measure after it;
-#                     send the TPM on the VPU a series of commands
+#                     the same crate: send the TPM on the VPU a series of
+#                     commands
 #   out/runtime-variables.efi, out/crypto.efi, out/persist.efi,
 #   out/store-compact.efi, out/runtime-shutdown.efi
 #                     uefi/test-apps/runtime: exit boot services and use the
@@ -227,9 +225,6 @@ sign "$wd/target/aarch64-unknown-uefi/release/fault.efi" "$out/watchdog-fault.ef
 mb="$here/uefi/test-apps/mailbox"
 (cd "$mb" && cargo build --release --target aarch64-unknown-uefi)
 sign "$mb/target/aarch64-unknown-uefi/release/xhci-reset.efi" "$out/xhci-reset.efi"
-sign "$mb/target/aarch64-unknown-uefi/release/boot-key.efi" "$out/boot-key.efi"
-sign "$mb/target/aarch64-unknown-uefi/release/boot-key-unbound.efi" "$out/boot-key-unbound.efi"
-sign "$mb/target/aarch64-unknown-uefi/release/boot-key-unbound-b.efi" "$out/boot-key-unbound-b.efi"
 sign "$mb/target/aarch64-unknown-uefi/release/tpm2-test.efi" "$out/tpm2-test.efi"
 sign "$mb/target/aarch64-unknown-uefi/release/reboot-flags.efi" "$out/reboot-flags.efi"
 sign "$mb/target/aarch64-unknown-uefi/release/gpio-tags.efi" "$out/gpio-tags.efi"

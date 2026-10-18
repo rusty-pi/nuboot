@@ -85,7 +85,7 @@ changing to keep working:
   EEPROM configuration, boot order or `boot.img` changed to boot
 - the UEFI variable store's format changed so that what the previous release
   wrote is ignored or lost
-- the Secure Boot keys the firmware trusts changed, or the boot key and the
+- the Secure Boot keys the firmware trusts changed, or the TPM's seeds and the
   measured boot's PCRs derive differently, so that data sealed to the TPM no
   longer unseals
 - a mailbox tag, a device tree node or an ACPI table an operating system

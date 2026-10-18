@@ -193,8 +193,6 @@ pimu boot --scenario scenarios/usb-hello.yaml    # an EFI application off a USB 
 pimu boot --scenario scenarios/xhci-reset.yaml   # NOTIFY_XHCI_RESET over the property mailbox
 pimu boot --scenario scenarios/reboot-flags.yaml  # the tryboot request over the property mailbox
 pimu boot --scenario scenarios/gpio-tags.yaml     # the SD card's pins on the GPIO expander over the property mailbox
-pimu boot --scenario scenarios/boot-key.yaml     # the boot key bound to PCR 4, once
-pimu boot --scenario scenarios/boot-key-unbound.yaml    # bound to PCR 7
 pimu boot --scenario scenarios/tpm2-commands.yaml  # TPM 2.0 commands on the VPU
 pimu boot --scenario scenarios/capsule.yaml     # firmware update capsules on the card
 pimu boot --scenario scenarios/capsule-stage.yaml   # a capsule written as tryboot.img and tryboot.sig
@@ -229,7 +227,7 @@ they are signed with ([uefi.md](uefi.md#secure-boot)).
 - The property mailbox answers `NOTIFY_REBOOT` (which starts the [watch for a power off](#wake-on-lan)), `GET_REBOOT_FLAGS` and `SET_REBOOT_FLAGS` (bit 0 is the one-shot tryboot request in `PM_RSTS`, which Linux's `reboot '0 tryboot'` sets), `NOTIFY_XHCI_RESET` (reload the VL805's
   firmware after the OS has reset the PCIe link), the TPM 2.0 on the VPU (tag
   `0x000300a3` carries a command, `0x000300a1` extends a PCR) and the
-  one-time boot key (tag `0x000300a0`) and the device key's signatures, HMACs and
+  device key's signatures, HMACs and
   public key (`0x0003008e` to `0x00030095`, [keystore.md](keystore.md#the-firmware-cryptography-service)),
   and, on channel 6, the TPM's doorbell (the ACPI start method of the TPM's
   command response buffer, which makes the VPU run the command in the page at

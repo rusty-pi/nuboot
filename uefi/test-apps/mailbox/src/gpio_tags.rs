@@ -6,7 +6,6 @@
 
 use r_efi::efi::{Handle, Status, SystemTable};
 
-#[path = "boot_key_common.rs"]
 mod common;
 
 const TAG_GET_GPIO_STATE: u32 = 0x0003_0041;
