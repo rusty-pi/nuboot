@@ -1,25 +1,17 @@
-//! The boot measurement and the boot key: a secret the VPU derives from the
-//! device private key and what was booted, and hands to the ARM once.
+//! The boot measurement and the secrets the VPU derives from the device
+//! private key: the TPM's seeds and the key's signatures and MACs.
 //!
 //! The VPU keeps a bank of [`PCRS`] SHA-256 registers, as a TPM does. UEFI
 //! extends them as it boots (`EFI_TCG2_PROTOCOL`, which shim, GRUB and the
 //! Linux EFI stub measure into): `PCR = SHA-256(PCR || digest)`, from zero.
-//! The OS (or whatever runs last) asks for the boot key ([`take`]) with a
-//! mask of the registers it wants it bound to. The key is
-//! `HMAC-SHA256(private key, LABEL || mask || the selected registers)` over
-//! OTP rows 56-63. An empty mask binds it to nothing: one stable key per
-//! board. Binding to PCR 7 (Secure Boot policy and the certificates that
-//! verified each stage) or PCR 4 (the images) makes it change when those do.
+//! The registers are the TPM's ([`crate::tpm2`]): they can be extended at any
+//! time, never set.
 //!
-//! The private key is read when the key is asked for and never leaves this
-//! module: the ARM cannot reach the OTP block, and this firmware answers no
-//! mailbox tag that returns a fuse. Everything the derivation touched is
-//! overwritten ([`scrub`]) before it returns, since anything left in SDRAM or
-//! the L2 is readable from an ARM that has raw memory access.
-//!
-//! The key goes out once. The registers themselves are the TPM's
-//! ([`crate::tpm2`]): they can be extended at any time, never set, so a late
-//! extend can only move a register away from the value a key was bound to.
+//! The private key is read when it is needed and never leaves this module: no
+//! mailbox tag returns a fuse. Privileged ARM code can still read the OTP block
+//! itself. Everything a computation with the key
+//! touched is overwritten ([`scrub`]) before it returns, since anything left in
+//! SDRAM or the L2 is readable from an ARM that has raw memory access.
 //!
 //! None of this holds against a payload that can write the VPU's memory: it
 //! can change the registers, or the code that checks them.
@@ -30,7 +22,6 @@ use crate::{cache, critical, otp, p256, rng, sha256};
 
 const FIRST_ROW: u32 = 56;
 const ROWS: usize = 8;
-const LABEL: &[u8] = b"nuboot boot key v1";
 const TPM_LABEL: &[u8] = b"nuboot TPM secret v1";
 pub const PCRS: usize = 24;
 /// The PCRs of dynamic root of trust measurements, which nothing here does and
@@ -39,7 +30,6 @@ const DRTM_PCRS: core::ops::RangeInclusive<usize> = 17..=22;
 
 static mut PCR: [[u8; 32]; PCRS] = [[0; 32]; PCRS];
 static mut COUNT: u32 = 0;
-static mut TAKEN: bool = false;
 static mut BOOT_SECRET: [u8; 32] = [0; 32];
 static mut BOOT_SECRET_SET: bool = false;
 
@@ -81,19 +71,6 @@ pub fn reset(pcr: usize) -> Result<u32, Refused> {
 /// How many times the registers have changed: the TPM's `pcrUpdateCounter`.
 pub fn count() -> u32 {
     unsafe { read_volatile(&raw const COUNT) }
-}
-
-/// The boot key bound to the registers `mask` selects, once, if the board's
-/// private key is fused. An empty mask binds it to nothing.
-pub fn take(mask: u32) -> Option<[u8; 32]> {
-    if unsafe { read_volatile(&raw const TAKEN) } || mask >> PCRS != 0 {
-        return None;
-    }
-    unsafe { write_volatile(&raw mut TAKEN, true) };
-    let _section = critical::enter();
-    let key = derive(mask);
-    scrub();
-    key
 }
 
 /// A secret of the TPM called `label`: with `stable`, the same at every boot on
@@ -220,24 +197,6 @@ fn private_key() -> Option<[u8; ROWS * 4]> {
         chunk.copy_from_slice(&row.to_le_bytes());
     }
     (fused != 0).then_some(private)
-}
-
-#[inline(never)]
-fn derive(mask: u32) -> Option<[u8; 32]> {
-    let mut private = private_key()?;
-    let mut message = [0u8; LABEL.len() + 4 + 32 * PCRS];
-    message[..LABEL.len()].copy_from_slice(LABEL);
-    message[LABEL.len()..LABEL.len() + 4].copy_from_slice(&mask.to_le_bytes());
-    let mut len = LABEL.len() + 4;
-    for (i, register) in unsafe { &*(&raw const PCR) }.iter().enumerate() {
-        if mask >> i & 1 != 0 {
-            message[len..len + 32].copy_from_slice(register);
-            len += 32;
-        }
-    }
-    let key = sha256::hmac(&private, &message[..len]);
-    zero(&mut private);
-    Some(key)
 }
 
 /// Overwrite the stack below the caller, where the frames of the calls that

@@ -9,7 +9,6 @@ use core::ffi::c_void;
 
 use r_efi::efi::{Guid, Handle, Status, SystemTable};
 
-#[path = "boot_key_common.rs"]
 mod common;
 use common::say;
 

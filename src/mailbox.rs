@@ -58,11 +58,9 @@ const TAG_SET_GPIO_CONFIG: u32 = 0x0003_8043;
 const TAG_GET_REBOOT_FLAGS: u32 = 0x0003_0064;
 const TAG_SET_REBOOT_FLAGS: u32 = 0x0003_8064;
 
-/// The boot key, once: the mask of the PCRs it is bound to in, 32 bytes out,
-/// then not answered again ([`keystore`]).
-/// Tags of this firmware's own, in the range the stock firmware keeps for its
-/// crypto service.
-const TAG_GET_BOOT_KEY: u32 = 0x0003_00a0;
+// Tags of this firmware's own, in the range the stock firmware keeps for its
+// crypto service.
+
 /// Extend a PCR with 32 bytes: the PCR's number, then the digest.
 const TAG_EXTEND_BOOT_MEASUREMENT: u32 = 0x0003_00a1;
 /// A TPM 2.0 command in, its response out ([`tpm2`]), in the tag's value: the
@@ -131,7 +129,7 @@ pub fn request_pending() -> bool {
 static mut REQUEST: [u32; (MAX_BUFFER / 4) as usize] = [0; (MAX_BUFFER / 4) as usize];
 
 /// Answer the buffer at bus address `bus`, in place, and leave nothing of it
-/// in [`REQUEST`]: an answer can hold the boot key or a MAC.
+/// in [`REQUEST`]: an answer can hold a MAC.
 fn answer(bus: u32, runtime: bool) {
     respond(bus, runtime);
     let copy = (&raw mut REQUEST).cast::<u32>();
@@ -287,20 +285,6 @@ fn respond(bus: u32, runtime: bool) {
                 watchdog::request_tryboot(flags & 1 != 0);
                 info!("mailbox", "reboot flags set"; flags = format_args!("{flags:#x}"));
                 set(i + 2, RESPONSE | 4);
-            }
-            TAG_GET_BOOT_KEY if room >= 32 => {
-                let mask = word(value);
-                match keystore::take(mask) {
-                    Some(mut key) => {
-                        for (n, bytes) in key.chunks_exact(4).enumerate() {
-                            set(value + n as u32, u32::from_le_bytes(bytes.try_into().unwrap()));
-                        }
-                        keystore::zero(&mut key);
-                        info!("keystore", "boot key handed over"; mask = format_args!("{mask:#x}"), extends = keystore::count());
-                        set(i + 2, RESPONSE | 32);
-                    }
-                    None => warn!("keystore", "no boot key to hand over"; mask = format_args!("{mask:#x}")),
-                }
             }
             TAG_CRYPTO_LAST_ERROR if room >= 4 => {
                 set(value, crypto::last_error());
