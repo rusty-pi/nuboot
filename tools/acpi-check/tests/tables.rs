@@ -25,7 +25,7 @@ fn the_rsdp_leads_to_every_table() {
     assert_eq!(rsdp[15], 2);
     assert_eq!(block.rsdp % 16, 0);
     let signatures: Vec<String> = walk(&block, BASE).into_iter().map(|t| t.signature).collect();
-    assert_eq!(signatures, ["XSDT", "FACP", "DSDT", "APIC", "GTDT", "SPCR", "PPTT", "TPM2", "IORT"]);
+    assert_eq!(signatures, ["XSDT", "FACP", "DSDT", "APIC", "GTDT", "SPCR", "PPTT", "TPM2", "WDAT", "IORT"]);
 }
 
 #[test]
@@ -135,6 +135,26 @@ fn the_tpm_table_names_the_control_area_and_the_acpi_start() {
     assert_eq!(u16::from_le_bytes([tpm2[36], tpm2[37]]), 1);
     assert_eq!(u64::from_le_bytes(tpm2[40..48].try_into().unwrap()), 0x3ebf_f040);
     assert_eq!(u32::from_le_bytes(tpm2[48..52].try_into().unwrap()), 8);
+}
+
+#[test]
+fn the_watchdog_table_names_the_page_the_vpu_serves() {
+    let found = walk(&block(), BASE);
+    let wdat = &table(&found, "WDAT").bytes;
+    assert_eq!(wdat.len(), 0x104);
+    let entries = u32::from_le_bytes(wdat[64..68].try_into().unwrap()) as usize;
+    assert_eq!(wdat.len(), 68 + entries * 24);
+    for entry in wdat[68..].chunks_exact(24) {
+        let address = u64::from_le_bytes(entry[8..16].try_into().unwrap());
+        assert!((0x3ebf_e000..0x3ebf_e010).contains(&address), "{address:#x} is outside the page");
+    }
+}
+
+#[test]
+fn the_tables_leave_out_the_watchdog_when_the_vpu_has_no_page() {
+    let machine = tables::Machine { wdat: None, ..sample() };
+    let found = walk(&tables::assemble(&machine, BASE), BASE);
+    assert!(found.iter().all(|t| t.signature != "WDAT"));
 }
 
 /// The length a package's own bytes declare, and how many bytes declare it.

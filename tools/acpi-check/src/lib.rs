@@ -17,7 +17,7 @@ use acpi::tables::{self, Machine};
 pub const BASE: u64 = 0xfbf7_e000;
 
 pub fn sample() -> Machine {
-    Machine { tpm: Some(0x3ebf_f000), ethernet: Some([0x02, 0x11, 0x22, 0x33, 0x44, 0x55]), xhci: Some(0x6_0200_0000), cores: 4 }
+    Machine { tpm: Some(0x3ebf_f000), wdat: Some(0x3ebf_e000), ethernet: Some([0x02, 0x11, 0x22, 0x33, 0x44, 0x55]), xhci: Some(0x6_0200_0000), cores: 4 }
 }
 
 /// A board the SMBIOS tables are laid out for: a Raspberry Pi 4B rev 1.5 with 8 GB.
