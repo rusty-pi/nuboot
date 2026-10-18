@@ -4,7 +4,9 @@
 //! configuration tables and describes the board from them; one that does not
 //! asks for the device tree as before. The TPM on the VPU is a CRB device in
 //! the tables, which the operating system's own TPM driver takes without a
-//! module of this firmware's, and the USB controller is a platform xHCI
+//! module of this firmware's, the watchdog is a WDAT device whose registers
+//! are a page the VPU serves, which the operating system's generic WDAT driver
+//! takes, and the USB controller is a platform xHCI
 //! device, which its generic driver takes without one for the PCIe root
 //! complex it sits behind.
 
@@ -23,6 +25,7 @@ pub const ACPI_20_TABLE_GUID: efi::Guid =
     efi::Guid::from_fields(0x8868e871, 0xe4f1, 0x11d3, 0xbc, 0x22, &[0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81]);
 
 const CRB_NODE: &[u8] = b"tpm-crb@";
+const WDAT_NODE: &[u8] = b"os-watchdog@";
 const ETHERNET_NODE: &[&[u8]] = &[b"", b"scb", b"ethernet@7d580000"];
 
 const CORES: u32 = 4;
@@ -32,6 +35,7 @@ const CORES: u32 = 4;
 pub fn init(tree: &fdt::Fdt, xhci: Option<u64>) {
     let machine = tables::Machine {
         tpm: tree.reserved_base(CRB_NODE),
+        wdat: tree.reserved_base(WDAT_NODE),
         ethernet: tree.bytes(ETHERNET_NODE, b"local-mac-address"),
         xhci,
         cores: CORES,
@@ -49,5 +53,5 @@ pub fn init(tree: &fdt::Fdt, xhci: Option<u64>) {
         warn!("acpi", "the tables were not offered"; status = Hex(status.as_usize()));
         return;
     }
-    info!("acpi", "tables ready"; rsdp = Hex(rsdp), bytes = size, crb = Hex(machine.tpm.unwrap_or(0)), xhci = Hex(machine.xhci.unwrap_or(0)), cores = machine.cores);
+    info!("acpi", "tables ready"; rsdp = Hex(rsdp), bytes = size, crb = Hex(machine.tpm.unwrap_or(0)), wdat = Hex(machine.wdat.unwrap_or(0)), xhci = Hex(machine.xhci.unwrap_or(0)), cores = machine.cores);
 }

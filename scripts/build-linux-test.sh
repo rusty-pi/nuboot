@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# Build out/linux-test.efi, out/linux-acpi-test.efi and out/linux-no-dt-test.efi:
+# Build out/linux-test.efi, out/linux-acpi-test.efi, out/linux-no-dt-test.efi and
+# out/linux-wdat-test.efi:
 # Debian's arm64 kernel and a busybox initramfs (uefi/test-apps/linux/init) in
 # a unified kernel image, signed with the test key, which scenarios/linux.yaml,
-# scenarios/linux-acpi.yaml and scenarios/linux-no-dt.yaml boot to see the
-# firmware from a running Linux, with the device tree, with the ACPI tables
-# and with no device tree. Needs what
+# scenarios/linux-acpi.yaml, scenarios/linux-no-dt.yaml and
+# scenarios/watchdog-wdat.yaml boot to see the firmware from a running Linux,
+# with the device tree, with the ACPI tables, with no device tree, and with the
+# ACPI tables and a watchdog nobody pings. Needs what
 # scripts/build-uefi.sh --test-keys --test-apps does, and sbsign, xz, ar, tar
 # and cpio's gzip, and off an aarch64 host aarch64-linux-gnu-gcc with its C
 # library, which build the TPM module and the initramfs's helper.
@@ -78,7 +80,7 @@ mkdir -p "$root/modules"
 # The reset controller xhci-pci waits for, then what `modprobe --show-depends xhci_pci usb_storage sd_mod` gives for this kernel, in load order;
 # then what the SD host, the network interface and the platform xHCI driver need, for the boot that describes the board with the ACPI tables.
 for module in reset-raspberrypi usb-common usbcore xhci-hcd xhci-pci scsi_common scsi_mod usb-storage sd_mod \
-    sdhci sdhci-pltfm sdhci-iproc libphy fwnode_mdio fixed_phy of_mdio mdio-bcm-unimac genet xhci-plat-hcd bcm2711_thermal iproc-rng200 bcm2835_wdt; do
+    sdhci sdhci-pltfm sdhci-iproc libphy fwnode_mdio fixed_phy of_mdio mdio-bcm-unimac genet xhci-plat-hcd bcm2711_thermal iproc-rng200 bcm2835_wdt wdat_wdt; do
   path="$(find "$tmp"/kernel/usr/lib/modules -name "$module.ko.xz" | head -n 1)"
   [ -n "$path" ] || { echo "this kernel has no module $module: list what its drivers need with modprobe --show-depends" >&2; exit 1; }
   xz -dc "$path" >"$root/modules/$module.ko"
@@ -106,11 +108,14 @@ uki() {
   sbsign --key "$keys/db.key" --cert "$keys/db.crt" --output "$out/$name.efi" "$tmp/uki.efi" 2>/dev/null
   ls -l "$out/$name.efi"
 }
-# The same kernel and initramfs three times: told to describe the board with
+# The same kernel and initramfs four times: told to describe the board with
 # its device tree, as it does by default and with two cores; with the ACPI
-# tables (acpi=on) and all four; and given no device tree to choose ACPI over.
+# tables (acpi=on) and all four; given no device tree to choose ACPI over; and
+# with the ACPI tables and told to open the watchdog and leave it.
 uki linux-test "$tmp/cmdline"
 sed 's/ maxcpus=2/ acpi=on/' "$tmp/cmdline" >"$tmp/cmdline.acpi"
 uki linux-acpi-test "$tmp/cmdline.acpi"
 sed 's/ maxcpus=2//' "$tmp/cmdline" >"$tmp/cmdline.no-dt"
 uki linux-no-dt-test "$tmp/cmdline.no-dt" --section .dtb="$tmp/empty.dtb"
+sed 's/$/ wdat_expire/' "$tmp/cmdline.acpi" >"$tmp/cmdline.wdat"
+uki linux-wdat-test "$tmp/cmdline.wdat"

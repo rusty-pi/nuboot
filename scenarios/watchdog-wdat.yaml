@@ -1,0 +1,55 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "watchdog-wdat"
+description: "The same Debian arm64 kernel as in the linux-acpi scenario, told to describe the board with the ACPI tables, finds the watchdog the WDAT table describes: its generic wdat_wdt driver takes a page of memory the VPU serves, reads the time the boot watchdog has left, sets a 4 second timeout, and is then left alone with the device open. The VPU, which holds the OS's countdown, lets it run out and resets the board; a variable the OS wrote before is there at the next boot, which then powers the board off."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  bootconf:
+    - "BOOT_UART=1"
+  otp_row:
+    - "56=0xc0de2001"
+    - "57=0xc0de3112"
+    - "58=0xc0de4223"
+    - "59=0xc0de5334"
+    - "60=0xc0de6445"
+    - "61=0xc0de7556"
+    - "62=0xc0de8667"
+    - "63=0xc0de9778"
+  sd:
+    files:
+      start4.elf: "../out/start4-test.elf"
+      EFI/BOOT/BOOTAA64.EFI: "../out/systemd-bootaa64.efi"
+      EFI/Linux/linux-wdat-test.efi: "../out/linux-wdat-test.efi"
+      loader/loader.conf: { inline: "timeout 0\nconsole-mode keep\n" }
+  until: "Halt: wake"
+  wall_secs: 3000
+
+milestones:
+  - why: "The firmware offers the ACPI tables, with the watchdog's register page (a reserved page below the TPM's) in the WDAT table."
+    line: "tables ready  rsdp="
+  - why: "The page is the one the device tree reserves for the watchdog."
+    line: "wdat=0x3ebfe000"
+  - why: "The kernel takes the ACPI tables, because it was told to."
+    line: "linux test: described by acpi"
+  - why: "The kernel builds a platform device from the WDAT table, and its generic driver takes it."
+    line: "linux test: watchdog wdat_wdt"
+  - why: "The timeout the driver was given is the one it has."
+    line: "linux test: watchdog timeout 4 seconds"
+  - why: "The page says how long the boot watchdog's window has left, which the driver reads as the time left on the dog: the window is the whole 120 s."
+    line: "linux test: watchdog has 120 seconds left"
+  - why: "The VPU takes the OS's timeout from the page."
+    line: "the OS has the boot watchdog, through the WDAT table  timeout_s=4"
+  - why: "The OS opens the watchdog and stops pinging it."
+    line: "linux test: watchdog opened and left alone"
+  - why: "The countdown runs out and the VPU resets the board."
+    line: "the OS did not ping the watchdog in time, resetting the board"
+  - why: "The board starts again, and the variable the OS wrote before the reset is there."
+    line: "linux test: the watchdog reset the board"
+  - why: "The OS deletes the variable, which keeps the run repeatable on a board whose flash holds the variable store."
+    line: "linux test: variable removed"
+  - why: "The OS powers off, which the VPU's stand-by turns into a halt."
+    line: "Halt: wake"
+  - why: "The first boot's OS was reset by the dog and did not outlive the timeout."
+    line: "linux test: the watchdog did not reset the board"
+    absent: true

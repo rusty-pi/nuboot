@@ -6,7 +6,7 @@
 //! with the primary core going on to decompress the UEFI payload. The
 //! address of the tree goes in the image's word at [`IMAGE_TREE_WORD`].
 
-use crate::{board, cm, fdt, handover, mmio, otp, timer, tpm_crb};
+use crate::{board, cm, fdt, handover, mmio, otp, timer, tpm_crb, wdat};
 
 /// The ARM control block, and the bit that lets the cores out of reset.
 const ARMCTRL: u32 = 0x7e00_b000;
@@ -56,6 +56,25 @@ fn crb_reg() -> [u8; 12] {
 /// The TPM's command response buffer.
 pub fn crb() -> tpm_crb::Window {
     tpm_crb::Window::new((0xc000_0000 | CRB_BASE) as usize as *mut u8, CRB_BASE)
+}
+
+/// The page below it, the register block of the watchdog the ACPI tables' WDAT
+/// describes ([`crate::wdat`]). The device tree reserves it and the UEFI
+/// firmware tells the OS about it in the tables.
+pub const WDAT_BASE: u32 = CRB_BASE - wdat::SIZE;
+const WDAT_NODE: &[u8] = b"os-watchdog@3ebfe000";
+const _: () = assert!(WDAT_BASE == 0x3ebf_e000);
+
+fn wdat_reg() -> [u8; 12] {
+    let mut reg = [0u8; 12];
+    reg[4..8].copy_from_slice(&WDAT_BASE.to_be_bytes());
+    reg[8..12].copy_from_slice(&wdat::SIZE.to_be_bytes());
+    reg
+}
+
+/// The WDAT watchdog's register page.
+pub fn wdat() -> wdat::Window {
+    wdat::Window::new((0xc000_0000 | WDAT_BASE) as usize as *mut u8)
 }
 
 /// The second bank the ARM gets, above the first gigabyte, and how far it can
@@ -336,7 +355,7 @@ pub fn start(image: &[u8], tree: &[u8], serial: u32, revision: u32, arm_mhz: u32
     let reg_len = memory_reg(total, &mut reg);
     let ethernet = ethernet_address(serial);
     // The tree is copied through the windows of its space, each copy with one
-    // change: the TPM's node, the TPM's buffer in the reserved memory, the
+    // change: the TPM's node, the TPM's buffer and the watchdog's page in the reserved memory, the
     // network address, the board's serial number and revision, and the
     // memory's `reg`. The last copy is at `TREE_ADDR`.
     let window = TREE_MAX / 4;
@@ -357,15 +376,23 @@ pub fn start(image: &[u8], tree: &[u8], serial: u32, revision: u32, arm_mhz: u32
         &[(b"reg", &crb_reg()), (b"no-map", b"")],
     )
     .ok_or(Error::Tree)?;
-    let (with_address_at, with_address) = match fdt::copy_with_new_property(
+    let with_watchdog = fdt::copy_with_node(
         arm_memory(window_at(2), with_buffer),
         arm_memory(window_at(1), window),
+        &[b"", b"reserved-memory"],
+        WDAT_NODE,
+        &[(b"reg", &wdat_reg()), (b"no-map", b"")],
+    )
+    .ok_or(Error::Tree)?;
+    let (with_address_at, with_address) = match fdt::copy_with_new_property(
+        arm_memory(window_at(1), with_watchdog),
+        arm_memory(window_at(2), window),
         ETHERNET_NODE,
         b"local-mac-address",
         &ethernet,
     ) {
-        Some(len) => (window_at(1), len),
-        None => (window_at(2), with_buffer),
+        Some(len) => (window_at(2), len),
+        None => (window_at(1), with_watchdog),
     };
     // The board's identity, where the tree has none: its serial number, which
     // the device tree specification names, and its revision code.
@@ -416,6 +443,7 @@ pub fn start(image: &[u8], tree: &[u8], serial: u32, revision: u32, arm_mhz: u32
     )
     .ok_or(Error::Tree)?;
     crb().reset();
+    wdat().reset();
 
     let at = arm_memory(0, image.len());
     at.copy_from_slice(image);

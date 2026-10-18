@@ -85,8 +85,33 @@ else
     done
 fi
 insmod /modules/iproc-rng200.ko 2>&1 || say "module iproc-rng200: failed"
-insmod /modules/bcm2835_wdt.ko 2>&1 || say "module bcm2835_wdt: failed"
+case " $(cat /proc/cmdline) " in *" wdat_expire "*) EXPIRE=1 ;; *) EXPIRE=0 ;; esac
+if [ $MODE = acpi ]; then
+    if [ $EXPIRE = 1 ]; then TIMEOUT=4; else TIMEOUT=30; fi
+    insmod /modules/wdat_wdt.ko timeout=$TIMEOUT 2>&1 || say "module wdat_wdt: failed"
+else
+    insmod /modules/bcm2835_wdt.ko 2>&1 || say "module bcm2835_wdt: failed"
+fi
 say "watchdog $(cat /sys/class/watchdog/watchdog0/identity 2>&1)"
+if [ $MODE = acpi ]; then
+    say "watchdog timeout $(cat /sys/class/watchdog/watchdog0/timeout 2>&1) seconds, state $(cat /sys/class/watchdog/watchdog0/state 2>&1)"
+    say "watchdog has $(cat /sys/class/watchdog/watchdog0/timeleft 2>&1) seconds left"
+fi
+if [ $EXPIRE = 1 ]; then
+    EXPIRE_TEST=6b1c0a52-3a7e-4d1f-9a0b-112233445566
+    if [ -e /sys/firmware/efi/efivars/LinuxTest-$EXPIRE_TEST ]; then
+        say "the watchdog reset the board"
+        rmvar /sys/firmware/efi/efivars/LinuxTest-$EXPIRE_TEST && say "variable removed"
+        say "powering off"
+        poweroff -f
+    fi
+    printf '\007\000\000\000\001\002\003' > /sys/firmware/efi/efivars/LinuxTest-$EXPIRE_TEST && say "variable written"
+    exec 3>/dev/watchdog0
+    say "watchdog opened and left alone"
+    sleep 60
+    say "the watchdog did not reset the board"
+    poweroff -f
+fi
 usb
 thermal() {
     zone=/sys/class/thermal/thermal_zone0

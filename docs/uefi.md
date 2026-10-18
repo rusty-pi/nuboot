@@ -79,6 +79,7 @@ them the OS finds the TPM on the VPU through its own driver, with no module
 | SPCR | The PL011 on GPIO 14 and 15 as the console, at 115200 baud |
 | PPTT | Each core's caches (48 KiB for instructions, 32 KiB for data) and the 1 MiB they share |
 | IORT | How much memory the USB controller reaches: the lower 2 GiB |
+| WDAT | The watchdog: four words of a reserved page of memory below the TPM's, which the VPU serves, so the generic `wdat_wdt` driver arms, pings and stops the board's dog ([boot.md](boot.md#boot-watchdog)) |
 | TPM2 | The TPM on the VPU, as a command response buffer device with the ACPI start method ([tpm2.md](tpm2.md#the-command-response-buffer)) |
 | DSDT | The devices below |
 
@@ -89,7 +90,6 @@ The DSDT has a device for each of:
 | each core | `ACPI0007` | the kernel's processor driver |
 | the console | `ARMH0011` | the SBSA UART driver, which keeps the line at the baud rate the SPCR names |
 | the TPM | `MSFT0101` | `tpm_crb`; its start method writes the doorbell to the mailbox |
-| the power manager | `PRP0001`, with the `compatible` of the device tree's node | `bcm2835-pm`: the watchdog the boot watchdog is handed to ([boot.md](boot.md#boot-watchdog)) |
 | the random number generator | `PRP0001`, with the `compatible` of the device tree's node | `iproc-rng200` |
 | the temperature sensor | a thermal zone, `_TMP` reading the sensor's register and `_CRT` giving 85 °C, the SoC's rating, since nothing here slows the cores down before then | the kernel's ACPI thermal driver (`acpitz`); the VPU starts the sensor's clock, which the zone and the device tree's thermal driver both need |
 | the SD host | `BRCME88C` | `sdhci-iproc`, with the card at 3.3 V and no DMA, as this firmware's own driver runs it: a sequential read of 64 MiB takes about 3.4 s (19 MB/s) on a Raspberry Pi 4B d03115, where stock Raspberry Pi OS reads the same card at 44 MB/s |
@@ -403,16 +403,13 @@ pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed b
 - `pi4-uefi.bin` is linked at 0 and the payload at `0x100_0000`; neither is
   relocatable.
 - The device tree is Raspberry Pi's for the Pi 4B whatever the board, with
-  the memory, the TPM's node and its reserved page, the board's serial number
+  the memory, the TPM's node and its reserved page, the watchdog's reserved page, the board's serial number
   and revision code and the Ethernet address filled in; the address is the one
   in the OTP's MAC rows, as Raspberry Pi's firmware gives it, and a board whose
   rows are blank gets a locally administered one from its serial number.
 - The ACPI tables describe a Raspberry Pi 4B's devices whatever the board, and
   the SMBIOS tables a Pi 4's processor and memory, with the board named by its
   revision code.
-- In ACPI mode `bcm2835-pm` logs errors at boot (its optional power-domain
-  resources are not described), and the watchdog is the `bcm2835_wdt` driver
-  that the device it makes takes.
 - Nothing reads `BootOrder`: the boot is always the removable-media path.
 - `dbx` holds image hashes only; a certificate in it is ignored.
 - Storage is read-only to EFI applications; the firmware writes only the files an update needs.

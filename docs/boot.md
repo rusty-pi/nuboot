@@ -81,9 +81,26 @@ which takes the dog back and beats it for 120 s, the time a kernel has to load
 `bcm2835_wdt`, a module in most distributions' kernels, and have it find the
 dog running. The VPU stops reloading as soon as the dog has less than 8 s left
 at a reload, which is the operating system having armed it with a timeout of its
-own. A kernel without the driver leaves the board to reset 120 s after
-`ExitBootServices`: Debian's arm64 kernel has it, Ubuntu's `-generic` one does
-not.
+own. A kernel that takes neither driver leaves the board to reset 120 s after
+`ExitBootServices`.
+
+An operating system that describes the board with the ACPI tables takes the
+dog through the WDAT table instead, with the generic `wdat_wdt` driver every
+distribution's arm64 kernel has. The table's registers are four words of a
+page of the ARM's memory that the VPU serves ([`src/wdat.rs`](../src/wdat.rs)):
+the control word (bit 0: running), the timeout in seconds, a reload word and
+the seconds left. The page says the dog is running, with 120 s left, from
+`ExitBootServices` on; the first word the driver writes to the timeout or the
+reload is the operating system taking it over. From then on the VPU holds the
+countdown the operating system set, reloads the board's dog while it has time
+left, and asks the dog for a reset the moment it runs out; a stop through the
+control word takes the dog off, and a start puts it back. A VPU that stops
+looking stops reloading the dog, which resets the board within 16 s. A timeout
+from 2 s to an hour is offered, and the page is clamped to that. The
+device tree route is unchanged, so an operating system on the device tree still
+needs `bcm2835_wdt`. The two never meet: the ACPI tables have no power manager
+device for `bcm2835_wdt` to bind to, and a kernel that uses the device tree
+ignores the WDAT table.
 
 The timer is the EL2 hypervisor timer (`CNTHP`, GIC interrupt 26), routed to EL2
 until `ExitBootServices`: a payload that uses either takes the beat from UEFI.

@@ -11,6 +11,8 @@ pub struct Machine {
     /// The base of the TPM's command response buffer window, when the VPU
     /// has one.
     pub tpm: Option<u64>,
+    /// The base of the watchdog's register page, when the VPU has one.
+    pub wdat: Option<u64>,
     /// The address of the network interface, when the VPU gives it one.
     pub ethernet: Option<[u8; 6]>,
     /// Where the USB controller's registers are, when the board has one.
@@ -59,8 +61,15 @@ const CRB_CONTROL_AREA: u64 = 0x40;
 const TPM_START_METHOD_CRB_WITH_ACPI: u32 = 8;
 const TPM_START_UUID: &str = "6bbf6cab-5463-4714-b7cd-f0203c0368d4";
 
-const PM: u32 = 0xfe10_0000;
-const PM_SIZE: u32 = 0x114;
+/// The watchdog's register page as the VPU lays it out (`src/wdat.rs`): the
+/// control word (bit 0: running), the timeout in seconds, the reload word and
+/// the seconds left. The longest and shortest timeout are the VPU's too.
+const WDAT_CONTROL: u64 = 0x00;
+const WDAT_COUNT: u64 = 0x04;
+const WDAT_RELOAD: u64 = 0x08;
+const WDAT_LEFT: u64 = 0x0c;
+const WDAT_MIN_S: u32 = 2;
+const WDAT_MAX_S: u32 = 3600;
 
 const RNG: u32 = 0xfe10_4000;
 const RNG_SIZE: u32 = 0x28;
@@ -330,6 +339,62 @@ fn tpm2(crb: u64) -> Vec<u8> {
     t.finish()
 }
 
+/// The watchdog as the operating system's generic WDAT driver takes it: the
+/// registers are words of a page of memory the VPU serves, and one count is a
+/// second. `PCI` fields are 0xff for a device that is not on a bus, the way
+/// Linux reads them.
+fn wdat(page: u64) -> Vec<u8> {
+    const ENABLED: u8 = 1;
+    const HEADER_LENGTH: u32 = 68;
+    const READ_VALUE: u8 = 0;
+    const READ_COUNTDOWN: u8 = 1;
+    const WRITE_VALUE: u8 = 2;
+    const WRITE_COUNTDOWN: u8 = 3;
+    const PRESERVE: u8 = 0x80;
+    const RESET: u8 = 1;
+    const GET_CURRENT_COUNTDOWN: u8 = 4;
+    const GET_COUNTDOWN: u8 = 5;
+    const SET_COUNTDOWN: u8 = 6;
+    const GET_RUNNING_STATE: u8 = 8;
+    const SET_RUNNING_STATE: u8 = 9;
+    const GET_STOPPED_STATE: u8 = 10;
+    const SET_STOPPED_STATE: u8 = 11;
+    const WORD: u32 = u32::MAX;
+    const RUNNING: u32 = 1;
+    let actions: [(u8, u8, u64, u32, u32); 8] = [
+        (RESET, WRITE_VALUE, WDAT_RELOAD, 1, WORD),
+        (GET_CURRENT_COUNTDOWN, READ_COUNTDOWN, WDAT_LEFT, 0, WORD),
+        (GET_COUNTDOWN, READ_COUNTDOWN, WDAT_COUNT, 0, WORD),
+        (SET_COUNTDOWN, WRITE_COUNTDOWN, WDAT_COUNT, 0, WORD),
+        (GET_RUNNING_STATE, READ_VALUE, WDAT_CONTROL, RUNNING, RUNNING),
+        (SET_RUNNING_STATE, WRITE_VALUE | PRESERVE, WDAT_CONTROL, RUNNING, RUNNING),
+        (GET_STOPPED_STATE, READ_VALUE, WDAT_CONTROL, 0, RUNNING),
+        (SET_STOPPED_STATE, WRITE_VALUE | PRESERVE, WDAT_CONTROL, 0, RUNNING),
+    ];
+    let mut t = Table::new(b"WDAT", 1, 1);
+    t.u32(HEADER_LENGTH);
+    t.u16(0xff);
+    t.u8(0xff);
+    t.u8(0xff);
+    t.u8(0xff);
+    t.zeros(3);
+    t.u32(1000);
+    t.u32(WDAT_MAX_S);
+    t.u32(WDAT_MIN_S);
+    t.u8(ENABLED);
+    t.zeros(3);
+    t.u32(actions.len() as u32);
+    for (action, instruction, register, value, mask) in actions {
+        t.u8(action);
+        t.u8(instruction);
+        t.u16(0);
+        t.register(page + register, 32, 3);
+        t.u32(value);
+        t.u32(mask);
+    }
+    t.finish()
+}
+
 /// How much memory the USB controller reaches, which an OS needs at the start
 /// of its boot, before it reads the DSDT.
 fn iort() -> Vec<u8> {
@@ -436,17 +501,6 @@ fn tpm(crb: u64) -> Bytes {
     ])
 }
 
-/// The power manager: the watchdog, and the reset the OS asks for, are the
-/// driver the device tree's `compatible` names.
-fn power_manager() -> Bytes {
-    aml::device("PM00", &[
-        aml::name("_HID", &aml::string("PRP0001")),
-        aml::name("_UID", &aml::integer(0)),
-        aml::name("_CRS", &aml::resources(&[aml::memory32(PM, PM_SIZE)])),
-        aml::properties(&[("compatible", Value::Text("brcm,bcm2835-pm-wdt"))]),
-    ])
-}
-
 /// The hardware random number generator, as the driver the device tree's
 /// `compatible` names takes it.
 fn random_number_generator() -> Bytes {
@@ -515,7 +569,7 @@ fn usb(registers: u64) -> Bytes {
 
 fn dsdt(machine: &Machine) -> Vec<u8> {
     let mut devices: Vec<Bytes> = (0..machine.cores).map(processor).collect();
-    devices.extend([console(), power_manager(), random_number_generator(), sd_host(), ethernet(machine.ethernet)]);
+    devices.extend([console(), random_number_generator(), sd_host(), ethernet(machine.ethernet)]);
     if let Some(crb) = machine.tpm {
         devices.push(tpm(crb));
     }
@@ -577,7 +631,7 @@ fn replace(block: &mut [u8], at: usize, bytes: &[u8]) {
 /// is, so the tables that point at others go in first and are written again
 /// once the others have their places.
 pub fn assemble(machine: &Machine, base: u64) -> Block {
-    let count = 5 + machine.tpm.is_some() as usize + machine.xhci.is_some() as usize;
+    let count = 5 + machine.tpm.is_some() as usize + machine.wdat.is_some() as usize + machine.xhci.is_some() as usize;
     let mut block = Vec::new();
     let rsdp_at = place(&mut block, &rsdp(0));
     let xsdt_at = place(&mut block, &xsdt(&alloc::vec![0; count]));
@@ -590,6 +644,9 @@ pub fn assemble(machine: &Machine, base: u64) -> Block {
     entries.push(place(&mut block, &pptt(machine.cores)));
     if let Some(crb) = machine.tpm {
         entries.push(place(&mut block, &tpm2(crb)));
+    }
+    if let Some(page) = machine.wdat {
+        entries.push(place(&mut block, &wdat(page)));
     }
     if machine.xhci.is_some() {
         entries.push(place(&mut block, &iort()));

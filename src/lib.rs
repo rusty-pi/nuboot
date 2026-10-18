@@ -57,6 +57,7 @@ pub mod varstore;
 pub mod vl805;
 pub mod wake;
 pub mod watchdog;
+pub mod wdat;
 
 // Both VPU cores come out of reset at the same place; bit 16 of `version` is
 // the core number. Core 1 parks.

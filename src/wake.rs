@@ -81,6 +81,7 @@ fn power_off_comes() -> bool {
 
 fn stand_by() -> ! {
     dvfs::stop();
+    crate::wdat::stop();
     cm::hold_arm(true);
     pcie::power_down();
     let mac = arm::ethernet_address(Board::read().serial);

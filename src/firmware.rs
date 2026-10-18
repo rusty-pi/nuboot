@@ -17,7 +17,7 @@ use core::cell::Cell;
 use nuboot::board::{Board, Revision};
 use nuboot::handover::{self, BootDevice};
 use nuboot::{
-    arm, console, dvfs, eeprom, error, idle, info, mailbox, measure, otp, pmic, sched, stack, stc, thermal, timer, update, usb, warn, watchdog,
+    arm, console, dvfs, eeprom, error, idle, info, mailbox, measure, otp, pmic, sched, stack, stc, thermal, timer, update, usb, warn, watchdog, wdat,
 };
 
 /// What the ARM cores start in: an armstub and the compressed UEFI firmware
@@ -231,6 +231,7 @@ extern "C" fn monitor_thread() -> ! {
     report_stacks(&used);
     loop {
         watchdog::carry_poll();
+        wdat::poll(&arm::wdat());
         dvfs::poll();
         if timer::now().wrapping_sub(looked) >= MONITOR_US {
             report_stacks(&used);

@@ -224,6 +224,23 @@ fn reload_full() {
     mmio::write(PM_WDOG, PASSWD | WDOG_MAX);
 }
 
+/// A full reload for [`crate::wdat`], which beats the dog for an operating
+/// system that set its timeout through the WDAT table.
+pub fn beat_full() {
+    reload_full();
+}
+
+/// Whether the dog is being carried over the operating system's window.
+pub fn carrying() -> bool {
+    carry_end() != 0
+}
+
+/// The operating system has taken the dog through the WDAT table: the window
+/// is over, and the dog is [`crate::wdat`]'s to beat.
+pub fn stop_carrying() {
+    carry_until(0);
+}
+
 /// One beat of the thread that watches the dog, at least once a second. While
 /// the ARM has the dog it looks for `ExitBootServices`, and takes the dog back
 /// for [`OS_WINDOW_S`]. Once the window is over the dog is left to run out, and
@@ -239,6 +256,7 @@ pub fn carry_poll() {
                 span_s = OS_WINDOW_S);
             carry_until(stc::now() + OS_WINDOW_S as u64 * 1_000_000);
             reload_full();
+            crate::wdat::open_window(&crate::arm::wdat(), OS_WINDOW_S);
         }
         return;
     }
