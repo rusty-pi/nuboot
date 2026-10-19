@@ -26,7 +26,7 @@ impl Builder {
 
     /// Starting with the nodes of `path`, without its end node.
     pub fn from(path: &[u8]) -> Self {
-        Builder(path[..path.len() - 4].to_vec())
+        Builder(path[..path.len().saturating_sub(4)].to_vec())
     }
 
     pub fn node(mut self, ty: u8, sub: u8, data: &[u8]) -> Self {
@@ -58,9 +58,13 @@ pub struct Node<'a> {
     pub data: &'a [u8],
 }
 
+/// The longest device path read: one with no end node stops here.
+const MAX_PATH: usize = 0x1_0000;
+
 /// The nodes of the path at `p`, up to its first end node.
 pub fn nodes<'a>(p: *const u8) -> impl Iterator<Item = Node<'a>> {
     let mut at = p;
+    let mut read = 0usize;
     core::iter::from_fn(move || unsafe {
         if at.is_null() {
             return None;
@@ -68,9 +72,10 @@ pub fn nodes<'a>(p: *const u8) -> impl Iterator<Item = Node<'a>> {
         let ty = *at;
         let sub = *at.add(1);
         let len = u16::from_le_bytes([*at.add(2), *at.add(3)]) as usize;
-        if ty == END || len < 4 {
+        if ty == END || len < 4 || read + len > MAX_PATH {
             return None;
         }
+        read += len;
         let node = Node { ty, sub, data: core::slice::from_raw_parts(at.add(4), len - 4) };
         at = at.add(len);
         Some(node)
@@ -89,7 +94,7 @@ pub fn bytes<'a>(p: *const u8) -> &'a [u8] {
 /// How many bytes of `path` (without its end node) `prefix`'s nodes match,
 /// if all of them do.
 pub fn prefix_len(prefix: &[u8], path: *const u8) -> Option<usize> {
-    let want = &prefix[..prefix.len() - 4];
+    let want = &prefix[..prefix.len().checked_sub(4)?];
     let have = bytes(path);
     (have.len() >= want.len() + 4 && &have[..want.len()] == want).then_some(want.len())
 }
