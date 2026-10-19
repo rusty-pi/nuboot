@@ -198,6 +198,7 @@ jobs:
             out/db-x.auth
             out/db-bad.auth
             out/shimaa64.efi
+            out/shimaa64-stock.efi
             out/systemd-bootaa64.efi
             out/uki.efi
             out/grubaa64.efi

@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "shim-refused"
+description: "The stock EEPROM bootloader starts this firmware's start4.elf from the card, and it Ubuntu's shim as Ubuntu ships it, signed by Microsoft alone. db holds none of Microsoft's CAs, so the UEFI firmware refuses to run it and has nothing else to boot."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  sd:
+    files:
+      start4.elf: "../out/start4.elf"
+      EFI/BOOT/BOOTAA64.EFI: "../out/shimaa64-stock.efi"
+  until: "nothing to boot"
+  wall_secs: 900
+
+milestones:
+  - why: "The firmware enforces Secure Boot with its own key alone in db."
+    line: "Secure Boot enforced  db=1"
+  - why: "shim's signature chains to Microsoft's UEFI CA 2011, which db does not hold."
+    line: "image refused  reason=\"not signed by a key in db\""
+  - why: "With nothing else on the card, the firmware leaves the board to the boot watchdog."
+    line: "nothing to boot"

@@ -1,13 +1,13 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "shim-grub"
-description: "The stock EEPROM bootloader starts start4.elf from the card, which trusts Microsoft's UEFI CAs alone. The UEFI firmware checks Ubuntu's shim, signed by Microsoft, and runs it; shim checks GRUB, signed by Canonical, and starts it, and GRUB reads its grub.cfg off the card."
+description: "The stock EEPROM bootloader starts this firmware's start4.elf from the card, in its test build. The UEFI firmware checks Ubuntu's shim, which carries a signature by the test key beside Microsoft's, and runs it; shim checks GRUB, signed by Canonical, and starts it, and GRUB reads its grub.cfg off the card."
 
 boot:
   eeprom: "../out/stock-pieeprom.bin"
   boot_order: "0x1"
   sd:
     files:
-      start4.elf: "../out/start4.elf"
+      start4.elf: "../out/start4-test.elf"
       EFI/BOOT/BOOTAA64.EFI: "../out/shimaa64.efi"
       EFI/BOOT/grubaa64.efi: "../out/grubaa64.efi"
       EFI/ubuntu/grub.cfg: { inline: "set timeout=0\necho \"grub: read its config from the card\"\n" }
@@ -17,9 +17,9 @@ boot:
 milestones:
   - why: "start4.elf started the ARM."
     line: "ARM started in UEFI"
-  - why: "The firmware enforces Secure Boot with this firmware's key and Microsoft's two UEFI CAs in db."
-    line: "Secure Boot enforced  db=3"
-  - why: "shim's signature chains to the Microsoft UEFI CA 2011."
-    line: "image verified  signer=\"Microsoft Windows UEFI Driver Publisher\" db=\"Microsoft Corporation UEFI CA 2011\""
+  - why: "The test build trusts this firmware's key and the test key, and none of Microsoft's."
+    line: "Secure Boot enforced  db=2"
+  - why: "shim's Microsoft signature counts for nothing; the test key's does."
+    line: "image verified  signer=\"nuboot test key\" db=\"nuboot test key\""
   - why: "GRUB started under shim, found its prefix on the card and read grub.cfg."
     line: "grub: read its config from the card"
