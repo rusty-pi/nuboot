@@ -1,11 +1,12 @@
 #!/bin/sh
 # Build the VC4 cross toolchain rustc_codegen_gcc needs -- binutils, GCC (C and
 # libgccjit) and libgcc, all into $VC4_PREFIX -- then rustc_codegen_gcc itself.
-# On Ubuntu 26.04 the binutils-vc4 and rust-gcc-vc4 releases carry the first
-# part prebuilt; see README.md.
+# The sources are the tags scripts/toolchain.env pins. On Ubuntu 26.04 the
+# releases of those tags carry the first part prebuilt; see docs/toolchain.md.
 set -eu
 
 scripts="$(cd "$(dirname "$0")" && pwd)"
+. "$scripts/toolchain.env"
 VC4_PREFIX="${VC4_PREFIX:-$HOME/.local/opt/vc4}"
 BINUTILS_SRC="${BINUTILS_SRC:-$HOME/src/binutils-vc4}"
 GCC_SRC="${GCC_SRC:-$HOME/src/gcc-vc4}"
@@ -15,9 +16,9 @@ JOBS="${JOBS:-$(nproc)}"
 CLONE_BASE="${CLONE_BASE:-git@github.com:}"
 
 [ -d "$BINUTILS_SRC" ] ||
-  git clone --depth 1 -b vc4-2.46.1 "${CLONE_BASE}rusty-pi/binutils-vc4.git" "$BINUTILS_SRC"
+  git clone --depth 1 -b "$BINUTILS_VC4_TAG" "${CLONE_BASE}rusty-pi/binutils-vc4.git" "$BINUTILS_SRC"
 [ -d "$GCC_SRC" ] ||
-  git clone --depth 1 -b vc4-rust "${CLONE_BASE}rusty-pi/gcc-vc4.git" "$GCC_SRC"
+  git clone --depth 1 -b "$GCC_VC4_TAG" "${CLONE_BASE}rusty-pi/gcc-vc4.git" "$GCC_SRC"
 
 mkdir -p "$BUILD_DIR/binutils" "$BUILD_DIR/gcc"
 

@@ -383,8 +383,10 @@ bounded.
   is zero.
 - CI holds `contents: read`, pins its third-party actions by commit (pimu is
   taken from its main branch), and uploads no private key. The VC4 compiler (`rusty-pi/gcc-vc4` and `binutils-vc4`) is
-  installed from the latest release of its repositories with no checksum, which is
-  the weakest input of the build: a compromised compiler can put anything in the
+  installed from the release tags `scripts/toolchain.env` pins, checked against
+  the SHA-256 recorded there; a self-hosted runner's preinstalled copy is used
+  only when its package versions name the pinned commits. The compiler is still
+  the weakest input of the build: a compromised one can put anything in the
   VPU's code.
 
 ## What it takes to break it
