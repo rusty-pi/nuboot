@@ -2,81 +2,109 @@
 //! flattened format to find the memory and what is reserved in it.
 
 const MAGIC: u32 = 0xd00d_feed;
+const HEADER: usize = 40;
+const OFF_STRUCT: usize = 8;
+const OFF_STRINGS: usize = 12;
+const OFF_RSVMAP: usize = 16;
+const SIZE_STRINGS: usize = 32;
+const SIZE_STRUCT: usize = 36;
+/// The most the VPU firmware sets aside for the tree it hands over.
+const MAX_SIZE: usize = 0x10_0000;
+
 const BEGIN_NODE: u32 = 1;
 const END_NODE: u32 = 2;
 const PROP: u32 = 3;
 const NOP: u32 = 4;
 
 pub struct Fdt {
-    base: *const u8,
+    tree: &'static [u8],
+    structs: &'static [u8],
+    strings: &'static [u8],
+    rsvmap: &'static [u8],
 }
 
-fn be32(p: *const u8) -> u32 {
-    u32::from_be_bytes(unsafe { [*p, *p.add(1), *p.add(2), *p.add(3)] })
+fn be32(b: &[u8], at: usize) -> Option<u32> {
+    Some(u32::from_be_bytes(b.get(at..at.checked_add(4)?)?.try_into().ok()?))
 }
 
-fn be64(p: *const u8) -> u64 {
-    (be32(p) as u64) << 32 | be32(unsafe { p.add(4) }) as u64
+fn be64(b: &[u8], at: usize) -> Option<u64> {
+    Some((be32(b, at)? as u64) << 32 | be32(b, at.checked_add(4)?)? as u64)
 }
 
-fn cstr<'a>(p: *const u8) -> &'a [u8] {
-    let mut n = 0;
-    while unsafe { *p.add(n) } != 0 {
-        n += 1;
-    }
-    unsafe { core::slice::from_raw_parts(p, n) }
+fn cstr(b: &[u8], at: usize) -> Option<&[u8]> {
+    let rest = b.get(at..)?;
+    Some(&rest[..rest.iter().position(|&c| c == 0)?])
+}
+
+/// The block whose offset and size the header fields `offset` and `size` hold.
+fn block(tree: &[u8], offset: usize, size: usize) -> Option<&[u8]> {
+    let at = be32(tree, offset)? as usize;
+    tree.get(at..at.checked_add(be32(tree, size)? as usize)?)
 }
 
 impl Fdt {
     pub fn at(addr: u64) -> Option<Fdt> {
         let base = addr as *const u8;
-        (be32(base) == MAGIC).then_some(Fdt { base })
+        let header = unsafe { core::slice::from_raw_parts(base, HEADER) };
+        if be32(header, 0)? != MAGIC {
+            return None;
+        }
+        let size = be32(header, 4)? as usize;
+        if !(HEADER..=MAX_SIZE).contains(&size) {
+            return None;
+        }
+        let tree = unsafe { core::slice::from_raw_parts(base, size) };
+        Some(Fdt {
+            tree,
+            structs: block(tree, OFF_STRUCT, SIZE_STRUCT)?,
+            strings: block(tree, OFF_STRINGS, SIZE_STRINGS)?,
+            rsvmap: tree.get(be32(tree, OFF_RSVMAP)? as usize..)?,
+        })
     }
 
     pub fn size(&self) -> usize {
-        be32(unsafe { self.base.add(4) }) as usize
+        self.tree.len()
     }
 
     /// The `/memreserve/` entries: (address, size).
     pub fn reservations(&self, mut f: impl FnMut(u64, u64)) {
-        let mut p = unsafe { self.base.add(be32(self.base.add(16)) as usize) };
-        loop {
-            let (addr, size) = (be64(p), be64(unsafe { p.add(8) }));
+        for entry in self.rsvmap.chunks_exact(16) {
+            let (Some(addr), Some(size)) = (be64(entry, 0), be64(entry, 8)) else { return };
             if addr == 0 && size == 0 {
                 return;
             }
             f(addr, size);
-            p = unsafe { p.add(16) };
         }
     }
 
     /// Every property, with the names of the nodes above it from the root
     /// (whose name is empty) down.
     pub fn walk(&self, mut f: impl FnMut(&[&[u8]], &[u8], &[u8])) {
-        let structs = unsafe { self.base.add(be32(self.base.add(8)) as usize) };
-        let strings = unsafe { self.base.add(be32(self.base.add(12)) as usize) };
+        let structs = self.structs;
         let mut path: [&[u8]; 16] = [&[]; 16];
         let mut depth = 0usize;
-        let mut p = structs;
-        loop {
-            let token = be32(p);
-            p = unsafe { p.add(4) };
+        let mut at = 0;
+        while let Some(token) = be32(structs, at) {
+            at += 4;
             match token {
                 BEGIN_NODE => {
-                    let name = cstr(p);
+                    let Some(name) = cstr(structs, at) else { return };
                     if depth < path.len() {
                         path[depth] = name;
                     }
                     depth += 1;
-                    p = unsafe { p.add((name.len() + 1).next_multiple_of(4)) };
+                    at += (name.len() + 1).next_multiple_of(4);
                 }
                 END_NODE => depth = depth.saturating_sub(1),
                 PROP => {
-                    let len = be32(p) as usize;
-                    let name = cstr(unsafe { strings.add(be32(p.add(4)) as usize) });
-                    let value = unsafe { core::slice::from_raw_parts(p.add(8), len) };
+                    let (Some(len), Some(name_at)) = (be32(structs, at), be32(structs, at + 4)) else { return };
+                    let (len, start) = (len as usize, at + 8);
+                    let (Some(name), Some(value)) = (cstr(self.strings, name_at as usize), structs.get(start..start + len))
+                    else {
+                        return;
+                    };
                     f(&path[..depth.min(path.len())], name, value);
-                    p = unsafe { p.add(8 + len.next_multiple_of(4)) };
+                    at = start + len.next_multiple_of(4);
                 }
                 NOP => {}
                 _ => return,
