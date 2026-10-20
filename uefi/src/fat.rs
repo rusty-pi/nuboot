@@ -202,12 +202,13 @@ impl Fs {
         let mut out = Vec::new();
         let mut lfn = [0u16; 260];
         let mut lfn_len = 0usize;
-        let mut first = 0usize;
+        let mut first = None;
         for (index, e) in bytes.chunks_exact(32).enumerate() {
             match e[0] {
                 0 => break,
                 0xe5 => {
                     lfn_len = 0;
+                    first = None;
                     continue;
                 }
                 _ => {}
@@ -217,11 +218,14 @@ impl Fs {
                 let ord = (e[0] & 0x3f) as usize;
                 if ord == 0 || ord > 20 {
                     lfn_len = 0;
+                    first = None;
                     continue;
                 }
                 if e[0] & 0x40 != 0 {
                     lfn_len = 0;
-                    first = index;
+                    first = Some(index);
+                } else if first.is_none() {
+                    continue;
                 }
                 let at = (ord - 1) * 13;
                 for (i, off) in [1, 3, 5, 7, 9, 14, 16, 18, 20, 22, 24, 28, 30].into_iter().enumerate() {
@@ -236,9 +240,13 @@ impl Fs {
             }
             if attr & ATTR_VOLUME != 0 {
                 lfn_len = 0;
+                first = None;
                 continue;
             }
-            let first = if lfn_len > 0 { first } else { index };
+            let first = match first.take() {
+                Some(at) if lfn_len > 0 => at,
+                _ => index,
+            };
             let name = if lfn_len > 0 { lfn[..lfn_len].to_vec() } else { short_name(e) };
             lfn_len = 0;
             let w = |at: usize| u16::from_le_bytes([e[at], e[at + 1]]);

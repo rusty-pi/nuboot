@@ -235,7 +235,7 @@ pub fn attach(slot: u32, interface: u8, eps: &[(u8, u8, u16, u8)], path: Vec<u8>
         cdb[13] = 32;
         if disk.scsi(&cdb, 32).is_ok() {
             let b = disk.buffer();
-            disk.blocks = u64::from_be_bytes(b[0..8].try_into().unwrap()) + 1;
+            disk.blocks = u64::from_be_bytes(b[0..8].try_into().unwrap()).saturating_add(1);
             disk.block_size = u32::from_be_bytes(b[8..12].try_into().unwrap());
         }
     }

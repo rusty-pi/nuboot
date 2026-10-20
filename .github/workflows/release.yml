@@ -89,25 +89,7 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install the toolchain
-        run: |
-          # Not just the exit status: a binary the loader refuses ("CPU ISA
-          # level is lower than required") still leaves it 0.
-          if "$VC4_PREFIX/bin/vc4-elf-as" --version 2>/dev/null | grep -q "GNU assembler"; then
-            echo "the image's toolchain in $VC4_PREFIX"
-            exit 0
-          fi
-          gh release download latest -R rusty-pi/binutils-vc4 -p vc4-elf-binutils.deb
-          gh release download latest -R rusty-pi/gcc-vc4 -p vc4-elf-gcc.deb
-          if sudo -n true 2>/dev/null; then
-            sudo apt-get install -y --no-install-recommends \
-              ./vc4-elf-binutils.deb ./vc4-elf-gcc.deb
-          else
-            # libgccjit finds its assembler under the prefix it was built
-            # for, so the packages cannot simply be unpacked elsewhere.
-            echo "::error::installing the toolchain packages needs sudo"
-            exit 1
-          fi
-          rm vc4-elf-*.deb
+        run: scripts/install-toolchain.sh
 
       - name: Install Python, sbsigntool and the cross compiler
         if: runner.environment == 'github-hosted'
@@ -124,7 +106,7 @@ jobs:
 
       - name: Codegen cache key
         id: key
-        run: echo "key=codegen-${{ runner.environment }}-${{ hashFiles('scripts/build-codegen.sh', 'rust-toolchain.toml') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=codegen-${{ runner.environment }}-${{ hashFiles('scripts/build-codegen.sh', 'scripts/toolchain.env', 'rust-toolchain.toml') }}" >> "$GITHUB_OUTPUT"
 
       - name: Restore codegen
         id: cache

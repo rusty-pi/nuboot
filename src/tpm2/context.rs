@@ -65,7 +65,7 @@ fn write_object(slot: &object::Slot, w: &mut Writer) {
 
 fn read_object(input: &mut In, slot: &mut object::Slot) -> Option<()> {
     let public = input.sized()?;
-    slot.public[..public.len()].copy_from_slice(public);
+    slot.public.get_mut(..public.len())?.copy_from_slice(public);
     slot.public_len = public.len();
     slot.name.copy_from_slice(input.take(34)?);
     slot.origin = Origin { hierarchy: input.u32()?, template: input.take(32)?.try_into().ok()? };
@@ -74,7 +74,7 @@ fn read_object(input: &mut In, slot: &mut object::Slot) -> Option<()> {
     slot.auth_len = input.u8()? as usize;
     slot.auth.copy_from_slice(input.take(32)?);
     let private = input.sized()?;
-    slot.private[..private.len()].copy_from_slice(private);
+    slot.private.get_mut(..private.len())?.copy_from_slice(private);
     slot.private_len = private.len();
     (input.rest() == 0 && slot.auth_len <= 32).then_some(())
 }

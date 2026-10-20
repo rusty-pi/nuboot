@@ -29,16 +29,22 @@ Toolchain (binutils, GCC with libgccjit and libgcc, rustc_codegen_gcc), into
 scripts/build-toolchain.sh
 ```
 
-On Ubuntu 26.04, binutils and GCC can come prebuilt instead: the `latest`
-releases of the two forks carry them as packages that install into `/opt/vc4`.
-Then only rustc_codegen_gcc is built here:
+On Ubuntu 26.04, binutils and GCC can come prebuilt instead, as packages
+that install into `/opt/vc4`. Then only rustc_codegen_gcc is built here:
 
 ```bash
-gh release download latest -R rusty-pi/binutils-vc4 -p vc4-elf-binutils.deb
-gh release download latest -R rusty-pi/gcc-vc4 -p vc4-elf-gcc.deb
-sudo apt-get install ./vc4-elf-binutils.deb ./vc4-elf-gcc.deb
+scripts/install-toolchain.sh
 VC4_PREFIX=/opt/vc4 scripts/build-codegen.sh
 ```
+
+`scripts/toolchain.env` pins the toolchain: the rustc_codegen_gcc commit
+(`CG_GCC_REV`) and the binutils-vc4 and gcc-vc4 release tags with the SHA-256
+of their packages. Each gcc-vc4 commit is published as its own release,
+`vc4-<commit>`, with the `rust-lang/gcc` commit it is built on in its
+`libgccjit-base` asset. `scripts/build-codegen.sh` stops when that is not the
+`libgccjit.version` of `CG_GCC_REV`, so a move to a newer rustc_codegen_gcc
+changes `GCC_VC4_TAG`, `CG_GCC_REV` and the nightly in `rust-toolchain.toml`
+together.
 
 The first `cargo build` links `toolchain/` to GCC in `~/.local/opt/vc4` or
 `/opt/vc4` and to rustc_codegen_gcc in `~/src/rustc_codegen_gcc`
