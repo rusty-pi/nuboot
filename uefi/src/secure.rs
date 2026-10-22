@@ -1,9 +1,10 @@
 //! Secure Boot, always on: an image runs only when an Authenticode signature
 //! on it chains to a certificate in `db` and its hash is not in `dbx`.
 //!
-//! The keys are built in. `PK` and `KEK` are this firmware's own, and `db`
-//! holds its signing key beside Microsoft's UEFI CAs, which sign shim for the
-//! distributions. `dbx` holds the AArch64 image hashes Microsoft revokes.
+//! The keys are built in and all this firmware's own: `PK`, `KEK` and `db`
+//! hold its keys alone. Microsoft's UEFI CAs, which sign shim for anyone, are
+//! not trusted unless an owner enrols them with a signed `db` update. `dbx`
+//! holds the AArch64 image hashes Microsoft revokes.
 //! `SetupMode` is 0 and the variables cannot be written.
 
 use alloc::vec::Vec;
@@ -17,10 +18,6 @@ use crate::util::Global;
 use crate::var::{self, BS, NV, RT};
 use crate::{info, warn};
 
-const DB: [&[u8]; 2] = [
-    include_bytes!("../keys/microsoft-uefi-ca-2011.der"),
-    include_bytes!("../keys/microsoft-uefi-ca-2023.der"),
-];
 /// The test build's own certificate (`scripts/build-uefi.sh --test-keys`),
 /// empty in a real one.
 const TEST_DB: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/test-db.der"));
@@ -35,7 +32,8 @@ const CERT_X509: efi::Guid =
 /// `EFI_CERT_SHA256_GUID`.
 const CERT_SHA256: efi::Guid =
     efi::Guid::from_fields(0xc1c41626, 0x504c, 0x4092, 0xac, 0xa9, &[0x41, 0xf9, 0x36, 0x93, 0x43, 0x28]);
-/// The owner Microsoft gives its `db` and `dbx` entries.
+/// The owner Microsoft gives its `db` and `dbx` entries, and that a `db`
+/// update enrolling its CAs gives them.
 const MICROSOFT: efi::Guid =
     efi::Guid::from_fields(0x77fa9abd, 0x0359, 0x4d32, 0xbd, 0x60, &[0x28, 0xf4, 0xe7, 0x8f, 0x78, 0x4b]);
 
@@ -126,11 +124,9 @@ fn defaults() -> [Vec<u8>; 4] {
         signature_list(&mut kek, OWNER, CERT_X509, TEST_DB.len(), &[TEST_DB]);
     }
     let mut db = Vec::new();
-    let certs = DB.into_iter().map(|der| (MICROSOFT, der));
-    let own = core::iter::once((OWNER, DB_OWN));
-    let test = (!TEST_DB.is_empty()).then_some((OWNER, TEST_DB));
-    for (owner, der) in certs.chain(own).chain(test) {
-        signature_list(&mut db, owner, CERT_X509, der.len(), &[der]);
+    signature_list(&mut db, OWNER, CERT_X509, DB_OWN.len(), &[DB_OWN]);
+    if !TEST_DB.is_empty() {
+        signature_list(&mut db, OWNER, CERT_X509, TEST_DB.len(), &[TEST_DB]);
     }
     let mut dbx = Vec::new();
     let hashes: Vec<&[u8]> = DBX.chunks_exact(32).collect();

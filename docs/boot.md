@@ -186,7 +186,7 @@ pimu boot --scenario scenarios/sd-boot.yaml      # start4.elf alone, under the s
 pimu boot --scenario scenarios/signed-boot.yaml  # start4.elf out of a signed boot.img
 pimu boot --scenario scenarios/signed-boot-refused.yaml  # boot.img signed by another key
 pimu boot --scenario scenarios/uefi-hello.yaml   # a signed EFI application
-pimu boot --scenario scenarios/shim-grub.yaml    # Ubuntu's signed shim and GRUB
+pimu boot --scenario scenarios/shim-grub.yaml    # Ubuntu's shim, signed with the test key, and GRUB
 pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed by a key in db
 pimu boot --scenario scenarios/rev14-hello.yaml  # an EFI application on a 4B rev 1.4
 pimu boot --scenario scenarios/usb-hello.yaml    # an EFI application off a USB drive

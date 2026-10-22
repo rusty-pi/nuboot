@@ -14,8 +14,9 @@ for:
   what, with the values as named fields.
 - **UEFI with Secure Boot** as the way an operating system is started: a
   small UEFI of its own in `uefi/` that runs only images signed by a key in
-  `db`, Microsoft's UEFI CAs by default, so a distribution's shim and GRUB
-  boot as they are ([docs/uefi.md](docs/uefi.md)). The platform key is built in,
+  `db`, which holds the builder's key alone: Microsoft's UEFI CAs, which sign
+  shim for anyone, are not trusted unless the owner enrols them
+  ([docs/uefi.md](docs/uefi.md#booting-a-distribution)). The platform key is built in,
   and `KEK`, `db` and `dbx` change through updates that a `PK` or `KEK` key signs.
 - **One file**: `start4.elf` carries the UEFI firmware and the board's device
   tree, so a board with secure boot programmed takes this firmware in a signed
@@ -104,7 +105,7 @@ From the boot ROM to the threads that run for as long as the board is up:
 | Boot watchdog: a hang in UEFI resets the board, `ExitBootServices` hands it to the OS | ✅ | ➖ | ➖ | ➖ |
 | Pi 4B rev 1.4 (`d03114`) and rev 1.2 (`c03112`) | ✅ | ➖ | ➖ | ➖ |
 | ARM started in UEFI: SD card, a signed EFI application | ✅ | ✅ | ➖ | ➖ |
-| Secure Boot: Ubuntu's shim and GRUB run, an image not signed by a key in `db` is refused | ✅ | ➖ | ➖ | ➖ |
+| Secure Boot: Ubuntu's shim, signed with a key in `db`, and its GRUB run; the shim as Ubuntu ships it, signed by Microsoft alone, and an image not signed by a key in `db` are refused | ✅ | ➖ | ➖ | ➖ |
 | USB: VL805 firmware from the EEPROM, an EFI application off a USB drive | ✅ | ✅ | ➖ | ➖ |
 | Property mailbox: `NOTIFY_XHCI_RESET` reloads the VL805's firmware | ✅ | ✅ | ➖ | ➖ |
 | TPM 2.0 on the VPU (PCRs, properties, random numbers) behind `EFI_TCG2_PROTOCOL`, shim measuring into it, firmware, board, EEPROM bootloader and configuration and VL805 firmware measured into PCRs 0 and 1, separators in PCRs 0-7 | ✅ | ➖ | ➖ | ➖ |
@@ -171,6 +172,7 @@ pimu boot --scenario scenarios/signed-boot.yaml
 pimu boot --scenario scenarios/signed-boot-refused.yaml
 pimu boot --scenario scenarios/uefi-hello.yaml
 pimu boot --scenario scenarios/shim-grub.yaml
+pimu boot --scenario scenarios/shim-refused.yaml
 pimu boot --scenario scenarios/secure-boot-refused.yaml
 pimu boot --scenario scenarios/rev14-hello.yaml
 pimu boot --scenario scenarios/usb-hello.yaml

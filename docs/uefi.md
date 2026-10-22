@@ -32,11 +32,11 @@ from `start4.elf`'s:
 ```text
    0.559890 INFO  uefi     UEFI firmware started  commit=1a2b3c4 tree=0xf00000
    0.567376 INFO  mem      memory map ready  ram_mib=8108 free_mib=8104 regions=10
-   0.574586 INFO  secboot  Secure Boot enforced  db=3 dbx=26
+   0.574586 INFO  secboot  Secure Boot enforced  db=1 dbx=26
    0.961838 INFO  sd       card ready  mib=258 kind=SDHC/SDXC
    0.961845 INFO  disk     disk found  name=sd mib=258 partitions=1 path=VenHw/SD(0)
    1.661885 INFO  usb      USB ready  devices=1 registers=0x602000000
-   1.685224 INFO  secboot  image verified  signer="Microsoft Windows UEFI Driver Publisher" db="Microsoft Corporation UEFI CA 2011" path=VenHw/SD(0)/HD(1)\EFI\BOOT\BOOTAA64.EFI
+   1.685224 INFO  secboot  image verified  signer="nuboot signing key" db="nuboot signing key" path=VenHw/SD(0)/HD(1)\EFI\BOOT\BOOTAA64.EFI
    1.698267 INFO  boot     booting  path=VenHw/SD(0)/HD(1)\EFI\BOOT\BOOTAA64.EFI
 ```
 
@@ -149,20 +149,21 @@ why:
    1.661962 WARN  secboot  image refused  reason="not signed by a key in db" path=VenHw/SD(0)/HD(1)\EFI\BOOT\BOOTAA64.EFI
 ```
 
-The keys are built in, from `uefi/keys/` and `keys/` ([Keys](#keys)):
+The keys are built in, from `keys/` ([Keys](#keys)) and `uefi/keys/dbx-aarch64.txt`:
 
 | variable | holds |
 |---|---|
 | `PK` | The platform key, `keys/pk` |
 | `KEK` | `keys/kek` |
-| `db` | This firmware's signing key, `keys/db`, and Microsoft Corporation UEFI CA 2011 and Microsoft UEFI CA 2023, which sign shim for the distributions |
+| `db` | This firmware's signing key, `keys/db` |
 | `dbx` | The AArch64 image hashes in Microsoft's revocation list (`dbx-aarch64.txt`, from [microsoft/secureboot_objects](https://github.com/microsoft/secureboot_objects)) |
 | `SecureBoot`, `SetupMode`, `AuditMode`, `DeployedMode` | 1, 0, 0, 1 |
 
 `PK` and the state variables cannot be written, and `KEK`, `db` and `dbx`
-change only through signed updates ([Updating the keys](#updating-the-keys)). A distribution boots through its shim, which
-checks GRUB and the kernel against its own keys and the MOK list; shim's
-SBAT revocations apply as they do on any other machine.
+change only through signed updates ([Updating the keys](#updating-the-keys)).
+`db` holds none of Microsoft's UEFI CAs: they sign a shim for anyone who
+asks, so trusting them runs every loader Microsoft has signed that `dbx` does
+not list ([security.md](security.md#what-is-not-protected)).
 
 The firmware measures what it verifies and offers `EFI_TCG2_PROTOCOL` to the
 loaders that follow: the Secure Boot configuration, each image's hash and the
@@ -171,6 +172,38 @@ disk's GPT go to the PCRs of the TPM on the VPU ([tpm2.md](tpm2.md)).
 
 Signatures are checked with SHA-256 and RSA keys up to 4096 bits, as the UEFI
 CAs and the distributions' signers use.
+
+### Booting a distribution
+
+A distribution's shim is signed by Microsoft, and this firmware refuses it as
+it ships. Either of these boots it:
+
+1. Sign the shim with `keys/db` as well. `sbsign` adds the signature beside
+   Microsoft's, and the firmware takes the one that chains to `db`:
+
+   ```bash
+   sbsign --key keys/db.key --cert keys/db.crt --output BOOTAA64.EFI shimaa64.efi
+   ```
+
+   Shim then checks GRUB and the kernel against the distribution's keys and the
+   MOK list, and its SBAT revocations apply as on any other machine. A shim
+   update has to be signed again.
+2. Enrol Microsoft's UEFI CAs in `db` with a signed update, which trusts every
+   shim they have signed, the distribution's own updates included.
+   `uefi/keys/` holds Microsoft Corporation UEFI CA 2011 and Microsoft UEFI CA
+   2023. `--microsoft` gives the entries Microsoft's owner GUID, so that they
+   do not sign firmware capsules:
+
+   ```bash
+   scripts/mkauth.py --microsoft keys/kek.key keys/kek.crt db uefi/keys/microsoft-uefi-ca-2011.der db-ms-2011.auth
+   scripts/mkauth.py --microsoft keys/kek.key keys/kek.crt db uefi/keys/microsoft-uefi-ca-2023.der db-ms-2023.auth
+   ```
+
+   Write them from the OS ([Updating the keys](#updating-the-keys)), for example
+   with `efi-updatevar -f db-ms-2011.auth db`.
+
+A unified kernel image or systemd-boot signed with `keys/db` boots without
+shim.
 
 ### Keys
 
@@ -296,8 +329,8 @@ there is checked:
 1. The header's GUID is the ESRT class of the firmware or of the EEPROM
    bootloader, and the sizes fit the file.
 2. A `WIN_CERTIFICATE_UEFI_GUID` holds a detached PKCS #7 signature over the
-   image after it. The signer has to chain to a `db` entry that is not
-   Microsoft's, whose CAs sign for anyone, and the image's SHA-256 must not
+   image after it. The signer has to chain to a `db` entry whose owner is not
+   Microsoft, whose CAs sign for anyone, and the image's SHA-256 must not
    be in `dbx`.
 3. The image is `P4FW`, the class GUID of the header again, a little-endian
    `u32` version, the length of `boot.sig` as one, `boot.sig`, and `boot.img`
@@ -369,7 +402,8 @@ next update.
 scripts/build-uefi.sh               # out/pi4-uefi.bin, and the bare payload as out/pi4-uefi-payload.bin
 scripts/build-uefi.sh --test-keys   # out/pi4-uefi-test.bin, which also trusts the test key
 scripts/build-uefi.sh --test-apps   # also the EFI applications the scenarios run, signed with the test key,
-                                    # and Ubuntu's signed shim and GRUB as out/shimaa64.efi and out/grubaa64.efi
+                                    # and Ubuntu's shim and GRUB: out/shimaa64-stock.efi as Ubuntu signs it,
+                                    # out/shimaa64.efi also signed with the test key, and out/grubaa64.efi
 ```
 
 `cargo build` in the repository runs `scripts/build-uefi.sh` itself.
@@ -394,7 +428,8 @@ After `scripts/build-uefi.sh --test-apps`, `scripts/build.sh` and
 ```bash
 pimu boot --scenario scenarios/uefi-hello.yaml           # a signed EFI application off the SD card
 pimu boot --scenario scenarios/usb-hello.yaml            # the same off a USB drive
-pimu boot --scenario scenarios/shim-grub.yaml            # Ubuntu's shim checks and starts GRUB, which reads grub.cfg
+pimu boot --scenario scenarios/shim-grub.yaml            # Ubuntu's shim, signed with the test key, checks and starts GRUB, which reads grub.cfg
+pimu boot --scenario scenarios/shim-refused.yaml         # Ubuntu's shim as it ships, signed by Microsoft alone, is refused
 pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed by a key in db is refused
 ```
 

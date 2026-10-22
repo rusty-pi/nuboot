@@ -23,6 +23,6 @@ milestones:
   - why: "The armstub took the cores to EL2 and the primary core decompressed the UEFI firmware and entered it."
     line: "UEFI firmware started"
   - why: "The test build trusts the test key as well as the built-in keys."
-    line: "Secure Boot enforced  db=4"
+    line: "Secure Boot enforced  db=2"
   - why: "The application ran and finished."
     line: "hello test: done"

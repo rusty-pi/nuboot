@@ -133,7 +133,7 @@ the mailbox too.
 ## Updates
 
 A firmware update is a capsule in `\EFI\UpdateCapsule` that a `db` key signed
-(Microsoft's keys do not count: their CAs sign for anyone) over an image that
+(a Microsoft CA the owner enrolled does not count: their CAs sign for anyone) over an image that
 names its own class GUID, so a capsule made for the EEPROM bootloader is not
 accepted as one for the firmware. The version has to be newer than the running
 one's. A capsule that passes is written as `tryboot.img` and `tryboot.sig`,
@@ -240,18 +240,18 @@ that is Secure Boot and lockdown, which refuse unsigned modules and `/dev/mem`.
 
 Before `ExitBootServices`, any code that runs in UEFI can also ask the VPU for
 signatures and HMACs, and so compute the TPM's seeds. That code is every
-loader the keys in `db` have signed. `db` holds
-Microsoft's UEFI CAs so that a distribution boots unmodified: Microsoft signs
-each distribution's shim, a small first-stage loader that then checks GRUB and
-the kernel against the distribution's own keys, which this firmware never sees.
-What runs before `ExitBootServices` is therefore not only what the firmware's
-builder signed but any shim, GRUB or other loader Microsoft has signed for
-anyone and `dbx` does not list. A build whose `db` held only its builder's key
-would run only what the builder signs, and would boot no distribution's stock
-image. This is why a PCR binding is no defence against a hostile
-loader: bind what must outlast an OS to
-a policy that a key authorizes (PCR 11 signed by the image's builder) rather than
-to PCR 7 alone, which every Microsoft-signed shim OS reproduces.
+loader the keys in `db` have signed. `db` holds only the builder's key, so what
+runs before `ExitBootServices` is what the builder signed, and a distribution's
+shim runs only once the builder has signed it as well
+([uefi.md](uefi.md#booting-a-distribution)). An owner who enrols Microsoft's
+UEFI CAs in `db` widens that to any shim, GRUB or other loader Microsoft has
+signed for anyone and `dbx` does not list: Microsoft signs each distribution's
+shim, a small first-stage loader that then checks GRUB and the kernel against
+the distribution's own keys, which this firmware never sees. Either way a PCR
+binding is no defence against a hostile loader that a `db` key verifies: bind
+what must outlast an OS to a policy that a key authorizes (PCR 11 signed by the
+image's builder) rather than to PCR 7 alone, which every image verified by the
+same `db` certificate reproduces.
 
 ## State that outlasts a boot
 
@@ -435,7 +435,8 @@ Not defended, and not claimed:
 1. Program signed boot in the OTP and fuse a device key; check PCR 1.
 2. Keep `PK` and `KEK`'s private keys offline, and `db`'s apart from the machine
    that builds OS images; build with `PI4_PK_CERT`, `PI4_KEK_CERT` and
-   `PI4_DB_CERT`.
+   `PI4_DB_CERT`. Sign the shim, GRUB or kernel the board boots with the `db`
+   key rather than enrol Microsoft's UEFI CAs.
 3. Boot an OS that locks itself down under Secure Boot, without a raw mailbox
    device, and without `/dev/gpiomem`, `/dev/mem` or a way to drive the EEPROM's
    pins.

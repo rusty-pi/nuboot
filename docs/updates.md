@@ -19,8 +19,8 @@ fwupdmgr install nuboot-1791753810.cab
 fwupd puts the capsule in `\EFI\UpdateCapsule` on the EFI system partition and
 sets `OsIndications`; the firmware checks it, and applies it over the next
 reboots as [uefi.md](uefi.md#firmware-capsules) describes. The root of the
-signature is `db`: a capsule's signer has to be a certificate there that is not
-Microsoft's.
+signature is `db`: a capsule's signer has to be a certificate there whose owner is not
+Microsoft.
 
 ## Updates the owner does not sign
 

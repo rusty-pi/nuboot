@@ -43,8 +43,10 @@
 #                     Debian's systemd-boot, and a unified kernel image of its
 #                     systemd-stub around hello.efi, signed with the test key
 #   out/shimaa64.efi, out/grubaa64.efi
-#                     Ubuntu's shim, signed by Microsoft, and its GRUB,
-#                     signed by Canonical
+#                     Ubuntu's shim, signed by Microsoft and with the test
+#                     key, and its GRUB, signed by Canonical
+#   out/shimaa64-stock.efi
+#                     Ubuntu's shim as it ships, signed by Microsoft alone
 #
 # Extra arguments go to cargo. Needs rustup, xz, openssl, llvm-objcopy and
 # llvm-nm (rustup's llvm-tools component provides them), and sbsign
@@ -283,4 +285,5 @@ printf 'console=ttyAMA0 root=/dev/test' >"$tmp/cmdline"
   --section .osrel="$tmp/osrel" --section .cmdline="$tmp/cmdline" --section .linux="$tmp/kernel-signed.efi"
 sign "$tmp/uki.efi" "$out/uki.efi"
 deb shim "$SHIM_DEB" "$SHIM_SHA256"
-cp "$tmp/shim/usr/lib/shim/shimaa64.efi.signed.latest" "$out/shimaa64.efi"
+cp "$tmp/shim/usr/lib/shim/shimaa64.efi.signed.latest" "$out/shimaa64-stock.efi"
+sign "$out/shimaa64-stock.efi" "$out/shimaa64.efi"

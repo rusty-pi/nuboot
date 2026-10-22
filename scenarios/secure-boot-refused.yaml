@@ -13,8 +13,8 @@ boot:
   wall_secs: 900
 
 milestones:
-  - why: "The firmware enforces Secure Boot with this firmware's key and Microsoft's two UEFI CAs in db."
-    line: "Secure Boot enforced  db=3"
+  - why: "The firmware enforces Secure Boot with its own key alone in db."
+    line: "Secure Boot enforced  db=1"
   - why: "The application is signed, but not by a key in db."
     line: "image refused  reason=\"not signed by a key in db\""
   - why: "With nothing else on the card, the firmware leaves the board to the boot watchdog."
