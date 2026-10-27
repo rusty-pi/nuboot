@@ -520,6 +520,19 @@ impl Xhci {
         self.control(slot, 0x01, 11, alternate as u16, interface as u16, 0)
     }
 
+    /// Drop every endpoint but endpoint 0, and the rings that went with them.
+    pub fn deconfigure(&mut self, slot: u32) -> Result<(), Error> {
+        let input = self.device(slot).input;
+        unsafe { core::ptr::write_bytes(input as *mut u8, 0, 1056) };
+        let done = self.command([input as u32, (input >> 32) as u32, 0, TRB_CONFIGURE_ENDPOINT << 10 | 1 << 9 | slot << 24]).map(|_| ());
+        let d = self.device(slot);
+        for dci in 2..32 {
+            d.rings[dci] = None;
+            d.stream_rings[dci] = None;
+        }
+        done
+    }
+
     /// Reset a stream endpoint and point stream 1 past what was queued.
     pub fn reset_stream_endpoint(&mut self, slot: u32, dci: u32) {
         let _ = self.command([0, 0, 0, TRB_RESET_ENDPOINT << 10 | dci << 16 | slot << 24]);
@@ -663,6 +676,7 @@ pub struct Config {
     pub interfaces: Vec<Interface>,
 }
 
+#[derive(Clone)]
 pub struct Interface {
     pub number: u8,
     pub alternate: u8,
@@ -792,22 +806,37 @@ fn enumerate(root_port: u32, route: u32, depth: u32, speed: u32, tt: (u32, u32),
         }
         hub(slot, root_port, route, depth, speed, tt, path, dev[6] == 2);
     } else if let Some(i) = uas_interface(&config, speed).filter(|_| crate::usbdisk::USE_UAS && x.streams_supported()) {
+        let bulk_only = storage.map(|b| config.interfaces[b].clone());
         let (number, alternate) = (config.interfaces[i].number, config.interfaces[i].alternate);
-        match x.set_interface(slot, number, alternate) {
+        let eps = config.interfaces[i].endpoints.clone();
+        let spare = match x.set_interface(slot, number, alternate) {
             Ok(()) => {
                 info!("usb", "drive driven through UAS"; slot = slot, vendor = Hex(vendor), product = Hex(product));
-                let eps = config.interfaces.swap_remove(i).endpoints;
-                crate::usbdisk::attach_uas(slot, number, &eps, path, vendor, product);
+                match crate::usbdisk::attach_uas(slot, number, &eps, path.clone(), vendor, product) {
+                    Ok(()) => return,
+                    Err(spare) => spare,
+                }
             }
             Err(e) => {
-                warn!("usb", "UAS interface not selected, using bulk-only"; slot = slot, error = crate::log::dbg(&e));
-                let eps = config.interfaces.swap_remove(storage.unwrap_or(i)).endpoints;
-                crate::usbdisk::attach(slot, storage.unwrap_or(i) as u8, &eps, path, vendor, product);
+                warn!("usb", "UAS interface not selected"; slot = slot, error = crate::log::dbg(&e));
+                None
             }
+        };
+        match bulk_only {
+            Some(bot) => {
+                warn!("usb", "UAS did not work, using bulk-only"; slot = slot, vendor = Hex(vendor), product = Hex(product));
+                let _ = x.deconfigure(slot);
+                if x.set_interface(slot, bot.number, bot.alternate).is_ok() {
+                    crate::usbdisk::attach(slot, bot.number, &bot.endpoints, path, vendor, product, spare);
+                } else {
+                    warn!("usb", "bulk-only interface not selected"; slot = slot);
+                }
+            }
+            None => warn!("usb", "UAS did not work and the drive has no bulk-only interface"; slot = slot),
         }
     } else if let Some(i) = storage {
-        let eps = config.interfaces.swap_remove(i).endpoints;
-        crate::usbdisk::attach(slot, i as u8, &eps, path, vendor, product);
+        let interface = config.interfaces.swap_remove(i);
+        crate::usbdisk::attach(slot, interface.number, &interface.endpoints, path, vendor, product, None);
     } else {
         info!("usb", "device ignored"; vendor = Hex(vendor), product = Hex(product), class = Hex(dev[4]));
     }

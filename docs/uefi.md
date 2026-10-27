@@ -378,11 +378,9 @@ board.
 
 ## USB attached SCSI
 
-A drive that offers a UAS alternate setting (`bInterfaceProtocol` `0x62`) is driven through it when it is on a SuperSpeed root port, the controller does streams (the VL805 does) and the interface has all four pipes (command, status, data in, data out) with streams on the last three. Every other drive, and any drive when the `SET_INTERFACE` for the UAS alternate fails, keeps the bulk-only transport.
+A drive that offers a UAS alternate setting (`bInterfaceProtocol` `0x62`) is driven through it when it is on a SuperSpeed root port, the controller does streams (the VL805 does) and the interface has all four pipes (command, status, data in, data out) with streams on the last three. Every other drive keeps the bulk-only transport, and so does a drive whose UAS alternate cannot be selected or that fails its probe (`INQUIRY`, `TEST UNIT READY`, `READ CAPACITY`): the endpoints are dropped, the bulk-only alternate is selected and the drive is set up again. The log says `UAS did not work, using bulk-only`.
 
 One command is in flight at a time, on stream 1 of the status and data pipes: the command IU goes to the command pipe, a read's data is queued with it, a write's when the device's write ready IU arrives, and the sense IU on the status pipe ends the command. A command that times out resets the endpoints' streams. The log says `drive driven through UAS` when a drive was set up this way; `debug` records name the interfaces and pipes.
-
-A drive set up for UAS that then fails its first command is not attached: there is no fall back to bulk-only on the same attach.
 
 ## Firmware capsules
 

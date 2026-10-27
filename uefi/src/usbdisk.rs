@@ -215,7 +215,7 @@ fn dci(address: u8) -> u32 {
 }
 
 /// Set up a bulk-only mass storage interface and publish the drive.
-pub fn attach(slot: u32, interface: u8, eps: &[Endpoint], path: Vec<u8>, vendor: u16, product: u16) {
+pub fn attach(slot: u32, interface: u8, eps: &[Endpoint], path: Vec<u8>, vendor: u16, product: u16, spare: Option<u64>) {
     let bulk = |dir: u8| eps.iter().find(|e| e.attributes & 3 == 2 && e.address & 0x80 == dir).copied();
     let (Some(i), Some(o)) = (bulk(0x80), bulk(0)) else {
         warn!("usb", "drive without bulk endpoints"; slot = slot);
@@ -226,52 +226,53 @@ pub fn attach(slot: u32, interface: u8, eps: &[Endpoint], path: Vec<u8>, vendor:
         warn!("usb", "drive's endpoints could not be set up"; slot = slot);
         return;
     }
-    let Some((buf, _)) = xhci::dma_buffer(BUFFER) else {
+    let Some(buf) = spare.or_else(|| xhci::dma_buffer(BUFFER).map(|(at, _)| at)) else {
         warn!("usb", "no DMA memory for the drive"; slot = slot);
         return;
     };
     let disk = UsbDisk::new(slot, interface, (dci(i.address), i.max_packet as u32 & 0x7ff), (dci(o.address), o.max_packet as u32 & 0x7ff), None, buf);
-    finish(disk, path, vendor, product);
+    let _ = finish(disk, path, vendor, product);
 }
 
 /// Set up the UAS alternate setting of an interface and publish the drive:
 /// the endpoints by their pipe IDs (1 command, 2 status, 3 data in, 4 data
 /// out), the three that are not the command pipe with streams.
-pub fn attach_uas(slot: u32, interface: u8, eps: &[Endpoint], path: Vec<u8>, vendor: u16, product: u16) {
+pub fn attach_uas(slot: u32, interface: u8, eps: &[Endpoint], path: Vec<u8>, vendor: u16, product: u16) -> Result<(), Option<u64>> {
     let pipe = |id: u8| eps.iter().find(|e| e.pipe == id).copied();
     let (Some(command), Some(status), Some(data_in), Some(data_out)) = (pipe(1), pipe(2), pipe(3), pipe(4)) else {
         warn!("usb", "UAS interface without its four pipes"; slot = slot);
-        return;
+        return Err(None);
     };
     let x = xhci::controller();
     if x.configure_endpoints(slot, &[command, status, data_in, data_out], true).is_err() {
         warn!("usb", "UAS endpoints could not be set up"; slot = slot);
-        return;
+        return Err(None);
     }
     let Some((buf, _)) = xhci::dma_buffer(BUFFER) else {
         warn!("usb", "no DMA memory for the drive"; slot = slot);
-        return;
+        return Err(None);
     };
     let mps = |e: Endpoint| (dci(e.address), e.max_packet as u32 & 0x7ff);
     let pipes = Pipes { command: mps(command), status: mps(status), data_in: mps(data_in), data_out: mps(data_out) };
     let disk = UsbDisk::new(slot, interface, mps(data_in), mps(data_out), Some(pipes), buf);
-    finish(disk, path, vendor, product);
+    finish(disk, path, vendor, product).map_err(Some)
 }
 
 /// Probe a drive on whichever transport it was set up with and publish it.
-fn finish(mut disk: UsbDisk, path: Vec<u8>, vendor: u16, product: u16) {
+fn finish(mut disk: UsbDisk, path: Vec<u8>, vendor: u16, product: u16) -> Result<(), u64> {
     let slot = disk.slot;
+    let _ = disk.interface;
     if disk.scsi(&[0x12, 0, 0, 0, 36, 0], 36).is_err() || disk.buffer()[0] & 0x1f != 0 {
         info!("usb", "storage device is not a disk"; vendor = Hex(vendor), product = Hex(product));
-        return;
+        return Err(disk.buf);
     }
     if !disk.ready() {
         warn!("usb", "drive never became ready"; vendor = Hex(vendor), product = Hex(product));
-        return;
+        return Err(disk.buf);
     }
     if disk.scsi(&[0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0], 8).is_err() {
         warn!("usb", "drive did not say its size"; slot = slot);
-        return;
+        return Err(disk.buf);
     }
     let b = disk.buffer();
     let last = u32::from_be_bytes(b[0..4].try_into().unwrap()) as u64;
@@ -290,7 +291,8 @@ fn finish(mut disk: UsbDisk, path: Vec<u8>, vendor: u16, product: u16) {
     }
     if !(512..=4096).contains(&disk.block_size) || !disk.block_size.is_power_of_two() {
         warn!("usb", "drive has a block size this firmware cannot use"; block_size = disk.block_size);
-        return;
+        return Err(disk.buf);
     }
     crate::block::add_disk(Box::new(disk), path, "usb");
+    Ok(())
 }
