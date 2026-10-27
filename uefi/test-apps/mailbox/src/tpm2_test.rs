@@ -22,13 +22,13 @@ type Submit = extern "efiapi" fn(*mut c_void, u32, *const u8, u32, *mut u8) -> S
 
 /// A command being put together.
 struct Command {
-    bytes: [u8; 512],
+    bytes: [u8; 1024],
     len: usize,
 }
 
 impl Command {
     fn new(tag: u16, code: u32) -> Command {
-        let mut c = Command { bytes: [0; 512], len: 0 };
+        let mut c = Command { bytes: [0; 1024], len: 0 };
         c.u16(tag);
         c.u32(0);
         c.u32(code);
@@ -58,6 +58,47 @@ impl Command {
         self.bytes[2..6].copy_from_slice(&len.to_be_bytes());
         &self.bytes[..self.len]
     }
+}
+
+/// The names of the commands of a key size, as `&'static str`s: `run` takes
+/// text that outlives the call.
+fn concat_name(key: &str, step: &str) -> &'static str {
+    match (key, step) {
+        ("rsa3072", "-load") => "load-rsa3072",
+        ("rsa3072", "-verify") => "verify-rsa3072",
+        ("rsa3072", "-forged") => "verify-rsa3072-forged",
+        ("rsa3072", "-flush") => "flush-rsa3072",
+        ("rsa4096", "-load") => "load-rsa4096",
+        ("rsa4096", "-verify") => "verify-rsa4096",
+        ("rsa4096", "-forged") => "verify-rsa4096-forged",
+        _ => "flush-rsa4096",
+    }
+}
+
+fn counter() -> u64 {
+    let ticks: u64;
+    unsafe { core::arch::asm!("mrs {}, cntvct_el0", out(reg) ticks) };
+    ticks
+}
+
+fn frequency() -> u64 {
+    let hz: u64;
+    unsafe { core::arch::asm!("mrs {}, cntfrq_el0", out(reg) hz) };
+    hz
+}
+
+fn decimal(system_table: *mut SystemTable, mut v: u64) {
+    let mut digits = [0u8; 20];
+    let mut at = digits.len();
+    loop {
+        at -= 1;
+        digits[at] = b'0' + (v % 10) as u8;
+        v /= 10;
+        if v == 0 {
+            break;
+        }
+    }
+    say(system_table, unsafe { core::str::from_utf8_unchecked(&digits[at..]) });
 }
 
 fn hex(system_table: *mut SystemTable, bytes: &[u8]) {
@@ -239,15 +280,52 @@ pub extern "efiapi" fn efi_main(_image: Handle, system_table: *mut SystemTable) 
     let mut verify = Command::new(0x8001, 0x177);
     verify.u32(rsa_key).u16(32).put(&digest).u16(0x14).u16(0x0b).u16(256).put(&forged);
     run("verify-rsa-forged", verify.done());
+
+    // The same with RSA-3072 and RSA-4096 keys, and how long the verifying takes.
+    for (name, modulus, signature) in [
+        ("rsa3072", &rsa_vector::MODULUS_3072[..], &rsa_vector::SIGNATURE_3072[..]),
+        ("rsa4096", &rsa_vector::MODULUS_4096[..], &rsa_vector::SIGNATURE_4096[..]),
+    ] {
+        let bits = (modulus.len() * 8) as u16;
+        let mut template = [0u8; 600];
+        let mut header = [0u8; 22];
+        header.copy_from_slice(&[0x00, 0x01, 0x00, 0x0b, 0x00, 0x04, 0x00, 0x40, 0x00, 0x00, 0x00, 0x10, 0x00, 0x10, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00]);
+        header[14..16].copy_from_slice(&bits.to_be_bytes());
+        header[20..22].copy_from_slice(&(modulus.len() as u16).to_be_bytes());
+        template[..22].copy_from_slice(&header);
+        template[22..22 + modulus.len()].copy_from_slice(modulus);
+        let len = 22 + modulus.len();
+        let (r, _) = run(concat_name(name, "-load"), Command::new(0x8001, 0x167).u16(0).u16(len as u16).put(&template[..len]).u32(0x4000_0001).done());
+        let key = u32::from_be_bytes(r[10..14].try_into().unwrap());
+        let mut verify = Command::new(0x8001, 0x177);
+        verify.u32(key).u16(32).put(&digest).u16(0x14).u16(0x0b).u16(modulus.len() as u16).put(signature);
+        let started = counter();
+        run(concat_name(name, "-verify"), verify.done());
+        let ticks = counter() - started;
+        say(system_table, "tpm2 time: ");
+        say(system_table, name);
+        say(system_table, " ticks=");
+        decimal(system_table, ticks);
+        say(system_table, " freq=");
+        decimal(system_table, frequency());
+        say(system_table, "\r\n");
+        let mut forged = [0u8; 512];
+        forged[..signature.len()].copy_from_slice(signature);
+        forged[signature.len() - 1] ^= 1;
+        let mut verify = Command::new(0x8001, 0x177);
+        verify.u32(key).u16(32).put(&digest).u16(0x14).u16(0x0b).u16(modulus.len() as u16).put(&forged[..signature.len()]);
+        run(concat_name(name, "-forged"), verify.done());
+        run(concat_name(name, "-flush"), Command::new(0x8001, 0x165).u32(key).done());
+    }
     run("sign-external", Command::new(0x8002, 0x15d).u32(rsa_key).password().u16(32).put(&digest).u16(0x10).u16(0x8024).u32(0x4000_0007).u16(0).done());
-    // A public area with a policy, which is longer than a slot holds.
-    let mut modulus = [0xc3u8; 256];
-    modulus[255] |= 1;
+    // A public area with a modulus longer than any key the TPM takes.
+    let mut modulus = [0xc3u8; 600];
+    modulus[599] |= 1;
     run(
         "load-external-long",
         Command::new(0x8001, 0x167)
             .u16(0)
-            .u16(310)
+            .u16(654)
             .u16(1)
             .u16(0xb)
             .u32(0x0004_0000)
@@ -257,7 +335,7 @@ pub extern "efiapi" fn efi_main(_image: Handle, system_table: *mut SystemTable) 
             .u16(0x10)
             .u16(2048)
             .u32(0)
-            .u16(256)
+            .u16(600)
             .put(&modulus)
             .u32(0x4000_0001)
             .done(),

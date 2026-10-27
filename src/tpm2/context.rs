@@ -12,6 +12,10 @@ use super::{In, RC_COMMAND_SIZE, RC_HANDLE, RC_INTEGRITY, RC_REFERENCE_H0, RC_OB
 use super::session::Authorization;
 use crate::{aes, kdf, keystore, sha256};
 
+/// The most a saved object or session takes before it is encrypted: an
+/// object with an RSA-4096 public key is the largest.
+const CONTEXT_MAX: usize = 1024;
+
 static mut SEQUENCE: u64 = 0;
 
 fn keys(sequence: u64) -> ([u8; 16], [u8; 32]) {
@@ -125,7 +129,7 @@ pub fn save(handle: u32, params: &In, a: &mut Authorization) -> Result<(), u32> 
     if params.rest() != 0 {
         return Err(RC_COMMAND_SIZE);
     }
-    let mut plain = [0u8; 700];
+    let mut plain = [0u8; CONTEXT_MAX];
     let mut w = Writer { buf: &mut plain, at: 0 };
     let hierarchy;
     if let Some(slot) = object::transient_of(handle) {
@@ -145,7 +149,7 @@ pub fn save(handle: u32, params: &In, a: &mut Authorization) -> Result<(), u32> 
     unsafe { core::ptr::write_volatile(&raw mut SEQUENCE, sequence) };
     let (mut key, mut mac_key) = keys(sequence);
     aes::Aes128::new(&key).cfb_encrypt(&[0; 16], &mut plain[..len]);
-    let mut message = [0u8; 700 + 12];
+    let mut message = [0u8; CONTEXT_MAX + 12];
     message[..8].copy_from_slice(&sequence.to_be_bytes());
     message[8..12].copy_from_slice(&handle.to_be_bytes());
     message[12..12 + len].copy_from_slice(&plain[..len]);
@@ -153,7 +157,7 @@ pub fn save(handle: u32, params: &In, a: &mut Authorization) -> Result<(), u32> 
     keystore::zero(&mut key);
     keystore::zero(&mut mac_key);
 
-    let mut response = [0u8; 800];
+    let mut response = [0u8; CONTEXT_MAX + 120];
     let mut out = Writer { buf: &mut response, at: 0 };
     out.put(&sequence.to_be_bytes());
     out.u32(handle);
@@ -180,12 +184,12 @@ pub fn load(params: &mut In, a: &mut Authorization) -> Result<(), u32> {
     if params.rest() != 0 {
         return Err(RC_COMMAND_SIZE);
     }
-    if blob.len() < 34 || blob.len() > 34 + 700 || blob[..2] != 32u16.to_be_bytes() {
+    if blob.len() < 34 || blob.len() > 34 + CONTEXT_MAX || blob[..2] != 32u16.to_be_bytes() {
         return Err(RC_SIZE | RC_P | RC_1);
     }
     let (integrity, encrypted) = (&blob[2..34], &blob[34..]);
     let (mut key, mut mac_key) = keys(sequence);
-    let mut message = [0u8; 700 + 12];
+    let mut message = [0u8; CONTEXT_MAX + 12];
     message[..8].copy_from_slice(&sequence.to_be_bytes());
     message[8..12].copy_from_slice(&saved.to_be_bytes());
     message[12..12 + encrypted.len()].copy_from_slice(encrypted);
@@ -199,7 +203,7 @@ pub fn load(params: &mut In, a: &mut Authorization) -> Result<(), u32> {
         keystore::zero(&mut key);
         return Err(RC_INTEGRITY | RC_P | RC_1);
     }
-    let mut plain = [0u8; 700];
+    let mut plain = [0u8; CONTEXT_MAX];
     plain[..encrypted.len()].copy_from_slice(encrypted);
     aes::Aes128::new(&key).cfb_decrypt(&[0; 16], &mut plain[..encrypted.len()]);
     keystore::zero(&mut key);

@@ -66,8 +66,8 @@ One bank, SHA-256, of 24 PCRs. Every PCR can be extended from locality 0 but
 | `TPM2_ReadClock`, `TestParms` | |
 | `TPM2_CreatePrimary` | an ECC P-256 storage key under the owner, endorsement, platform or null hierarchy |
 | `TPM2_Create`, `Load`, `ReadPublic`, `Unseal` | sealed data and ECDSA signing keys under a primary storage key |
-| `TPM2_LoadExternal` | a public key, ECC P-256 or RSA-2048, under the owner, endorsement, platform or null hierarchy; no private part |
-| `TPM2_Sign`, `Quote`, `VerifySignature` | ECDSA over P-256 and SHA-256, with a key that signs; a restricted key (an attestation key) signs only what the TPM attested or a digest that `Hash` ticketed; `VerifySignature` also checks RSASSA (PKCS#1 v1.5) with SHA-256 by a loaded RSA public key |
+| `TPM2_LoadExternal` | a public key, ECC P-256 or RSA of 2048, 3072 or 4096 bits (exponent 65537), under the owner, endorsement, platform or null hierarchy; no private part |
+| `TPM2_Sign`, `Quote`, `VerifySignature` | ECDSA over P-256 and SHA-256, with a key that signs; a restricted key (an attestation key) signs only what the TPM attested or a digest that `Hash` ticketed; `VerifySignature` also checks RSASSA (PKCS#1 v1.5) with SHA-256 by a loaded RSA public key of 2048, 3072 or 4096 bits |
 | `TPM2_ContextSave`, `ContextLoad`, `FlushContext` | objects and sessions |
 | `TPM2_EvictControl` | a primary key made persistent at a handle in the owner's or the platform's range, two at most, and removed again; they last until the TPM restarts, and a tool that finds none makes the primary again |
 | `TPM2_StartAuthSession` | HMAC, policy and trial sessions, unsalted or salted to a primary key with ECDH, bound to nothing or to an object, with AES-128-CFB for parameter encryption or none |
@@ -86,7 +86,7 @@ makes an attestation key under it. `tpm2_quote` signs the PCRs with that key and
 
 A policy that a key authorizes works as `systemd-measure` and
 `systemd-cryptenroll --tpm2-public-key` use it: the policy of the sealed object
-names an RSA-2048 key, and the unsealing session proves a PCR policy that the
+names an RSA key of 2048, 3072 or 4096 bits, and the unsealing session proves a PCR policy that the
 key signed (`VerifySignature` on the loaded public key, then `PolicyAuthorize`
 with its ticket).
 

@@ -74,7 +74,7 @@ pub const CC_TEST_PARMS: u32 = 0x18a;
 pub const CC_LOAD_EXTERNAL: u32 = 0x167;
 pub const CC_EVICT_CONTROL: u32 = 0x120;
 
-const MAX_PUBLIC: usize = 288;
+const MAX_PUBLIC: usize = 600;
 const MAX_PRIVATE: usize = 260;
 
 /// The parts of a `TPMT_PUBLIC` the TPM acts on.
@@ -91,7 +91,7 @@ pub struct Public {
     pub scheme: u16,
     pub scheme_hash: u16,
     pub curve: u16,
-    pub unique: [u8; 256],
+    pub unique: [u8; 512],
     pub unique_len: usize,
     pub key_bits: u16,
     pub exponent: u32,
@@ -113,7 +113,7 @@ impl Public {
             scheme: ALG_NULL,
             scheme_hash: 0,
             curve: 0,
-            unique: [0; 256],
+            unique: [0; 512],
             unique_len: 0,
             key_bits: 0,
             exponent: 0,
@@ -177,7 +177,7 @@ impl Public {
                 p.key_bits = input.u16().ok_or(RC_COMMAND_SIZE)?;
                 p.exponent = input.u32().ok_or(RC_COMMAND_SIZE)?;
                 let modulus = input.sized().ok_or(RC_COMMAND_SIZE)?;
-                if modulus.len() > 256 {
+                if modulus.len() > 512 {
                     return Err(RC_SIZE);
                 }
                 p.unique[..modulus.len()].copy_from_slice(modulus);
@@ -241,8 +241,8 @@ impl Public {
     }
 
     /// What the TPM supports of a public key it is handed: an ECC key as for
-    /// the keys it makes, or an RSA-2048 key that verifies PKCS#1 v1.5
-    /// signatures made with SHA-256.
+    /// the keys it makes, or an RSA-2048, -3072 or -4096 key that verifies
+    /// PKCS#1 v1.5 signatures made with SHA-256.
     pub fn check_external(&self) -> Result<(), u32> {
         if self.kind != ALG_RSA {
             return self.check();
@@ -262,7 +262,7 @@ impl Public {
             ALG_RSASSA => return Err(super::RC_HASH),
             _ => return Err(RC_SCHEME),
         }
-        if self.key_bits != 2048 || self.unique_len != 256 || (self.exponent != 0 && self.exponent != 65537) {
+        if !matches!(self.key_bits, 2048 | 3072 | 4096) || self.unique_len != self.key_bits as usize / 8 || (self.exponent != 0 && self.exponent != 65537) {
             return Err(RC_KEY);
         }
         Ok(())
@@ -529,7 +529,7 @@ fn unreachable_public() -> Public {
         scheme: ALG_NULL,
         scheme_hash: 0,
         curve: 0,
-        unique: [0; 256],
+        unique: [0; 512],
         unique_len: 0,
         key_bits: 0,
         exponent: 0,
@@ -1131,7 +1131,7 @@ pub fn read_public_command(c: &mut Command) -> Result<(), u32> {
     if c.params.rest() != 0 {
         return Err(RC_COMMAND_SIZE);
     }
-    let mut parameters = Out { buf: &mut [0u8; 400], at: 0 };
+    let mut parameters = Out { buf: &mut [0u8; 700], at: 0 };
     parameters.u16(slot.public_len as u16);
     parameters.put(&slot.public[..slot.public_len]);
     parameters.u16(34);
@@ -1187,7 +1187,7 @@ pub fn test_parms(c: &mut Command) -> Result<(), u32> {
             }
             let bits = c.params.u16().ok_or(RC_COMMAND_SIZE)?;
             let exponent = c.params.u32().ok_or(RC_COMMAND_SIZE)?;
-            if bits != 2048 || (exponent != 0 && exponent != 65537) {
+            if !matches!(bits, 2048 | 3072 | 4096) || (exponent != 0 && exponent != 65537) {
                 return Err(RC_KEY | RC_P | RC_1);
             }
         }

@@ -129,13 +129,13 @@ for bits in (256, 384):
     print(f"    (&{arr(z)}, b\"SECRET\", &{arr(u)}, &{arr(v)}, {bits}, &{arr(kdfe(z, b'SECRET', u, v, bits))}),")
 print("];")
 print()
-print("/// `(modulus, exponent, digest, signature, valid)`: RSA-2048 PKCS#1 v1.5 with SHA-256.")
+print("/// `(modulus, exponent, digest, signature, valid)`: RSA-2048, -3072 and -4096 PKCS#1 v1.5 with SHA-256.")
 print("pub const RSA: &[(&[u8], u32, [u8; 32], &[u8], bool)] = &[")
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
-for exponent in (65537, 65537, 3):
-    key = rsa.generate_private_key(public_exponent=exponent, key_size=2048)
-    modulus = be(key.public_key().public_numbers().n, 256)
+for exponent, bits in ((65537, 2048), (65537, 2048), (3, 2048), (65537, 3072), (65537, 4096), (3, 3072)):
+    key = rsa.generate_private_key(public_exponent=exponent, key_size=bits)
+    modulus = be(key.public_key().public_numbers().n, bits // 8)
     digest = hashlib.sha256(os.urandom(8)).digest()
     signature = key.sign(digest, padding.PKCS1v15(), Prehashed(hashes.SHA256()))
     print(f"    (&{arr(modulus)}, {exponent}, {arr(digest)}, &{arr(signature)}, true),")

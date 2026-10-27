@@ -336,6 +336,15 @@ def check_signing(r):
     if rc != 0 or struct.unpack(">H", body[:2])[0] != 0x8022 or struct.unpack(">I", body[2:6])[0] != 0x40000001:
         fail(f"VerifySignature with an RSA key: {rc:#x} {body.hex()}")
     expect_rc(r, "verify-rsa-forged", 0x9B | 0x40 | 0x200)
+    for name, bits in (("rsa3072", 3072), ("rsa4096", 4096)):
+        tag, rc, body = header(r[f"load-{name}"])
+        if rc != 0 or body[0] != 0x80 or len(body) != 4 + 2 + 34:
+            fail(f"LoadExternal with an RSA-{bits} key: {rc:#x} {body.hex()}")
+        tag, rc, body = header(r[f"verify-{name}"])
+        if rc != 0 or struct.unpack(">H", body[:2])[0] != 0x8022 or struct.unpack(">I", body[2:6])[0] != 0x40000001:
+            fail(f"VerifySignature with an RSA-{bits} key: {rc:#x} {body.hex()}")
+        expect_rc(r, f"verify-{name}-forged", 0x9B | 0x40 | 0x200)
+        expect_rc(r, f"flush-{name}", 0)
     expect_rc(r, "sign-external", 0x9C | 0x100)
     expect_rc(r, "load-external-long", 0x95 | 0x40 | 0x200)
     expect_rc(r, "flush-external", 0)
