@@ -155,7 +155,7 @@ The keys are built in, from `keys/` ([Keys](#keys)) and `uefi/keys/dbx-aarch64.t
 |---|---|
 | `PK` | The platform key, `keys/pk` |
 | `KEK` | `keys/kek` |
-| `db` | This firmware's signing key, `keys/db` |
+| `db` | This firmware's signing key, `keys/db`; with an `owner-db.der` in the `boot.img`, that certificate alone ([The owner's db](#the-owners-db)) |
 | `dbx` | The AArch64 image hashes in Microsoft's revocation list (`dbx-aarch64.txt`, from [microsoft/secureboot_objects](https://github.com/microsoft/secureboot_objects)) |
 | `SecureBoot`, `SetupMode`, `AuditMode`, `DeployedMode` | 1, 0, 0, 1 |
 
@@ -204,6 +204,63 @@ it ships. Either of these boots it:
 
 A unified kernel image or systemd-boot signed with `keys/db` boots without
 shim.
+
+### The owner's db
+
+A machine's owner can have the firmware trust the owner's certificate for the
+images it runs, and the builder's key not at all, without holding `KEK`. On a
+board with signed boot the bootloader runs `start4.elf` out of `boot.img` only
+after the owner's key has signed it ([boot.md](boot.md#signed-boot)), so a file
+in that image is the owner's word.
+
+`owner-db.der` in the root directory of `boot.img` is one X.509 certificate in
+DER: RSA, SHA-256, at most 4096 bytes, and nothing after it. It can be a CA
+(`basicConstraints` `CA:TRUE`, `keyUsage` `keyCertSign`), and then a leaf it
+issues, such as a dm-verity signing certificate, chains to it in the kernel's
+`.platform` keyring, which the kernel fills from `db`. The firmware reads
+neither the extensions nor the dates.
+
+```bash
+scripts/mkbootimg.py customer-private.pem out/start4.elf out --add owner.der:owner-db.der
+```
+
+`start4.elf` finds the file through the bootloader's handover block (the
+`RDSK` tag, the `boot.img` in RAM), reads it from the FAT volume before the ARM
+starts, and the UEFI firmware asks for it over the property mailbox (tag
+`0x000300a8`: a status word, a length and the bytes). Then:
+
+- `db` is an `EFI_SIGNATURE_LIST` of that certificate alone. The built-in `db`
+  key, the test key of a test build and every `db` write stored in the flash
+  are left out, and `db` takes no writes (`EFI_WRITE_PROTECTED`). `KEK`, `dbx`
+  and `PK` are unchanged, so `dbx` can still grow.
+- `start4.elf` extends PCR 7 with an `EV_EFI_ACTION` event, `owner-db
+  sha256=<hex of the file>`, ahead of the firmware's own PCR 7 events. UEFI
+  measures `db` as it is, so its event holds the owner's certificate, and each
+  image's `EV_EFI_VARIABLE_AUTHORITY` event names it as the certificate that
+  verified the image.
+- A file that is there and cannot be used leaves `db` empty, and no image runs:
+  one over 4096 bytes, an empty one, a directory, one whose cluster chain is
+  broken (`start4.elf` logs `owner-db.der cannot be used` and measures `owner-db
+  invalid`), or one that is not a single RSA certificate (UEFI logs `owner-db.der
+  is not one RSA certificate`). The builder's `db` never takes its place.
+- A `boot.img` with no `owner-db.der`, a firmware that did not start out of a
+  `boot.img`, and a `boot.img` that is not a FAT volume `start4.elf` reads
+  (a partition table in front of it, say, which logs a warning) leave `db` as
+  it was. The file on an SD card next to an unsigned `start4.elf` is ignored.
+- Capsules. A capsule for the firmware or the EEPROM bootloader has to be signed
+  by the owner's certificate itself, not by a leaf it issued, which signs
+  images and not firmware. A capsule for the update class, whose bundle an
+  update key signs, takes the builder's `db` key instead and nothing else, so
+  firmware updates keep arriving whatever the owner trusts
+  ([updates.md](updates.md#updates-the-owner-does-not-sign)). The update keys
+  are checked by `start4.elf` and are not in `db`.
+
+A `tryboot.img` is read the same way, so an update capsule's `boot.img` has to
+carry the `owner-db.der` the owner wants after it. Changing the owner's
+certificate is a new signed `boot.img`; no variable write does it.
+
+Without signed boot in the OTP anyone who can write the boot medium replaces
+`start4.elf` and the file with it ([security.md](security.md#what-is-trusted)).
 
 ### Keys
 
@@ -431,6 +488,14 @@ pimu boot --scenario scenarios/usb-hello.yaml            # the same off a USB dr
 pimu boot --scenario scenarios/shim-grub.yaml            # Ubuntu's shim, signed with the test key, checks and starts GRUB, which reads grub.cfg
 pimu boot --scenario scenarios/shim-refused.yaml         # Ubuntu's shim as it ships, signed by Microsoft alone, is refused
 pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed by a key in db is refused
+pimu boot --scenario scenarios/owner-db.yaml     # a boot.img with owner-db.der: a leaf of the owner's CA boots
+pimu boot --scenario scenarios/owner-db-stranger.yaml  # ... another key is refused
+pimu boot --scenario scenarios/owner-db-builder.yaml   # ... so is the builder's test key
+pimu boot --scenario scenarios/owner-db-junk.yaml      # ... a file that is no certificate leaves db empty
+pimu boot --scenario scenarios/owner-db-invalid.yaml   # ... and so does one that is too long
+pimu boot --scenario scenarios/owner-db-absent.yaml    # without it the built-in db stays
+pimu boot --scenario scenarios/owner-db-capsule.yaml   # capsules in the owner's mode
+pimu boot --scenario scenarios/owner-db-update.yaml    # an update capsule the builder signed still applies
 ```
 
 ## Known limitations

@@ -31,6 +31,14 @@
 #                     uefi/test-apps/runtime: exit boot services and use the
 #                     variable services the OS is left with, fill the flash
 #                     store with them, and shut down
+#   out/hello-owner.efi, out/hello-stranger.efi
+#                     hello.efi signed by a leaf that the owner's CA in
+#                     out/test-keys/owner.der issued, and by a key nothing
+#                     trusts: what a board whose boot.img carries owner-db.der
+#                     runs and refuses ($keys/owner.der is that file)
+#   out/capsule-owner.cap, out/capsule-owner-leaf.cap
+#                     a firmware capsule signed by that CA and one signed by
+#                     the leaf
 #   out/capsule-*.cap firmware update capsules the capsule scenario puts on the
 #                     card: new, old, corrupt, signed by a stranger, and junk
 #   out/reboot-flags.efi
@@ -207,10 +215,33 @@ done
 "$here/scripts/mkcapsule.py" "$keys/db.key" "$keys/db.crt" 0x7fffffff --class eeprom --header-class firmware "$out/capsule-relabeled.cap"
 head -c 300 /dev/urandom >"$out/capsule-junk.cap"
 
+# The owner's db: a CA, and a leaf it issued that signs what a board with the
+# CA in its boot.img runs.
+owner_cert() {
+  openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 3650 -subj "/CN=nuboot owner test CA" \
+    -addext "basicConstraints=critical,CA:TRUE" -addext "keyUsage=critical,keyCertSign,cRLSign" \
+    -keyout "$keys/owner.key" -out "$keys/owner.crt" 2>/dev/null
+  openssl x509 -in "$keys/owner.crt" -outform DER -out "$keys/owner.der"
+  openssl req -newkey rsa:2048 -sha256 -nodes -subj "/CN=nuboot owner test leaf" \
+    -keyout "$keys/owner-leaf.key" -out "$keys/owner-leaf.csr" 2>/dev/null
+  printf 'basicConstraints=CA:FALSE\nkeyUsage=digitalSignature\nextendedKeyUsage=codeSigning\n' >"$keys/owner-leaf.ext"
+  openssl x509 -req -in "$keys/owner-leaf.csr" -CA "$keys/owner.crt" -CAkey "$keys/owner.key" -CAcreateserial \
+    -sha256 -days 3650 -extfile "$keys/owner-leaf.ext" -out "$keys/owner-leaf.crt" 2>/dev/null
+}
+[[ -f "$keys/owner-leaf.crt" ]] || owner_cert
+# Capsules that a board with the owner's db checks: one the CA signed itself
+# and one a leaf of it signed.
+"$here/scripts/mkcapsule.py" "$keys/owner.key" "$keys/owner.crt" 0x7fffffff "$out/capsule-owner.cap"
+"$here/scripts/mkcapsule.py" "$keys/owner-leaf.key" "$keys/owner-leaf.crt" 0x7fffffff "$out/capsule-owner-leaf.cap"
+
 hello="$here/uefi/test-apps/hello"
 (cd "$hello" && rustup target add aarch64-unknown-uefi >/dev/null &&
   cargo build --release --target aarch64-unknown-uefi)
 sign "$hello/target/aarch64-unknown-uefi/release/hello.efi" "$out/hello.efi"
+sbsign --key "$keys/owner-leaf.key" --cert "$keys/owner-leaf.crt" --output "$out/hello-owner.efi" \
+  "$hello/target/aarch64-unknown-uefi/release/hello.efi" 2>/dev/null
+sbsign --key "$keys/stranger.key" --cert "$keys/stranger.crt" --output "$out/hello-stranger.efi" \
+  "$hello/target/aarch64-unknown-uefi/release/hello.efi" 2>/dev/null
 
 probe="$here/uefi/test-apps/otp-probe"
 (cd "$probe" && cargo build --release --target aarch64-unknown-uefi)

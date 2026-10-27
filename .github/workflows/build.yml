@@ -147,6 +147,14 @@ jobs:
             out/boot-test-pubkey.bin
             out/boot-stranger.img
             out/boot-stranger.sig
+            out/boot-owner.img
+            out/boot-owner.sig
+            out/boot-owner-junk.img
+            out/boot-owner-junk.sig
+            out/boot-owner-oversize.img
+            out/boot-owner-oversize.sig
+            out/capsule-owner.cap
+            out/capsule-owner-leaf.cap
             out/capsule-new.cap
             out/capsule-old.cap
             out/capsule-corrupt.cap
@@ -166,6 +174,8 @@ jobs:
             out/linux-no-dt-test.efi
             out/linux-wdat-test.efi
             out/hello.efi
+            out/hello-owner.efi
+            out/hello-stranger.efi
             out/watchdog-hang.efi
             out/watchdog-exit.efi
             out/watchdog-takeover.efi

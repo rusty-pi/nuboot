@@ -24,6 +24,13 @@ const BOOT_WATCHDOG_END_AT: u32 = 0x300;
 const BOOT_WATCHDOG_TIMEOUT: u32 = 0x308;
 /// The whole block as the stock bootcode lays it out.
 const LEN: u32 = 0x3b4;
+/// The block's header is `BSTE`, its length and where the tags start (12); each
+/// tag is its name, its length counting this header, the length again, and its
+/// words.
+const FIRST_TAG: u32 = 0x008;
+const TAG_HEADER: u32 = 12;
+/// `RDSK`: where the bootloader put `boot.img` and how long it is, in bytes.
+const RAMDISK_TAG: u32 = 0x4b53_4452;
 
 /// The medium code for firmware that came out of the EEPROM itself. Not a
 /// stock code: only this tree's first stage writes it.
@@ -118,6 +125,27 @@ impl core::fmt::Display for BootDevice {
             BootDevice::Other(code) => write!(f, "unknown-{code}"),
         }
     }
+}
+
+/// The ARM physical address and the length in bytes of the `boot.img` the
+/// bootloader checked and started this firmware out of, if it says so.
+pub fn ramdisk() -> Option<(u32, u32)> {
+    if !present() || boot_device() != BootDevice::Ramdisk {
+        return None;
+    }
+    let end = mmio::read(ADDR + 4).min(LEN);
+    let mut at = mmio::read(ADDR + FIRST_TAG);
+    while at >= TAG_HEADER && at + TAG_HEADER <= end {
+        let len = mmio::read(ADDR + at + 4);
+        if len < TAG_HEADER || len % 4 != 0 {
+            return None;
+        }
+        if mmio::read(ADDR + at) == RAMDISK_TAG && len >= TAG_HEADER + 8 {
+            return Some((mmio::read(ADDR + at + TAG_HEADER), mmio::read(ADDR + at + TAG_HEADER + 4)));
+        }
+        at += len;
+    }
+    None
 }
 
 /// When the boot watchdog's budget runs out, in system timer microseconds;

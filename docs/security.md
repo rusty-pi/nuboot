@@ -55,6 +55,7 @@ above).
 | `start4.elf` | the firmware's builder | everything below |
 | the update keys, which `start4.elf` carries | the firmware's builder | which firmware replaces it at the next boot, with no signature by the owner |
 | `PK`, `KEK`, `db` | the firmware's builder | which images UEFI runs, and which updates it takes |
+| `owner-db.der` in `boot.img` | the owner | which images UEFI runs, in place of the builder's `db`, and which capsules it takes for the firmware and the EEPROM |
 
 **The guarantees need signed boot programmed in the OTP.** On a board without
 it the bootloader runs whatever `start4.elf` is on the boot medium, and an
@@ -115,6 +116,17 @@ the mailbox too.
   lengths: the board has no clock, and `db` is short and signed in. A
   certificate in `db` can therefore issue others; whoever holds its key could
   sign the image directly anyway.
+- **The owner can replace `db`.** A `boot.img` the bootloader verified against
+  the owner's key may hold `owner-db.der` ([uefi.md](uefi.md#the-owners-db)),
+  and then `db` is that certificate alone, `db` takes no writes, and the
+  builder's `db` key, the stored `db` writes and any Microsoft CA are not
+  trusted for images. `PK` and `KEK` stay the builder's, so they can still
+  write `dbx`, which only revokes. The file is measured into PCR 7, and `db` and
+  the certificate that verified each image are measured as before, so a policy
+  can tell the owner's `db` from the builder's. A file that is present and
+  unusable leaves `db` empty. This is only as strong as the bootloader's check
+  of `boot.img`: without signed boot in the OTP the file is whatever the medium
+  holds.
 - **No setup mode.** `PK` is built in and no write replaces it; `SecureBoot`,
   `SetupMode`, `AuditMode` and `DeployedMode` are fixed. `KEK`, `db` and
   `dbx` change only through authenticated writes with a timestamp newer than the
@@ -141,6 +153,12 @@ read back, and booted once; the bootloader checks it against the owner's key,
 the new firmware proves itself at `ExitBootServices`, and only then does the
 next boot make it the boot pair ([uefi.md](uefi.md#firmware-capsules)). A
 firmware that never reaches the OS is not kept.
+
+With the owner's `db`, a capsule for the firmware or the EEPROM bootloader has
+to be signed by the owner's certificate itself (not a leaf it issued, so a
+leaf for dm-verity or module signing does not sign firmware), and one for the
+update class by the builder's `db` key, which signs no image. The bundle's own
+check, the update keys, is not in `db` and stays the builder's.
 
 The gate on a board with signed boot is the owner's key, not `db`: the firmware
 does not verify the RSA signature of `boot.sig` itself, it hands the pair to the
@@ -399,7 +417,7 @@ programmed and an OS that keeps lockdown on:
 | replace the firmware | write access to the boot medium **on a board without signed boot in the OTP** | the VPU, the device key's HMAC, everything |
 | replace the firmware with an older signed one | write access to the boot medium; the bootloader has no anti-rollback for `boot.img` | the old firmware's bugs |
 | run firmware of one's choice on every board whose loader carries an update key | the update private key and a `db` key to sign the capsule, or write access to the medium and a bundle the key signed | the VPU, the device key's HMAC, everything |
-| sign what UEFI runs | the `db` private key, or `KEK`, or `PK` (each can add a `db` entry), or any key already in `db`; for firmware, also the owner's boot key | whatever it signs |
+| sign what UEFI runs | the `db` private key, or `KEK`, or `PK` (each can add a `db` entry), or any key already in `db`; for firmware, also the owner's boot key. With the owner's `db`: the key of the certificate in `owner-db.der` or one it issued, or the owner's boot key (which can change the file) | whatever it signs |
 | run a signed loader's bug | a signed shim, GRUB or kernel that is not in `dbx` and has a flaw (a bug in a loader before `ExitBootServices`, or a kernel with lockdown off) | code on the ARM, so the VPU and the key's HMAC |
 | take the VPU from a locked-down OS | a kernel exploit that gives arbitrary physical memory access; then the VPU's code or the mailbox's buffers are writable | the same |
 | take it from a bus master | a flaw in the VL805's firmware (loaded from the EEPROM) or a hostile PCIe device: the inbound window covers all RAM, the VPU's included | the same |
@@ -428,7 +446,8 @@ Not defended, and not claimed:
   kernel without it.
 - Other keys in `db` can sign firmware capsules. The module-signing key an OS
   image enrols in `db` is one of them; on a board with signed boot the owner's
-  key is still needed for a capsule to run.
+  key is still needed for a capsule to run. With the owner's `db` only the
+  certificate in `owner-db.der` itself can, not what it issues.
 
 ## Operating it
 

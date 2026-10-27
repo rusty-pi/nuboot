@@ -17,7 +17,7 @@ use core::cell::Cell;
 use nuboot::board::{Board, Revision};
 use nuboot::handover::{self, BootDevice};
 use nuboot::{
-    arm, console, dvfs, eeprom, error, idle, info, mailbox, measure, otp, pmic, sched, stack, stc, thermal, timer, update, usb, warn, watchdog, wdat,
+    arm, console, debug, dvfs, eeprom, error, idle, info, mailbox, measure, otp, pmic, ramdisk, sched, stack, stc, thermal, timer, update, usb, warn, watchdog, wdat,
 };
 
 /// What the ARM cores start in: an armstub and the compressed UEFI firmware
@@ -117,6 +117,7 @@ fn firmware_main() -> ! {
     );
     measure::eeprom_bootcode(eeprom::digest(b"bootcode.bin").as_ref());
     measure::eeprom_config(eeprom::digest(b"bootconf.txt").map(|d| d.sha256));
+    load_owner_db();
     nuboot::keystore::seed();
     usb::bring_up(&board);
     let arm_mhz = dvfs::start(&board);
@@ -178,6 +179,27 @@ fn chain_update() {
             warn!("update", "the staged bundle is refused"; reason = reason);
             update::discard();
         }
+    }
+}
+
+/// Read the owner's `db` out of the `boot.img` the bootloader checked, for the
+/// UEFI firmware to ask for, and measure it.
+fn load_owner_db() {
+    match ramdisk::load_owner_db() {
+        ramdisk::OwnerDb::Present => {
+            let der = ramdisk::owner_db();
+            let d = nuboot::sha256::digest(der);
+            info!("owner-db", "the boot.img names the certificate that signs images"; bytes = der.len(),
+                sha256 = format_args!("{:02x}{:02x}{:02x}{:02x}", d[0], d[1], d[2], d[3]));
+            measure::owner_db(Some(der));
+        }
+        ramdisk::OwnerDb::Invalid(reason) => {
+            error!("owner-db", "owner-db.der cannot be used, so no image will be trusted"; reason = reason);
+            measure::owner_db(None);
+        }
+        ramdisk::OwnerDb::Unreadable(reason) => warn!("owner-db", "the boot.img cannot be searched for owner-db.der"; reason = reason),
+        ramdisk::OwnerDb::Absent => debug!("owner-db", "the boot.img has no owner-db.der"),
+        ramdisk::OwnerDb::NotSigned => debug!("owner-db", "not started out of a boot.img"),
     }
 }
 

@@ -34,6 +34,7 @@ this order:
 | 1 | `EV_PLATFORM_CONFIG_FLAGS` | `eeprom.bootconf=`, the SHA-256 of `bootconf.txt` in the EEPROM as it is stored, or `none` |
 | 0 | `EV_EFI_PLATFORM_FIRMWARE_BLOB2` | the EEPROM's bootloader (`eeprom-bootcode`), as the SHA-256 of the `bootcode.bin` section as the flash stores it, and where in the flash it is |
 | 0 | `EV_EFI_PLATFORM_FIRMWARE_BLOB2` | the VL805's hub and MCU images (`vl805-hub`, `vl805-mcu`), when the VPU loads them into the chip, which the 4B revisions without a flash of their own for it need |
+| 7 | `EV_EFI_ACTION` | `owner-db sha256=` and the SHA-256 of the `owner-db.der` in the `boot.img` the firmware started out of, or `owner-db invalid` for one it could not use ([uefi.md](uefi.md#the-owners-db)); only when the `boot.img` has one |
 | 7 | `EV_EFI_VARIABLE_DRIVER_CONFIG` | the Secure Boot configuration: `SecureBoot`, `PK`, `KEK`, `db` and `dbx` |
 | 1 | `EV_EFI_HANDOFF_TABLES2` | the pointers to the ACPI and SMBIOS tables handed to the OS |
 | 0-7 | `EV_SEPARATOR` | one in each PCR, once the configuration is measured |

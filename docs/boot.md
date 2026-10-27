@@ -16,17 +16,19 @@ firmware and the board's device tree inside it.
    `boot.img`, whose signature `boot.sig` it checks against the customer key
    fused in the OTP.
 3. It leaves the handover block (the SDRAM size, the boot medium, the
-   watchdog's budget) at ARM physical `0x40000` and enters `start4.elf` at its
-   ELF entry point.
+   watchdog's budget, and where it put `boot.img`) at ARM physical `0x40000` and
+   enters `start4.elf` at its ELF entry point.
 4. `start4.elf` looks for an update bundle that UEFI left in RAM at ARM
    physical `0x3e000000` before a reset. A bundle that an update key signed and
    that is newer than this firmware replaces it: the image goes to the update
    slot at `0x3ee00200` and starts as `start4.elf` does from here on
    ([updates.md](updates.md#updates-the-owner-does-not-sign)).
-5. `start4.elf` brings up the PCIe link, gives the VL805 its firmware out of
-   the EEPROM's `vl805hub.bin` and `vl805mcu.bin` on a board that needs it, and
-   puts the controller's registers in the outbound window at `0x6_0200_0000`.
-6. It starts the ARM in UEFI ([uefi.md](uefi.md)).
+5. `start4.elf` reads `owner-db.der` out of the `boot.img`, if it started out
+   of one ([Signed boot](#signed-boot)), and measures it.
+6. It brings up the PCIe link, gives the VL805 its firmware out of the EEPROM's
+   `vl805hub.bin` and `vl805mcu.bin` on a board that needs it, and puts the
+   controller's registers in the outbound window at `0x6_0200_0000`.
+7. It starts the ARM in UEFI ([uefi.md](uefi.md)).
 
 ## Signed boot
 
@@ -44,6 +46,19 @@ gives `out/boot.img` and `out/boot.sig`. With `--pubkey file` it also writes the
 key as `pubkey.bin` has it, for `rpi-eeprom-config --pubkey` or, in pimu,
 `eeprom_pubkey`. Signing the EEPROM's own configuration and programming the OTP
 are Raspberry Pi's procedure ([secure-boot-recovery](https://github.com/raspberrypi/usbboot/tree/master/secure-boot-recovery)).
+
+The signature covers every file in `boot.img`, so a file there is the owner's.
+`owner-db.der`, a certificate, makes the UEFI firmware trust that certificate
+for the images it runs, in place of its built-in `db`:
+
+```bash
+scripts/mkbootimg.py customer-private.pem out/start4.elf out --add owner.der:owner-db.der
+```
+
+`start4.elf` finds the `boot.img` the bootloader left in RAM through the `RDSK`
+tag of the handover block, reads the file out of it before the ARM starts and
+measures it into PCR 7 ([uefi.md](uefi.md#the-owners-db) has the format and the
+rules). A board that boots from a medium with no `boot.img` has no such file.
 
 ## What the EEPROM holds besides the bootloader
 

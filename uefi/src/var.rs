@@ -433,6 +433,9 @@ fn clean(t: &[u8; 16]) -> bool {
 /// signed over the name, GUID, attributes, timestamp and value.
 fn write_key(name: &[u16], guid: efi::Guid, attributes: u32, buf: &[u8], persist: bool) -> efi::Status {
     let Some(i) = find(name, &guid) else { return efi::Status::NOT_FOUND };
+    if VARS.get()[i].fixed {
+        return efi::Status::WRITE_PROTECTED;
+    }
     let Some(auth) = Auth::parse(buf) else { return efi::Status::INVALID_PARAMETER };
     let var = &VARS.get()[i];
     let append = attributes & APPEND != 0;

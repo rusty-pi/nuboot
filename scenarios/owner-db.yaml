@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "owner-db"
+description: "A board with signed boot, and a boot.img that holds owner-db.der, a CA. The UEFI firmware's db is that certificate alone, and it runs an application signed by a leaf the CA issued."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  eeprom_pubkey: "../out/boot-test-pubkey.bin"
+  boot_order: "0x1"
+  bootconf:
+    - "SIGNED_BOOT=1"
+  sd:
+    files:
+      boot.img: "../out/boot-owner.img"
+      boot.sig: "../out/boot-owner.sig"
+      EFI/BOOT/BOOTAA64.EFI: "../out/hello-owner.efi"
+  until: "hello test: done"
+  wall_secs: 900
+
+milestones:
+  - why: "The bootloader verified boot.img and started start4.elf out of it."
+    line: "medium=ramdisk"
+  - why: "start4.elf read owner-db.der out of the boot.img."
+    line: "owner-db the boot.img names the certificate that signs images"
+  - why: "The UEFI firmware took the certificate as its only db entry."
+    line: "db is the owner's certificate from the boot.img"
+  - why: "Secure Boot is enforced with the owner's db and not the built-in one."
+    line: "Secure Boot enforced  db=1"
+  - why: "The application's signature chains to the owner's CA."
+    line: "image verified  signer=\"nuboot owner test leaf\" db=\"nuboot owner test CA\""
+  - why: "The application ran."
+    line: "hello test: done"

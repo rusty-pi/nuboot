@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "owner-db-stranger"
+description: "The same boot.img and an application signed by a key the owner's db does not hold: the UEFI firmware refuses it."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  eeprom_pubkey: "../out/boot-test-pubkey.bin"
+  boot_order: "0x1"
+  bootconf:
+    - "SIGNED_BOOT=1"
+  sd:
+    files:
+      boot.img: "../out/boot-owner.img"
+      boot.sig: "../out/boot-owner.sig"
+      EFI/BOOT/BOOTAA64.EFI: "../out/hello-stranger.efi"
+  until: "nothing to boot"
+  wall_secs: 900
+
+milestones:
+  - why: "The bootloader verified boot.img and started start4.elf out of it."
+    line: "medium=ramdisk"
+  - why: "The owner's db is in force."
+    line: "db is the owner's certificate from the boot.img"
+  - why: "The application is signed, but not by a key in db."
+    line: "image refused  reason=\"not signed by a key in db\""
+  - why: "There is nothing else to boot."
+    line: "nothing to boot"

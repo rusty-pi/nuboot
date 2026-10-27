@@ -18,6 +18,8 @@ for:
   shim for anyone, are not trusted unless the owner enrols them
   ([docs/uefi.md](docs/uefi.md#booting-a-distribution)). The platform key is built in,
   and `KEK`, `db` and `dbx` change through updates that a `PK` or `KEK` key signs.
+  An owner whose signed `boot.img` holds `owner-db.der` has that certificate as
+  the only `db` entry instead ([docs/uefi.md](docs/uefi.md#the-owners-db)).
 - **One file**: `start4.elf` carries the UEFI firmware and the board's device
   tree, so a board with secure boot programmed takes this firmware in a signed
   `boot.img` under Raspberry Pi's own bootloader ([docs/boot.md](docs/boot.md)).
@@ -101,6 +103,7 @@ From the boot ROM to the threads that run for as long as the board is up:
 | `start4.elf` started by the stock EEPROM bootloader from the network (TFTP) | ➖ | ✅ | ➖ | ➖ |
 | `start4.elf` started from a USB drive | ✅ | ➖ | ➖ | ➖ |
 | Signed boot: `start4.elf` out of a `boot.img` the EEPROM's key signed, one signed by another key refused | ✅ | ➖ | ➖ | ➖ |
+| The owner's `db`: an `owner-db.der` in a signed `boot.img` is the only `db` entry, a leaf of its CA boots, a stranger's key and the builder's are refused | ✅ | ➖ | ➖ | ➖ |
 | Console log, board identity, threads | ✅ | ✅ | ➖ | ➖ |
 | Boot watchdog: a hang in UEFI resets the board, `ExitBootServices` hands it to the OS | ✅ | ➖ | ➖ | ➖ |
 | Pi 4B rev 1.4 (`d03114`) and rev 1.2 (`c03112`) | ✅ | ➖ | ➖ | ➖ |

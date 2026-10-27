@@ -39,6 +39,7 @@ pub mod otp;
 pub mod p256;
 pub mod pcie;
 pub mod pmic;
+pub mod ramdisk;
 pub mod rng;
 pub mod rsa;
 pub mod sched;

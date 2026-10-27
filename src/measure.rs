@@ -18,10 +18,12 @@ use crate::sha256;
 
 pub const EV_S_CRTM_VERSION: u32 = 0x0000_0008;
 pub const EV_PLATFORM_CONFIG_FLAGS: u32 = 0x0000_000a;
+pub const EV_EFI_ACTION: u32 = 0x8000_0007;
 pub const EV_EFI_PLATFORM_FIRMWARE_BLOB2: u32 = 0x8000_000a;
 
 const PCR_FIRMWARE: usize = 0;
 const PCR_BOARD: usize = 1;
+const PCR_SECURE_BOOT: usize = 7;
 
 pub const MAX_EVENTS: usize = 24;
 pub const MAX_DATA: usize = 80;
@@ -160,6 +162,27 @@ pub fn vl805(hub: &[u8], mcu: &[u8]) {
 pub fn loader(commit: &str, version: u32, digest: [u8; 32], base: u32, len: u32) {
     crtm_version(format_args!("nuboot-loader {commit} {version}"));
     blob_at("start4-update", digest, base as u64, len as u64);
+}
+
+/// The certificate the owner's `boot.img` holds for UEFI to trust in place of
+/// its built-in `db` (`owner-db.der`), into PCR 7 where the Secure Boot policy
+/// is: `owner-db sha256=<hex>` for the file's SHA-256, or `owner-db invalid`
+/// for a file the firmware could not read, which leaves UEFI with no `db`. A
+/// board without one measures nothing, and UEFI measures its built-in `db`.
+pub fn owner_db(file: Option<&[u8]>) {
+    let mut text = Text { bytes: [0; MAX_DATA], len: 0 };
+    let written = match file {
+        Some(file) => {
+            let digest = sha256::digest(file);
+            let _ = text.write_str("owner-db sha256=");
+            digest.iter().try_for_each(|byte| write!(text, "{byte:02x}"))
+        }
+        None => text.write_str("owner-db invalid"),
+    };
+    if written.is_ok() {
+        let data = &text.bytes[..text.len];
+        record(PCR_SECURE_BOOT, EV_EFI_ACTION, sha256::digest(data), data);
+    }
 }
 
 /// Measure the firmware and the board. Once, before the ARM starts.

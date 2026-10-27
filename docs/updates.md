@@ -9,7 +9,7 @@ and fwupd's `uefi-capsule` plugin lists them as devices:
 | the firmware, for a board whose owner signs each image | `7d1c0a4e-5b83-4f2a-9c61-e2084a3d95b7` | `start4.elf`, in a signed `boot.img` | the owner's key |
 | the EEPROM bootloader | `3f8a0c5e-91d2-4b7a-a6c3-5d1e08f2b947` | `pieeprom.upd` and `pieeprom.sig`, in a signed `boot.img` | the owner's key |
 
-A capsule's own signature is `db`'s in all three.
+A capsule's own signature is `db`'s in all three; with an `owner-db.der` in the signed `boot.img` ([uefi.md](uefi.md#the-owners-db)) it is the owner's certificate's for the first two and the builder's `db` key's for the bundle.
 
 ```bash
 fwupdmgr get-devices

@@ -6,6 +6,12 @@
 //! not trusted unless an owner enrols them with a signed `db` update. `dbx`
 //! holds the AArch64 image hashes Microsoft revokes.
 //! `SetupMode` is 0 and the variables cannot be written.
+//!
+//! A `boot.img` the bootloader checked can carry the owner's own certificate,
+//! `owner-db.der` ([`crate::mailbox::owner_db`]). Then `db` holds that
+//! certificate alone, no write changes it, and the stored `db` writes and
+//! this firmware's `db` key are left out: the owner trusts what the owner's
+//! `boot.img` says and nothing the builder signed.
 
 use alloc::vec::Vec;
 use core::fmt::Display;
@@ -44,6 +50,11 @@ const OWNER: efi::Guid =
 const WIN_CERT_PKCS_SIGNED_DATA: u16 = 0x0002;
 const TIME_AUTH: u32 = efi::VARIABLE_TIME_BASED_AUTHENTICATED_WRITE_ACCESS;
 
+/// The owner of the `db` entry a `boot.img` names.
+const BOOT_IMAGE_OWNER: efi::Guid =
+    efi::Guid::from_fields(0x8c02c8e0, 0x33e6, 0x47b4, 0x94, 0x0f, &[0xc9, 0x77, 0xc9, 0x31, 0x72, 0xaf]);
+
+static OWNED: Global<bool> = Global::new(false);
 static TRUSTED: Global<Vec<Cert<'static>>> = Global::new(Vec::new());
 /// The owner of each entry in [`TRUSTED`], in the same order.
 static OWNERS: Global<Vec<[u8; 16]>> = Global::new(Vec::new());
@@ -60,6 +71,11 @@ fn signature_list(out: &mut Vec<u8>, owner: efi::Guid, ty: efi::Guid, size: usiz
         out.extend_from_slice(owner.as_bytes());
         out.extend_from_slice(e);
     }
+}
+
+/// Whether `db` is the owner's, from the `boot.img`.
+pub fn owned() -> bool {
+    *OWNED.get()
 }
 
 /// The platform key, which no write changes.
@@ -134,6 +150,28 @@ fn defaults() -> [Vec<u8>; 4] {
     [pk, kek, db, dbx]
 }
 
+/// The `db` the `boot.img` names, an `EFI_SIGNATURE_LIST` of the owner's
+/// certificate alone, or an empty one when it names a file that is no
+/// certificate this firmware reads. `None` when it names nothing.
+fn owner_db() -> Option<Vec<u8>> {
+    let der = match crate::mailbox::owner_db() {
+        crate::mailbox::OwnerDb::None => return None,
+        crate::mailbox::OwnerDb::Certificate(der) => der,
+        crate::mailbox::OwnerDb::Unusable => Vec::new(),
+    };
+    *OWNED.get() = true;
+    let mut db = Vec::new();
+    if der.is_empty() {
+        warn!("secboot", "owner-db.der is unusable, db is empty and no image runs");
+    } else if Cert::parse(&der).is_some_and(|c| c.whole.len() == der.len()) {
+        info!("secboot", "db is the owner's certificate from the boot.img"; bytes = der.len());
+        signature_list(&mut db, BOOT_IMAGE_OWNER, CERT_X509, der.len(), &[&der]);
+    } else {
+        warn!("secboot", "owner-db.der is not one RSA certificate, db is empty and no image runs"; bytes = der.len());
+    }
+    Some(db)
+}
+
 /// Publish the Secure Boot state and the keys as the variables an OS loader
 /// reads, with what the flash store holds on top of the built-in keys.
 pub fn init() {
@@ -145,7 +183,10 @@ pub fn init() {
     var::fixed("DeployedMode", var::GLOBAL, state, alloc::vec![1]);
     var::fixed("PK", var::GLOBAL, NV | BS | RT | TIME_AUTH, pk);
     var::seed("KEK", var::GLOBAL, NV | BS | RT | TIME_AUTH, kek);
-    var::seed("db", var::SECURITY_DB, NV | BS | RT | TIME_AUTH, db);
+    match owner_db() {
+        Some(owner) => var::fixed("db", var::SECURITY_DB, NV | BS | RT | TIME_AUTH, owner),
+        None => var::seed("db", var::SECURITY_DB, NV | BS | RT | TIME_AUTH, db),
+    }
     var::seed("dbx", var::SECURITY_DB, NV | BS | RT | TIME_AUTH, dbx);
     var::load_store();
     refresh();
@@ -156,7 +197,7 @@ pub fn init() {
         crate::tcg2::measure_variable(name, &guid, &var::bytes(name, &guid).unwrap_or_default());
     }
     crate::tcg2::measure_variable("SecureBoot", &var::GLOBAL, &[1]);
-    info!("secboot", "Secure Boot enforced"; db = TRUSTED.get().len(), dbx = REVOKED.get().len());
+    info!("secboot", "Secure Boot enforced"; db = TRUSTED.get().len(), dbx = REVOKED.get().len(), owner_db = owned());
 }
 
 /// Take the certificates and hashes `db` and `dbx` hold now.
@@ -294,11 +335,30 @@ pub fn check(image: &[u8], path: &dyn Display) -> Result<([u8; 32], Vec<u8>), &'
 /// this firmware's own `db` entries (not Microsoft's, whose CA signs for
 /// anyone) trust, with a content hash `dbx` does not revoke. The signer's name
 /// if so, the reason if not.
-pub fn verify_own(signature: &[u8], content: &[u8]) -> Result<alloc::string::String, &'static str> {
+///
+/// With the owner's `db` from the `boot.img`, the signer has to be a
+/// certificate itself and not one issued by it, which signs images and the
+/// like and not firmware; and a `release` capsule, whose bundle the update
+/// keys sign, is the builder's: it takes this firmware's own `db` key, which
+/// signs no image.
+pub fn verify_own(signature: &[u8], content: &[u8], release: bool) -> Result<alloc::string::String, &'static str> {
     if in_dbx(&crate::sha256::digest(content)) {
         return Err("content hash is in dbx");
     }
     let signed = pkcs7::signed_content(signature, content)?;
+    if owned() {
+        let builder: Vec<Cert<'static>> = if release {
+            [DB_OWN, TEST_DB].into_iter().filter(|der| !der.is_empty()).filter_map(Cert::parse).collect()
+        } else {
+            Vec::new()
+        };
+        let trusted: &[Cert<'static>] = if release { &builder } else { TRUSTED.get() };
+        let anchor = pkcs7::anchor(&signed, trusted).ok_or("not signed by the key that signs firmware")?;
+        if signed.chain[0].whole != anchor.whole {
+            return Err("signed by a certificate the key issued, which does not sign firmware");
+        }
+        return Ok(alloc::string::String::from(signed.chain[0].name()));
+    }
     let anchor = pkcs7::anchor(&signed, TRUSTED.get()).ok_or("not signed by a key in db")?;
     let at = TRUSTED.get().iter().position(|c| core::ptr::eq(c, anchor)).ok_or("not signed by a key in db")?;
     if OWNERS.get().get(at) == Some(MICROSOFT.as_bytes()) {

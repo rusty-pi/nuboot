@@ -12,7 +12,7 @@
 //! firmware does not know is left as it came, and the buffer is marked
 //! answered either way, which is what the stock firmware does.
 
-use crate::{arm, crypto, debug, error, expander, idle, info, keystore, measure, mmio, tpm2, varstore, vl805, wake, warn, watchdog};
+use crate::{arm, crypto, debug, error, expander, idle, info, keystore, measure, mmio, ramdisk, tpm2, varstore, vl805, wake, warn, watchdog};
 
 const VPU_VIEW: u32 = 0x7e00_b980;
 /// Mailbox 0, which the ARM reads.
@@ -91,6 +91,14 @@ const TAG_STORE_PERSIST: u32 = 0x0003_00a7;
 /// UEFI keeps: the index in, then the PCR, the event type, the digest, the
 /// length of the data and the data.
 const TAG_GET_EARLY_EVENT: u32 = 0x0003_00a4;
+
+/// The owner's `db` from the `boot.img` ([`ramdisk`]): a status word (0: none,
+/// the built-in `db` stays; 1: the certificate follows; 2: the file there
+/// could not be read, and nothing is trusted), its length, and its bytes.
+const TAG_GET_OWNER_DB: u32 = 0x0003_00a8;
+const OWNER_DB_NONE: u32 = 0;
+const OWNER_DB_PRESENT: u32 = 1;
+const OWNER_DB_INVALID: u32 = 2;
 
 /// Wait up to `timeout_us` for the ARM to post something, and answer all it
 /// has posted.
@@ -404,6 +412,22 @@ fn respond(bus: u32, runtime: bool) {
                     }
                     set(i + 2, RESPONSE | room);
                 }
+            }
+            TAG_GET_OWNER_DB if room >= 8 + ramdisk::MAX_OWNER_DB as u32 => {
+                let der = ramdisk::owner_db();
+                let status = match ramdisk::state() {
+                    ramdisk::OwnerDb::Present => OWNER_DB_PRESENT,
+                    ramdisk::OwnerDb::Invalid(_) => OWNER_DB_INVALID,
+                    _ => OWNER_DB_NONE,
+                };
+                set(value, status);
+                set(value + 1, der.len() as u32);
+                for (n, bytes) in der.chunks(4).enumerate() {
+                    let mut w = [0u8; 4];
+                    w[..bytes.len()].copy_from_slice(bytes);
+                    set(value + 2 + n as u32, u32::from_le_bytes(w));
+                }
+                set(i + 2, RESPONSE | room);
             }
             TAG_TPM2_COMMAND if room >= 10 => {
                 let header = [word(value), word(value + 1)];

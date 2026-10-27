@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "owner-db-capsule"
+description: "A board with signed boot, and a boot.img that holds owner-db.der. Of the firmware capsules on the card the UEFI firmware accepts the one the owner's certificate signed itself, and refuses the one a leaf of it signed and the one the builder's key signed."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  eeprom_pubkey: "../out/boot-test-pubkey.bin"
+  boot_order: "0x1"
+  bootconf:
+    - "SIGNED_BOOT=1"
+  sd:
+    files:
+      boot.img: "../out/boot-owner.img"
+      boot.sig: "../out/boot-owner.sig"
+      EFI/BOOT/BOOTAA64.EFI: "../out/hello-owner.efi"
+      EFI/UpdateCapsule/owner.cap: "../out/capsule-owner.cap"
+      EFI/UpdateCapsule/leaf.cap: "../out/capsule-owner-leaf.cap"
+      EFI/UpdateCapsule/builder.cap: "../out/capsule-new.cap"
+  until: "hello test: done"
+  wall_secs: 900
+
+milestones:
+  - why: "The owner's db is in force."
+    line: "db is the owner's certificate from the boot.img"
+  - why: "A capsule the owner's certificate signed itself passes."
+    line: "capsule verified  path=\\EFI\\UpdateCapsule\\owner.cap"
+  - why: "A leaf of the owner's CA signs images and not firmware."
+    line: "reason=\"signed by a certificate the key issued, which does not sign firmware\""
+  - why: "The builder's key is not the owner's, whatever it signed before."
+    line: "reason=\"not signed by the key that signs firmware\""
+  - why: "The application ran."
+    line: "hello test: done"

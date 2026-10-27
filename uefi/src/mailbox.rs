@@ -31,6 +31,9 @@ const SIGN_LOCKED: u32 = 1 << 10;
 const HMAC_LOCKED: u32 = 1 << 11;
 const TAG_TPM2_COMMAND: u32 = 0x0003_00a3;
 const TAG_GET_EARLY_EVENT: u32 = 0x0003_00a4;
+const TAG_GET_OWNER_DB: u32 = 0x0003_00a8;
+/// The largest `owner-db.der` (`src/ramdisk.rs`).
+const OWNER_DB_MAX: usize = 4096;
 /// The largest TPM command or response (`src/tpm2.rs`).
 const TPM_MAX: usize = 2048;
 
@@ -170,6 +173,59 @@ pub fn early_event(index: u32) -> Option<EarlyEvent> {
         data.push((word(11 + n / 4) >> (8 * (n % 4))) as u8);
     }
     Some(EarlyEvent { pcr: word(0), kind: word(1), digest, data })
+}
+
+#[repr(C, align(16))]
+struct OwnerDbBuffer(UnsafeCell<[u32; 6 + 2 + OWNER_DB_MAX / 4]>);
+
+unsafe impl Sync for OwnerDbBuffer {}
+
+static OWNER_DB_BUFFER: OwnerDbBuffer = OwnerDbBuffer(UnsafeCell::new([0; 6 + 2 + OWNER_DB_MAX / 4]));
+
+/// What the `boot.img` the bootloader checked says about the certificate that
+/// signs images.
+pub enum OwnerDb {
+    /// It says nothing: the built-in `db` stays.
+    None,
+    /// The DER certificate in its `owner-db.der`.
+    Certificate(alloc::vec::Vec<u8>),
+    /// It has an `owner-db.der` the VPU could not read, or the VPU did not
+    /// answer a firmware that asks.
+    Unusable,
+}
+
+/// Ask the VPU for the owner's `db`. A VPU that does not know the tag leaves
+/// the answer unmarked, which reads as none.
+pub fn owner_db() -> OwnerDb {
+    const WORDS: usize = 2 + OWNER_DB_MAX / 4;
+    let buf = OWNER_DB_BUFFER.0.get() as *mut u32;
+    unsafe {
+        write_volatile(buf, (4 * (6 + WORDS)) as u32);
+        write_volatile(buf.add(1), 0);
+        write_volatile(buf.add(2), TAG_GET_OWNER_DB);
+        write_volatile(buf.add(3), 4 * WORDS as u32);
+        write_volatile(buf.add(4), 0);
+        for i in 0..WORDS {
+            write_volatile(buf.add(5 + i), 0);
+        }
+        write_volatile(buf.add(5 + WORDS), 0);
+    }
+    if !post(buf as u64, 4 * (6 + WORDS), ANSWER_US) {
+        return OwnerDb::Unusable;
+    }
+    if unsafe { read_volatile(buf.add(4)) } & RESPONSE == 0 {
+        return OwnerDb::None;
+    }
+    let word = |i: usize| unsafe { read_volatile(buf.add(5 + i)) };
+    let length = word(1) as usize;
+    match word(0) {
+        1 if length <= OWNER_DB_MAX => {
+            let bytes = buf as *const u8;
+            OwnerDb::Certificate((0..length).map(|n| unsafe { read_volatile(bytes.add(28 + n)) }).collect())
+        }
+        0 => OwnerDb::None,
+        _ => OwnerDb::Unusable,
+    }
 }
 
 /// One tag of the firmware cryptography service, with `request` as the first

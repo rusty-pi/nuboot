@@ -152,7 +152,7 @@ fn check(file: &[u8]) -> Result<Capsule, (u32, &'static str)> {
     }
     let signature = body.get(24..length).ok_or(invalid("signature runs past the capsule"))?;
     let image = &body[length..];
-    secure::verify_own(signature, image).map_err(|why| (esrt::AUTH_ERROR, why))?;
+    secure::verify_own(signature, image, kind == Kind::Update).map_err(|why| (esrt::AUTH_ERROR, why))?;
     if image.get(..4) != Some(MAGIC) {
         return Err(invalid("image is not firmware"));
     }

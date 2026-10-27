@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "owner-db-invalid"
+description: "A boot.img whose owner-db.der is longer than 4096 bytes, and an application signed by the builder's test key: db is empty and nothing runs, where the built-in db would have run it."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  eeprom_pubkey: "../out/boot-test-pubkey.bin"
+  boot_order: "0x1"
+  bootconf:
+    - "SIGNED_BOOT=1"
+  sd:
+    files:
+      boot.img: "../out/boot-owner-oversize.img"
+      boot.sig: "../out/boot-owner-oversize.sig"
+      EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+  until: "nothing to boot"
+  wall_secs: 900
+
+milestones:
+  - why: "The bootloader verified boot.img and started start4.elf out of it."
+    line: "medium=ramdisk"
+  - why: "start4.elf found the file and could not use it."
+    line: "owner-db.der cannot be used"
+  - why: "The UEFI firmware left db empty."
+    line: "owner-db.der is unusable, db is empty"
+  - why: "No image is trusted."
+    line: "image refused  reason=\"not signed by a key in db\""
+  - why: "There is nothing else to boot."
+    line: "nothing to boot"

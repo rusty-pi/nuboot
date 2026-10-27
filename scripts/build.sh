@@ -50,7 +50,9 @@ toolchain/bin/vc4-elf-objcopy -O binary target/vc4-none-elf/release/start4-updat
 # The test build's extras: the tamper scenario's EEPROM image, a variable store
 # with damage in it, and start4-test.elf as the signed boot.img of a board with
 # signed boot, once with a key the EEPROM trusts (out/boot-test-pubkey.bin) and
-# once with one it does not.
+# once with one it does not; and with the owner's db in it (owner-db.der, the
+# CA scripts/build-uefi.sh --test-apps makes), and with a file in its place that
+# is no certificate and one that is too long.
 if [ -n "$suffix" ]; then
   mkdir -p out/test-keys
   for name in boot boot-stranger; do
@@ -69,4 +71,9 @@ if [ -n "$suffix" ]; then
   scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-stamped.bin --stamp 1790000001 --empty
   scripts/mkbootimg.py out/test-keys/boot.key out/start4-test.elf out --prefix boot-test --pubkey out/boot-test-pubkey.bin
   scripts/mkbootimg.py out/test-keys/boot-stranger.key out/start4-test.elf out --prefix boot-stranger
+  echo 'not a certificate' >out/test-keys/owner-junk.der
+  scripts/mkbootimg.py out/test-keys/boot.key out/start4-test.elf out --prefix boot-owner --add out/test-keys/owner.der:owner-db.der
+  scripts/mkbootimg.py out/test-keys/boot.key out/start4-test.elf out --prefix boot-owner-junk --add out/test-keys/owner-junk.der:owner-db.der
+  head -c 5000 /dev/zero >out/test-keys/owner-oversize.der
+  scripts/mkbootimg.py out/test-keys/boot.key out/start4-test.elf out --prefix boot-owner-oversize --add out/test-keys/owner-oversize.der:owner-db.der
 fi
