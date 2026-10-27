@@ -478,7 +478,11 @@ pub fn authorize(
                 return Err(session_error(RC_AUTH_FAIL, i));
             }
         }
-        a.used[i].keyed = true;
+        // A policy session whose key and authorization value are both empty,
+        // or that was asked for a password, has no response HMAC: the client
+        // takes a zero-length one for that and refuses any other.
+        let no_response_hmac = session.kind == KIND_POLICY && (session.password || (!session.auth_value && session.key_len == 0));
+        a.used[i].keyed = !no_response_hmac;
         a.used[i].key = key;
         a.used[i].key_len = key_len;
         a.used[i].nonce_caller[..s.nonce.len()].copy_from_slice(s.nonce);

@@ -191,6 +191,17 @@ fn extend(auth: u32, index: u32, authorization: &[u8], data: &[u8]) -> u32 {
     rc(&send(ST_SESSIONS, CC_NV_EXTEND, &[auth, index], authorization, &sized(data)))
 }
 
+/// The response HMAC of the one session a successful response carries.
+fn response_hmac(response: &[u8]) -> Vec<u8> {
+    assert_eq!(rc(response), 0);
+    let size = u32::from_be_bytes(response[10..14].try_into().unwrap()) as usize;
+    let mut at = 14 + size;
+    let nonce = u16::from_be_bytes(response[at..at + 2].try_into().unwrap()) as usize;
+    at += 2 + nonce + 1;
+    let hmac = u16::from_be_bytes(response[at..at + 2].try_into().unwrap()) as usize;
+    response[at + 2..at + 2 + hmac].to_vec()
+}
+
 fn handles_listed() -> Vec<u32> {
     let mut p = 1u32.to_be_bytes().to_vec();
     p.extend_from_slice(&0x0100_0000u32.to_be_bytes());
@@ -308,6 +319,37 @@ fn nv_indices_as_the_tools_use_them() {
     assert_eq!(policy_or(early, &[&init_policy, &written_policy]), 0);
     assert_eq!(extend(fresh, fresh, &policy_auth(early), &[3; 32]), RC_POLICY);
     assert_eq!(rc(&send(ST_NO_SESSIONS, CC_POLICY_RESTART, &[early], &[], &[])), 0);
+
+    // What the client checks of the response: a policy session with no key and
+    // no authorization value gets a zero-length HMAC, as does one that asked
+    // for a password, and a session that asked for the authorization value, or
+    // has a key, gets one.
+    let pwd = start_session(1);
+    assert_eq!(rc(&send(ST_NO_SESSIONS, 0x18c, &[pwd], &[], &[])), 0, "PolicyPassword");
+    let password_policy = digest(pwd);
+    let pindex = 0x01d1_0310;
+    assert_eq!(define(RH_OWNER, pindex, POLICYWRITE | AUTHREAD | NT_EXTEND, &password_policy, 32, b"secret"), 0);
+    let mut auth = pwd.to_be_bytes().to_vec();
+    auth.extend(sized(&[1; 16]));
+    auth.push(1);
+    auth.extend(sized(b"secret"));
+    let response = send(ST_SESSIONS, CC_NV_EXTEND, &[pindex, pindex], &auth, &sized(b"x"));
+    assert_eq!(response_hmac(&response), Vec::<u8>::new(), "a PolicyPassword session has no response HMAC");
+
+    let unkeyed = start_session(1);
+    assert_eq!(policy_command_code(unkeyed, CC_NV_EXTEND), 0);
+    assert_eq!(policy_or(unkeyed, &[&init_policy, &written_policy]), 0);
+    let hindex = 0x01d1_0311;
+    assert_eq!(define(RH_OWNER, hindex, CLEAR_STCLEAR | POLICYWRITE | OWNERREAD | AUTHREAD | NT_EXTEND, &write_policy, 32, &[]), 0);
+    let mut auth = unkeyed.to_be_bytes().to_vec();
+    auth.extend(sized(&[1; 16]));
+    auth.push(1);
+    auth.extend(sized(&[]));
+    let response = send(ST_SESSIONS, CC_NV_EXTEND, &[hindex, hindex], &auth, &sized(&[9; 32]));
+    assert_eq!(response_hmac(&response), Vec::<u8>::new(), "an unkeyed policy session has no response HMAC");
+    for index in [pindex, hindex] {
+        assert_eq!(rc(&send(ST_SESSIONS, CC_NV_UNDEFINE_SPACE, &[RH_OWNER, index], &password(&[]), &[])), 0);
+    }
 
     // Undefine them all, and the table is not full.
     for index in [ext, counter, bits, plain, nvpcr, fresh] {
