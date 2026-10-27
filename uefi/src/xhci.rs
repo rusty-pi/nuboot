@@ -174,6 +174,8 @@ pub struct Device {
     output: u64,
     ep0: Ring,
     rings: [Option<Ring>; 32],
+    /// Stream 1 of an endpoint set up with streams.
+    stream_rings: [Option<Ring>; 32],
 }
 
 pub struct Xhci {
@@ -190,6 +192,9 @@ pub struct Xhci {
     pub control_buf: u64,
     pub devices: Vec<Box<Device>>,
     started_at: u64,
+    /// HCCPARAMS1: bits 15:12 are the largest primary stream array, as a
+    /// power of two less one; 0 means no streams.
+    hcc1: u32,
 }
 
 const EVENT_TRBS: usize = 256;
@@ -312,6 +317,7 @@ impl Xhci {
             control_buf,
             devices: Vec::new(),
             started_at: counter_us(),
+            hcc1: read32(base + 0x10),
         };
         for port in 1..=max_ports {
             let sc = xhci.portsc(port);
@@ -397,6 +403,11 @@ impl Xhci {
         }
     }
 
+    /// Reset endpoint `dci` of `slot` and move its ring past what was queued.
+    pub fn reset_endpoint(&mut self, slot: u32, dci: u32) {
+        self.recover(slot, dci);
+    }
+
     /// Bring a halted endpoint back: reset it, and point it past the TD that
     /// stalled.
     fn recover(&mut self, slot: u32, dci: u32) {
@@ -444,14 +455,11 @@ impl Xhci {
         Ok(self.control_data((len as usize).min(CONTROL_BUF as usize)).to_vec())
     }
 
-    /// A bulk transfer of `len` bytes at DMA address `buf` on endpoint `dci`;
-    /// the bytes not transferred.
-    pub fn bulk(&mut self, slot: u32, dci: u32, buf: u64, len: usize, max_packet: u32) -> Result<u32, Error> {
-        let input = dci & 1 == 1;
-        let ring = self.device(slot).rings[dci as usize].as_mut().unwrap();
+    /// Put a TD of `len` bytes at DMA address `buf` on `ring`, as TRBs that do
+    /// not cross a 64 KiB boundary; where its last TRB went.
+    fn queue_td(ring: &mut Ring, buf: u64, len: usize, max_packet: u32, input: bool) -> u64 {
         let mut at = 0usize;
-        let last = loop {
-            // A TRB must not cross a 64 KiB boundary.
+        loop {
             let addr = buf + at as u64;
             let n = ((0x1_0000 - (addr & 0xffff)) as usize).min(len - at);
             let end = at + n == len;
@@ -464,11 +472,59 @@ impl Xhci {
             ]);
             at += n;
             if end {
-                break trb;
+                return trb;
             }
-        };
+        }
+    }
+
+    /// A bulk transfer of `len` bytes at DMA address `buf` on endpoint `dci`;
+    /// the bytes not transferred.
+    pub fn bulk(&mut self, slot: u32, dci: u32, buf: u64, len: usize, max_packet: u32, timeout_us: u64) -> Result<u32, Error> {
+        let last = self.queue(slot, dci, buf, len, max_packet);
         self.ring_doorbell(slot, dci);
-        self.transfer_done(slot, dci, last, 5_000_000)
+        self.transfer_done(slot, dci, last, timeout_us)
+    }
+
+    /// Queue a TD on endpoint `dci`'s ring without ringing the doorbell; where
+    /// its last TRB is. The direction is the endpoint's.
+    pub fn queue(&mut self, slot: u32, dci: u32, buf: u64, len: usize, max_packet: u32) -> u64 {
+        let ring = self.device(slot).rings[dci as usize].as_mut().unwrap();
+        Self::queue_td(ring, buf, len, max_packet, dci & 1 == 1)
+    }
+
+    /// The same on stream 1 of an endpoint set up with streams.
+    pub fn queue_stream(&mut self, slot: u32, dci: u32, buf: u64, len: usize, max_packet: u32) -> u64 {
+        let ring = self.device(slot).stream_rings[dci as usize].as_mut().unwrap();
+        Self::queue_td(ring, buf, len, max_packet, dci & 1 == 1)
+    }
+
+    /// Ring endpoint `dci`'s doorbell, for stream `stream` (0: no streams).
+    pub fn doorbell(&self, slot: u32, dci: u32, stream: u32) {
+        self.ring_doorbell(slot, dci | stream << 16);
+    }
+
+    /// Whether the controller does streams.
+    pub fn streams_supported(&self) -> bool {
+        (self.hcc1 >> 12) & 0xf >= 1
+    }
+
+    /// The next transfer event of `slot`, whichever endpoint and TD: its TRB
+    /// pointer, completion code and untransferred bytes.
+    pub fn wait_transfer(&mut self, slot: u32, timeout_us: u64) -> Result<(u64, u32, u32), Error> {
+        let e = self.wait_event(timeout_us, |e| (e[3] >> 10) & 0x3f == EVENT_TRANSFER && e[3] >> 24 == slot)?;
+        Ok((e[0] as u64 | (e[1] as u64) << 32, e[2] >> 24, e[2] & 0xff_ffff))
+    }
+
+    /// SET_INTERFACE.
+    pub fn set_interface(&mut self, slot: u32, interface: u8, alternate: u8) -> Result<(), Error> {
+        self.control(slot, 0x01, 11, alternate as u16, interface as u16, 0)
+    }
+
+    /// Reset a stream endpoint and point stream 1 past what was queued.
+    pub fn reset_stream_endpoint(&mut self, slot: u32, dci: u32) {
+        let _ = self.command([0, 0, 0, TRB_RESET_ENDPOINT << 10 | dci << 16 | slot << 24]);
+        let deq = self.device(slot).stream_rings[dci as usize].as_ref().unwrap().enqueue_pointer() | 1 << 1;
+        let _ = self.command([deq as u32, (deq >> 32) as u32, 1 << 16, TRB_SET_TR_DEQUEUE << 10 | dci << 16 | slot << 24]);
     }
 
     /// Give a device an address, and endpoint 0 the packet size it says.
@@ -501,6 +557,7 @@ impl Xhci {
             output,
             ep0,
             rings: [const { None }; 32],
+            stream_rings: [const { None }; 32],
         }));
         self.command([input as u32, (input >> 32) as u32, 0, TRB_ADDRESS_DEVICE << 10 | slot << 24])?;
         // Some hubs fail a request sent sooner than 10 ms after SET_ADDRESS.
@@ -517,7 +574,7 @@ impl Xhci {
 
     /// Add endpoints to a configured device: (address, attributes, max
     /// packet size, interval) each.
-    pub fn configure_endpoints(&mut self, slot: u32, eps: &[(u8, u8, u16, u8)]) -> Result<(), Error> {
+    pub fn configure_endpoints(&mut self, slot: u32, eps: &[Endpoint], with_streams: bool) -> Result<(), Error> {
         let (input, output, speed) = {
             let d = self.device(slot);
             (d.input, d.output, d.speed)
@@ -531,7 +588,7 @@ impl Xhci {
         w(0x2c, 0);
         let mut add = 1u32;
         let mut last = 1;
-        for &(addr, attrs, mps, interval) in eps {
+        for &Endpoint { address: addr, attributes: attrs, max_packet: mps, interval, burst, .. } in eps {
             let dci = 2 * (addr & 0xf) as u32 + (addr >> 7) as u32;
             if dci < 2 || mps & 0x7ff == 0 {
                 return Err(Error::Completion(0));
@@ -544,12 +601,30 @@ impl Xhci {
                 (3, _) => 3 + (interval as u32).max(1).ilog2(),
                 _ => 0,
             };
-            w(ctx, interval << 16);
-            w(ctx + 4, 3 << 1 | ty << 3 | (mps as u32 & 0x7ff) << 16);
-            w(ctx + 8, ring.base as u32 | 1);
-            w(ctx + 12, (ring.base >> 32) as u32);
-            w(ctx + 16, if attrs & 3 == 3 { 8 } else { 1024 });
-            self.device(slot).rings[dci as usize] = Some(ring);
+            // Streams: four of them, whose context array the endpoint points
+            // at, and stream 1 has the ring. The device's other streams are
+            // disabled contexts.
+            let streamed = with_streams && attrs & 3 == 2 && eps.iter().any(|e| e.address == addr && e.streams >= 2);
+            if streamed {
+                let array = dma::alloc(4 * 16, 64).ok_or(Error::NoMemory)?;
+                unsafe {
+                    ((array + 16) as *mut u32).write_volatile(ring.base as u32 | 1 << 1 | 1);
+                    ((array + 20) as *mut u32).write_volatile((ring.base >> 32) as u32);
+                }
+                w(ctx, interval << 16 | 1 << 10);
+                w(ctx + 4, 3 << 1 | ty << 3 | (burst as u32 & 0xf) << 8 | (mps as u32 & 0x7ff) << 16);
+                w(ctx + 8, array as u32);
+                w(ctx + 12, (array >> 32) as u32);
+                w(ctx + 16, 1024);
+                self.device(slot).stream_rings[dci as usize] = Some(ring);
+            } else {
+                w(ctx, interval << 16);
+                w(ctx + 4, 3 << 1 | ty << 3 | (burst as u32 & 0xf) << 8 | (mps as u32 & 0x7ff) << 16);
+                w(ctx + 8, ring.base as u32 | 1);
+                w(ctx + 12, (ring.base >> 32) as u32);
+                w(ctx + 16, if attrs & 3 == 3 { 8 } else { 1024 });
+                self.device(slot).rings[dci as usize] = Some(ring);
+            }
             add |= 1 << dci;
             last = last.max(dci);
         }
@@ -589,9 +664,24 @@ pub struct Config {
 }
 
 pub struct Interface {
+    pub number: u8,
+    pub alternate: u8,
     pub class: (u8, u8, u8),
-    /// (address, attributes, max packet size, interval)
-    pub endpoints: Vec<(u8, u8, u16, u8)>,
+    pub endpoints: Vec<Endpoint>,
+}
+
+/// An endpoint descriptor, with what follows it: the SuperSpeed companion's
+/// burst size and stream count (as a power of two), and a UAS pipe usage
+/// descriptor's pipe ID.
+#[derive(Clone, Copy)]
+pub struct Endpoint {
+    pub address: u8,
+    pub attributes: u8,
+    pub max_packet: u16,
+    pub interval: u8,
+    pub burst: u8,
+    pub streams: u8,
+    pub pipe: u8,
 }
 
 fn parse_config(c: &[u8]) -> Config {
@@ -604,10 +694,21 @@ fn parse_config(c: &[u8]) -> Config {
         }
         let d = &c[at..at + len];
         match d[1] {
-            4 if len >= 9 => config.interfaces.push(Interface { class: (d[5], d[6], d[7]), endpoints: Vec::new() }),
+            4 if len >= 9 => config.interfaces.push(Interface { number: d[2], alternate: d[3], class: (d[5], d[6], d[7]), endpoints: Vec::new() }),
             5 if len >= 7 => {
                 if let Some(i) = config.interfaces.last_mut() {
-                    i.endpoints.push((d[2], d[3], u16::from_le_bytes([d[4], d[5]]), d[6]));
+                    i.endpoints.push(Endpoint { address: d[2], attributes: d[3], max_packet: u16::from_le_bytes([d[4], d[5]]), interval: d[6], burst: 0, streams: 0, pipe: 0 });
+                }
+            }
+            0x30 if len >= 4 => {
+                if let Some(ep) = config.interfaces.last_mut().and_then(|i| i.endpoints.last_mut()) {
+                    ep.burst = d[2];
+                    ep.streams = d[3] & 0x1f;
+                }
+            }
+            0x24 if len >= 3 => {
+                if let Some(ep) = config.interfaces.last_mut().and_then(|i| i.endpoints.last_mut()) {
+                    ep.pipe = d[2];
                 }
             }
             _ => {}
@@ -615,6 +716,19 @@ fn parse_config(c: &[u8]) -> Config {
         at += len;
     }
     config
+}
+
+/// The UAS alternate setting of a drive, when it has all four pipes with
+/// streams on the ones that need them, and is SuperSpeed.
+fn uas_interface(config: &Config, speed: u32) -> Option<usize> {
+    if speed != SPEED_SUPER {
+        return None;
+    }
+    config.interfaces.iter().position(|i| {
+        i.class == (8, 6, 0x62)
+            && (1..=4).all(|id| i.endpoints.iter().any(|e| e.pipe == id))
+            && i.endpoints.iter().filter(|e| (2..=4).contains(&e.pipe)).all(|e| e.streams >= 2)
+    })
 }
 
 fn speed_name(speed: u32) -> &'static str {
@@ -661,6 +775,10 @@ fn enumerate(root_port: u32, route: u32, depth: u32, speed: u32, tt: (u32, u32),
     let (vendor, product) = (u16::from_le_bytes([dev[8], dev[9]]), u16::from_le_bytes([dev[10], dev[11]]));
     let is_hub = dev[4] == 9 || config.interfaces.first().is_some_and(|i| i.class.0 == 9);
     let storage = config.interfaces.iter().position(|i| i.class == (8, 6, 0x50));
+    for (n, i) in config.interfaces.iter().enumerate() {
+        debug!("usb", "interface"; slot = slot, index = n, number = i.number, alternate = i.alternate, class = Hex(i.class.0),
+            subclass = Hex(i.class.1), protocol = Hex(i.class.2), endpoints = i.endpoints.len());
+    }
     debug!("usb", "device found"; slot = slot, speed = speed_name(speed), vendor = Hex(vendor), product = Hex(product),
         class = Hex(dev[4]));
     if x.control(slot, 0, 9, config.value as u16, 0, 0).is_err() {
@@ -673,6 +791,20 @@ fn enumerate(root_port: u32, route: u32, depth: u32, speed: u32, tt: (u32, u32),
             return;
         }
         hub(slot, root_port, route, depth, speed, tt, path, dev[6] == 2);
+    } else if let Some(i) = uas_interface(&config, speed).filter(|_| crate::usbdisk::USE_UAS && x.streams_supported()) {
+        let (number, alternate) = (config.interfaces[i].number, config.interfaces[i].alternate);
+        match x.set_interface(slot, number, alternate) {
+            Ok(()) => {
+                info!("usb", "drive driven through UAS"; slot = slot, vendor = Hex(vendor), product = Hex(product));
+                let eps = config.interfaces.swap_remove(i).endpoints;
+                crate::usbdisk::attach_uas(slot, number, &eps, path, vendor, product);
+            }
+            Err(e) => {
+                warn!("usb", "UAS interface not selected, using bulk-only"; slot = slot, error = crate::log::dbg(&e));
+                let eps = config.interfaces.swap_remove(storage.unwrap_or(i)).endpoints;
+                crate::usbdisk::attach(slot, storage.unwrap_or(i) as u8, &eps, path, vendor, product);
+            }
+        }
     } else if let Some(i) = storage {
         let eps = config.interfaces.swap_remove(i).endpoints;
         crate::usbdisk::attach(slot, i as u8, &eps, path, vendor, product);
