@@ -78,6 +78,7 @@ const RC_TICKET: u32 = 0x0a0;
 const RC_POLICY_CC: u32 = 0x0a4;
 const RC_CURVE: u32 = 0x0a6;
 const RC_ECC_POINT: u32 = 0x0a7;
+const RC_REFERENCE_H0: u32 = 0x910;
 const RC_OBJECT_MEMORY: u32 = 0x902;
 const RC_SESSION_MEMORY: u32 = 0x903;
 const RC_AUTH_TYPE: u32 = 0x124;

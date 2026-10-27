@@ -8,7 +8,7 @@
 
 use super::object::{self, Origin, SLOTS, TRANSIENT_FIRST};
 use super::session::{self, SESSION_SLOTS};
-use super::{In, RC_COMMAND_SIZE, RC_HANDLE, RC_INTEGRITY, RC_OBJECT_MEMORY, RC_P, RC_RANGE, RC_SESSION_MEMORY, RC_SIZE, RC_1};
+use super::{In, RC_COMMAND_SIZE, RC_HANDLE, RC_INTEGRITY, RC_REFERENCE_H0, RC_OBJECT_MEMORY, RC_P, RC_RANGE, RC_SESSION_MEMORY, RC_SIZE, RC_1};
 use super::session::Authorization;
 use crate::{aes, kdf, keystore, sha256};
 
@@ -115,7 +115,10 @@ fn read_session(input: &mut In, s: &mut session::Session) -> Option<()> {
     (input.rest() == 0 && s.key_len <= 32 && s.nonce_caller_len <= 32 && s.bind_len <= 34).then_some(())
 }
 
-/// `TPM2_ContextSave`.
+/// `TPM2_ContextSave`. A session or transient object that is not loaded
+/// (a session a command ended with `continueSession` clear is gone) is
+/// `TPM_RC_REFERENCE_H0`, which is what the kernel's resource manager reads as
+/// the TPM having forgotten it; any other error from a save is fatal to it.
 pub fn save(handle: u32, params: &In, a: &mut Authorization) -> Result<(), u32> {
     if params.rest() != 0 {
         return Err(RC_COMMAND_SIZE);
@@ -129,6 +132,8 @@ pub fn save(handle: u32, params: &In, a: &mut Authorization) -> Result<(), u32> 
     } else if let Some(s) = session::session_of(handle) {
         write_session(s, &mut w);
         hierarchy = object::RH_NULL;
+    } else if handle >> 24 == 0x02 || handle >> 24 == 0x03 || handle >> 24 == 0x80 {
+        return Err(RC_REFERENCE_H0);
     } else {
         return Err(RC_HANDLE | RC_1);
     }
