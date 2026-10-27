@@ -1,5 +1,9 @@
 # nuboot
 
+![bootctl on a Raspberry Pi 4 booted by nuboot: UEFI 2.70 (nuboot), Secure Boot enabled, TPM2 support, measured UKI and OS](docs/img/bootctl.png)
+
+_`bootctl` on a Pi 4 running Debian, started by nuboot: UEFI, Secure Boot and the TPM, with no config file._
+
 nuboot is Raspberry Pi 4 firmware for headless servers, written in Rust: its own VPU
 firmware (`start4.elf`) in place of Raspberry Pi's, started by Raspberry Pi's
 EEPROM bootloader as it ships, built around a small
