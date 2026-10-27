@@ -93,6 +93,7 @@ fn write_session(s: &session::Session, w: &mut Writer) {
     w.u8(s.password as u8);
     w.u8(s.auth_value as u8);
     w.u32(s.command_code);
+    w.u8(s.nv_written);
     w.u8(s.bind_len as u8);
     w.put(&s.bind_name);
 }
@@ -110,6 +111,7 @@ fn read_session(input: &mut In, s: &mut session::Session) -> Option<()> {
     s.password = input.u8()? != 0;
     s.auth_value = input.u8()? != 0;
     s.command_code = input.u32()?;
+    s.nv_written = input.u8()?;
     s.bind_len = input.u8()? as usize;
     s.bind_name.copy_from_slice(input.take(34)?);
     (input.rest() == 0 && s.key_len <= 32 && s.nonce_caller_len <= 32 && s.bind_len <= 34).then_some(())

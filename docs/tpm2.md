@@ -71,10 +71,11 @@ One bank, SHA-256, of 24 PCRs. Every PCR can be extended from locality 0 but
 | `TPM2_ContextSave`, `ContextLoad`, `FlushContext` | objects and sessions |
 | `TPM2_EvictControl` | a primary key made persistent at a handle in the owner's or the platform's range, two at most, and removed again; they last until the TPM restarts, and a tool that finds none makes the primary again |
 | `TPM2_StartAuthSession` | HMAC, policy and trial sessions, unsalted or salted to a primary key with ECDH, bound to nothing or to an object, with AES-128-CFB for parameter encryption or none |
-| `TPM2_PolicyPCR`, `PolicyOR`, `PolicyAuthValue`, `PolicyPassword`, `PolicySecret`, `PolicyAuthorize`, `PolicyCommandCode`, `PolicyGetDigest`, `PolicyRestart` | |
+| `TPM2_NV_DefineSpace`, `NV_UndefineSpace`, `NV_ReadPublic`, `NV_Read`, `NV_Write`, `NV_Extend`, `NV_Increment`, `NV_SetBits` | ordinary, counter, bit field and extend indices under the owner's or the platform's authorization, with the index's own authorization value or policy as its attributes say; eight indices of up to 256 bytes, in RAM ([below](#nv-indices)) |
+| `TPM2_PolicyPCR`, `PolicyOR`, `PolicyAuthValue`, `PolicyPassword`, `PolicySecret`, `PolicyAuthorize`, `PolicyCommandCode`, `PolicyNvWritten`, `PolicyGetDigest`, `PolicyRestart` | |
 
 Anything else gets `TPM_RC_COMMAND_CODE`. There are no RSA keys of the TPM's own
-(an RSA public key can be loaded to verify with), no NV storage, no persistent handles (`EvictControl`) and no
+(an RSA public key can be loaded to verify with) and no
 `HierarchyChangeAuth`: the hierarchies' authorization values are empty.
 
 An endorsement key (`tpm2_createek`, the TCG template with a `PolicySecret` on
@@ -88,6 +89,26 @@ A policy that a key authorizes works as `systemd-measure` and
 names an RSA-2048 key, and the unsealing session proves a PCR policy that the
 key signed (`VerifySignature` on the loaded public key, then `PolicyAuthorize`
 with its ticket).
+
+## NV indices
+
+An index is defined with `TPM2_NV_DefineSpace` by the owner or the platform
+(`TPMA_NV_PLATFORMCREATE` says which), is `TPMA_NV_WRITTEN` once it has been
+written, and is read, written, extended, incremented or set bit by bit with the
+authorization its attributes name: the index's own authorization value
+(`AUTHWRITE`, `AUTHREAD`), its policy (`POLICYWRITE`, `POLICYREAD`, which
+`TPM2_PolicyNvWritten` can be part of), or the hierarchy's (`OWNERWRITE`,
+`OWNERREAD`, `PPWRITE`, `PPREAD`). The name of an index covers its attributes,
+`TPMA_NV_WRITTEN` included, so it changes with the first write.
+
+The indices are in RAM, as the PCRs are: a restart of the TPM leaves none, and
+a tool that finds one missing defines it again. Locks (`WRITELOCKED`,
+`READLOCKED`, `WRITEDEFINE`, `GLOBALLOCK` and the `*_STCLEAR` ones), the PIN
+types and `POLICY_DELETE` are not offered, and a definition that asks for one
+fails with `TPM_RC_ATTRIBUTES`. Eight indices fit, each of at most 256 bytes
+(8 for a counter or bit field, 32 for an extend index); `TPM2_GetCapability`
+lists them under `0x01000000` and the TPM properties say how many there are and
+how large.
 
 ## Keys
 
