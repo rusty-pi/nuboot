@@ -383,7 +383,10 @@ pub fn execute(command: &[u8], response: &mut [u8]) -> usize {
             response[6..10].copy_from_slice(&RC_SUCCESS.to_be_bytes());
             len
         }
-        Err(rc) => fail(response, rc),
+        Err(rc) => {
+            crate::warn!("tpm2", "command failed"; code = format_args!("{:#x}", code), rc = format_args!("{:#x}", rc));
+            fail(response, rc)
+        }
     }
 }
 
@@ -413,7 +416,10 @@ fn object_command(spec: &Spec, tag: u16, input: &mut In, response: &mut [u8]) ->
     crate::debug!("tpm2", "object command done"; code = format_args!("{:#x}", spec.code), us = stc::now() - started);
     match result {
         Ok(len) => len,
-        Err(rc) => fail(response, rc),
+        Err(rc) => {
+            crate::warn!("tpm2", "command failed"; code = format_args!("{:#x}", spec.code), rc = format_args!("{:#x}", rc));
+            fail(response, rc)
+        }
     }
 }
 
