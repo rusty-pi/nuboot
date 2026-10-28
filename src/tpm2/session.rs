@@ -51,6 +51,8 @@ pub struct Session {
     pub sym_alg: u16,
     pub digest: [u8; 32],
     pub pcr_counter: u32,
+    /// The registers `TPM2_PolicyPCR` named, which `pcr_counter` counts the changes of.
+    pub pcr_mask: u32,
     pub password: bool,
     pub auth_value: bool,
     pub command_code: u32,
@@ -74,6 +76,7 @@ const EMPTY: Session = Session {
     sym_alg: ALG_NULL,
     digest: [0; 32],
     pcr_counter: 0,
+    pcr_mask: 0,
     password: false,
     auth_value: false,
     command_code: 0,
@@ -431,7 +434,7 @@ pub fn authorize(
                     if !constant_eq(&e.policy, &session.digest) {
                         return Err(session_error(RC_POLICY_FAIL, i));
                     }
-                    if session.pcr_counter != 0 && session.pcr_counter != keystore::count() {
+                    if session.pcr_mask != 0 && session.pcr_counter != keystore::changes(session.pcr_mask) {
                         return Err(session_error(RC_PCR_CHANGED, i));
                     }
                     if session.command_code != 0 && session.command_code != code {
@@ -860,7 +863,8 @@ pub fn policy(code: u32, handle: u32, params: &mut In, a: &mut Authorization) ->
             update.update(selection);
             update.update(&digest);
             session.digest = update.finish();
-            session.pcr_counter = if trial { 0 } else { keystore::count() };
+            session.pcr_mask = if trial { 0 } else { mask };
+            session.pcr_counter = keystore::changes(session.pcr_mask);
         }
         CC_POLICY_GET_DIGEST => {
             if params.rest() != 0 {
@@ -874,6 +878,7 @@ pub fn policy(code: u32, handle: u32, params: &mut In, a: &mut Authorization) ->
         CC_POLICY_RESTART => {
             session.digest = [0; 32];
             session.pcr_counter = 0;
+            session.pcr_mask = 0;
             session.password = false;
             session.auth_value = false;
             session.command_code = 0;

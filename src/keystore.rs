@@ -30,6 +30,7 @@ const DRTM_PCRS: core::ops::RangeInclusive<usize> = 17..=22;
 
 static mut PCR: [[u8; 32]; PCRS] = [[0; 32]; PCRS];
 static mut COUNT: u32 = 0;
+static mut CHANGES: [u32; PCRS] = [0; PCRS];
 static mut BOOT_SECRET: [u8; 32] = [0; 32];
 static mut BOOT_SECRET_SET: bool = false;
 
@@ -47,6 +48,7 @@ pub fn extend(pcr: usize, digest: &[u8; 32]) -> Result<u32, Refused> {
     data[..32].copy_from_slice(register);
     data[32..].copy_from_slice(digest);
     *register = sha256::digest(&data);
+    unsafe { (*(&raw mut CHANGES))[pcr] += 1 };
     let count = unsafe { read_volatile(&raw const COUNT) } + 1;
     unsafe { write_volatile(&raw mut COUNT, count) };
     Ok(count)
@@ -63,6 +65,7 @@ pub fn reset(pcr: usize) -> Result<u32, Refused> {
         return Err(Refused::NoSuchRegister);
     }
     unsafe { (*(&raw mut PCR))[pcr] = [0; 32] };
+    unsafe { (*(&raw mut CHANGES))[pcr] += 1 };
     let count = unsafe { read_volatile(&raw const COUNT) } + 1;
     unsafe { write_volatile(&raw mut COUNT, count) };
     Ok(count)
@@ -71,6 +74,13 @@ pub fn reset(pcr: usize) -> Result<u32, Refused> {
 /// How many times the registers have changed: the TPM's `pcrUpdateCounter`.
 pub fn count() -> u32 {
     unsafe { read_volatile(&raw const COUNT) }
+}
+
+/// How many times the registers in `mask` have changed. It differs between
+/// two moments exactly when one of them changed, which is what a policy that
+/// named them needs to know.
+pub fn changes(mask: u32) -> u32 {
+    (0..PCRS).filter(|i| mask >> i & 1 != 0).fold(0, |sum, i| sum.wrapping_add(unsafe { (*(&raw const CHANGES))[i] }))
 }
 
 /// A secret of the TPM called `label`: with `stable`, the same at every boot on

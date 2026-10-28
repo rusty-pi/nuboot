@@ -94,6 +94,7 @@ fn write_session(s: &session::Session, w: &mut Writer) {
     w.u16(s.sym_alg);
     w.put(&s.digest);
     w.u32(s.pcr_counter);
+    w.u32(s.pcr_mask);
     w.u8(s.password as u8);
     w.u8(s.auth_value as u8);
     w.u32(s.command_code);
@@ -112,6 +113,7 @@ fn read_session(input: &mut In, s: &mut session::Session) -> Option<()> {
     s.sym_alg = input.u16()?;
     s.digest.copy_from_slice(input.take(32)?);
     s.pcr_counter = input.u32()?;
+    s.pcr_mask = input.u32()?;
     s.password = input.u8()? != 0;
     s.auth_value = input.u8()? != 0;
     s.command_code = input.u32()?;

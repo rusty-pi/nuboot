@@ -26,6 +26,8 @@ const CC_POLICY_NV_WRITTEN: u32 = 0x18f;
 const CC_POLICY_GET_DIGEST: u32 = 0x189;
 const CC_POLICY_RESTART: u32 = 0x180;
 const CC_GET_CAPABILITY: u32 = 0x17a;
+const CC_POLICY_PCR: u32 = 0x17f;
+const CC_PCR_EXTEND: u32 = 0x182;
 const CC_CONTEXT_SAVE: u32 = 0x162;
 const CC_CONTEXT_LOAD: u32 = 0x161;
 
@@ -215,6 +217,7 @@ fn handles_listed() -> Vec<u32> {
 
 #[test]
 fn nv_indices_as_the_tools_use_them() {
+    a_policy_on_pcrs_fails_only_when_those_change();
     assert!(handles_listed().is_empty());
 
     // An extend index with its own authorization value.
@@ -360,4 +363,51 @@ fn nv_indices_as_the_tools_use_them() {
         assert_eq!(define(RH_OWNER, 0x0150_0100 + i, AUTHWRITE | AUTHREAD | NT_EXTEND, &[], 32, &[]), 0);
     }
     assert_eq!(define(RH_OWNER, 0x0150_0200, AUTHWRITE | AUTHREAD | NT_EXTEND, &[], 32, &[]), RC_NV_SPACE);
+}
+
+fn policy_pcr(session: u32, pcr: u8) -> u32 {
+    let mut selection = vec![0u8; 3];
+    selection[pcr as usize / 8] = 1 << (pcr % 8);
+    let mut p = sized(&[]);
+    p.extend_from_slice(&1u32.to_be_bytes());
+    p.extend_from_slice(&0x000bu16.to_be_bytes());
+    p.push(3);
+    p.extend(selection);
+    rc(&send(ST_NO_SESSIONS, CC_POLICY_PCR, &[session], &[], &p))
+}
+
+fn pcr_extend(pcr: u32) {
+    let mut p = 1u32.to_be_bytes().to_vec();
+    p.extend_from_slice(&0x000bu16.to_be_bytes());
+    p.extend_from_slice(&[pcr as u8; 32]);
+    assert_eq!(rc(&send(ST_SESSIONS, CC_PCR_EXTEND, &[pcr], &password(&[]), &p)), 0);
+}
+
+fn a_policy_on_pcrs_fails_only_when_those_change() {
+    let trial = start_session(3);
+    assert_eq!(policy_pcr(trial, 11), 0);
+    let policy = digest(trial);
+    let index = 0x01d1_0320;
+    assert_eq!(define(RH_OWNER, index, POLICYWRITE | AUTHREAD | NT_EXTEND, &policy, 32, &[]), 0);
+    let use_session = |session: u32| {
+        let mut auth = session.to_be_bytes().to_vec();
+        auth.extend(sized(&[1; 16]));
+        auth.push(1);
+        auth.extend(sized(&[]));
+        rc(&send(ST_SESSIONS, CC_NV_EXTEND, &[index, index], &auth, &sized(&[1; 32])))
+    };
+
+    let other = start_session(1);
+    assert_eq!(policy_pcr(other, 11), 0);
+    pcr_extend(12);
+    assert_eq!(use_session(other), 0, "another register changed");
+
+    let same = start_session(1);
+    assert_eq!(policy_pcr(same, 11), 0);
+    pcr_extend(11);
+    assert_eq!(use_session(same), 0x928, "the named register changed");
+    assert_eq!(rc(&send(ST_SESSIONS, CC_NV_UNDEFINE_SPACE, &[RH_OWNER, index], &password(&[]), &[])), 0);
+    for session in [trial, other, same] {
+        assert_eq!(rc(&send(ST_NO_SESSIONS, 0x165, &[session], &[], &[])), 0);
+    }
 }
