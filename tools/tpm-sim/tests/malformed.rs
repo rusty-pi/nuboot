@@ -49,10 +49,10 @@ fn a_public_area_longer_than_a_slot_is_refused() {
     public.extend_from_slice(&0x0010u16.to_be_bytes());
     public.extend_from_slice(&2048u16.to_be_bytes());
     public.extend_from_slice(&0u32.to_be_bytes());
-    let mut modulus = vec![0xc3u8; 256];
-    modulus[255] |= 1;
+    let mut modulus = vec![0xc3u8; 600];
+    modulus[599] |= 1;
     public.extend(sized(&modulus));
-    assert!(public.len() > 288);
+    assert!(public.len() > 600);
 
     let mut body = sized(&[]);
     body.extend(sized(&public));

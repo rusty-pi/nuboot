@@ -29,6 +29,7 @@ pub const CC_POLICY_PASSWORD: u32 = 0x18c;
 pub const CC_POLICY_SECRET: u32 = 0x151;
 pub const CC_POLICY_AUTHORIZE: u32 = 0x16a;
 pub const CC_POLICY_COMMAND_CODE: u32 = 0x16c;
+pub const CC_POLICY_NV_WRITTEN: u32 = 0x18f;
 
 const ATTR_CONTINUE: u8 = 0x01;
 const ATTR_DECRYPT: u8 = 0x20;
@@ -50,9 +51,14 @@ pub struct Session {
     pub sym_alg: u16,
     pub digest: [u8; 32],
     pub pcr_counter: u32,
+    /// The registers `TPM2_PolicyPCR` named, which `pcr_counter` counts the changes of.
+    pub pcr_mask: u32,
     pub password: bool,
     pub auth_value: bool,
     pub command_code: u32,
+    /// What `TPM2_PolicyNvWritten` asked of the NV index the session
+    /// authorizes: 0 nothing, 1 that it has been written, 2 that it has not.
+    pub nv_written: u8,
     /// The name of the entity the session is bound to: its authorization value
     /// is in the session key, so not in the HMAC key for that entity.
     pub bind_name: [u8; 34],
@@ -70,9 +76,11 @@ const EMPTY: Session = Session {
     sym_alg: ALG_NULL,
     digest: [0; 32],
     pcr_counter: 0,
+    pcr_mask: 0,
     password: false,
     auth_value: false,
     command_code: 0,
+    nv_written: 0,
     bind_name: [0; 34],
     bind_len: 0,
 };
@@ -152,16 +160,29 @@ pub struct Entity {
     pub policy: [u8; 32],
     pub policy_len: usize,
     pub user_with_auth: bool,
+    /// For an NV index, whether it has been written.
+    pub written: Option<bool>,
 }
 
 impl Entity {
     fn hierarchy() -> Entity {
-        Entity { auth: [0; 32], auth_len: 0, policy: [0; 32], policy_len: 0, user_with_auth: true }
+        Entity { auth: [0; 32], auth_len: 0, policy: [0; 32], policy_len: 0, user_with_auth: true, written: None }
     }
 
     pub fn of(handle: u32) -> Result<Entity, u32> {
         if matches!(handle, object::RH_OWNER | object::RH_ENDORSEMENT | object::RH_PLATFORM | RH_NULL) {
             return Ok(Entity::hierarchy());
+        }
+        if handle >> 24 == 0x01 {
+            let nv = super::nv::authority(handle)?;
+            return Ok(Entity {
+                auth: nv.auth,
+                auth_len: nv.auth_len,
+                policy: nv.policy,
+                policy_len: nv.policy_len,
+                user_with_auth: nv.user_with_auth,
+                written: Some(nv.written),
+            });
         }
         let slot = object::slot_of(handle).ok_or(RC_HANDLE)?;
         let public = slot.public();
@@ -171,6 +192,7 @@ impl Entity {
             policy: public.policy,
             policy_len: public.policy_len,
             user_with_auth: public.attributes & object::USER_WITH_AUTH != 0,
+            written: None,
         };
         if slot.is_primary {
             entity.auth = slot.auth;
@@ -213,6 +235,8 @@ pub struct Authorization {
     count: usize,
     used: [Used; MAX_SESSIONS],
     encrypt: Option<usize>,
+    /// Whether the first handle was authorized by a policy session.
+    first_policy: bool,
 }
 
 static mut PLAIN: [u8; 1100] = [0; 1100];
@@ -231,6 +255,7 @@ static mut AUTHORIZATION: Authorization = Authorization {
     count: 0,
     used: [UNUSED; MAX_SESSIONS],
     encrypt: None,
+    first_policy: false,
 };
 
 impl Authorization {
@@ -242,7 +267,13 @@ impl Authorization {
         a.decrypted = false;
         a.count = 0;
         a.encrypt = None;
+        a.first_policy = false;
         a
+    }
+
+    /// Whether the command's first handle was authorized by a policy session.
+    pub fn first_is_policy(&self) -> bool {
+        self.first_policy
     }
 
     /// How long the decrypted parameters are, when a session decrypted them
@@ -403,11 +434,17 @@ pub fn authorize(
                     if !constant_eq(&e.policy, &session.digest) {
                         return Err(session_error(RC_POLICY_FAIL, i));
                     }
-                    if session.pcr_counter != 0 && session.pcr_counter != keystore::count() {
+                    if session.pcr_mask != 0 && session.pcr_counter != keystore::changes(session.pcr_mask) {
                         return Err(session_error(RC_PCR_CHANGED, i));
                     }
                     if session.command_code != 0 && session.command_code != code {
                         return Err(session_error(RC_POLICY_CC, i));
+                    }
+                    if session.nv_written != 0 && e.written != Some(session.nv_written == 1) {
+                        return Err(super::RC_POLICY);
+                    }
+                    if i == 0 {
+                        a.first_policy = true;
                     }
                     if session.password {
                         if !constant_eq(s.hmac, &e.auth[..e.auth_len]) {
@@ -444,7 +481,11 @@ pub fn authorize(
                 return Err(session_error(RC_AUTH_FAIL, i));
             }
         }
-        a.used[i].keyed = true;
+        // A policy session whose key and authorization value are both empty,
+        // or that was asked for a password, has no response HMAC: the client
+        // takes a zero-length one for that and refuses any other.
+        let no_response_hmac = session.kind == KIND_POLICY && (session.password || (!session.auth_value && session.key_len == 0));
+        a.used[i].keyed = !no_response_hmac;
         a.used[i].key = key;
         a.used[i].key_len = key_len;
         a.used[i].nonce_caller[..s.nonce.len()].copy_from_slice(s.nonce);
@@ -822,7 +863,8 @@ pub fn policy(code: u32, handle: u32, params: &mut In, a: &mut Authorization) ->
             update.update(selection);
             update.update(&digest);
             session.digest = update.finish();
-            session.pcr_counter = if trial { 0 } else { keystore::count() };
+            session.pcr_mask = if trial { 0 } else { mask };
+            session.pcr_counter = keystore::changes(session.pcr_mask);
         }
         CC_POLICY_GET_DIGEST => {
             if params.rest() != 0 {
@@ -836,9 +878,30 @@ pub fn policy(code: u32, handle: u32, params: &mut In, a: &mut Authorization) ->
         CC_POLICY_RESTART => {
             session.digest = [0; 32];
             session.pcr_counter = 0;
+            session.pcr_mask = 0;
             session.password = false;
             session.auth_value = false;
             session.command_code = 0;
+            session.nv_written = 0;
+        }
+        CC_POLICY_NV_WRITTEN => {
+            let set = params.u8().ok_or(RC_COMMAND_SIZE)?;
+            if params.rest() != 0 {
+                return Err(RC_COMMAND_SIZE);
+            }
+            if set > 1 {
+                return Err(RC_VALUE | RC_P | RC_1);
+            }
+            let wanted = 2 - set;
+            if session.nv_written != 0 && session.nv_written != wanted {
+                return Err(RC_VALUE | RC_P | RC_1);
+            }
+            let mut update = sha256::Sha256::new();
+            update.update(&session.digest);
+            update.update(&CC_POLICY_NV_WRITTEN.to_be_bytes());
+            update.update(&[set]);
+            session.digest = update.finish();
+            session.nv_written = wanted;
         }
         CC_POLICY_OR => {
             let count = params.u32().ok_or(RC_COMMAND_SIZE)?;

@@ -24,6 +24,10 @@ macro_rules! info {
     ($($t:tt)*) => {};
 }
 #[macro_export]
+macro_rules! warn {
+    ($($t:tt)*) => {};
+}
+#[macro_export]
 macro_rules! debug {
     ($($t:tt)*) => {};
 }

@@ -19,6 +19,8 @@ use crate::{rng, sha256, stc};
 
 #[path = "tpm2/context.rs"]
 mod context;
+#[path = "tpm2/nv.rs"]
+mod nv;
 #[path = "tpm2/object.rs"]
 mod object;
 #[path = "tpm2/session.rs"]
@@ -78,6 +80,8 @@ const RC_TICKET: u32 = 0x0a0;
 const RC_POLICY_CC: u32 = 0x0a4;
 const RC_CURVE: u32 = 0x0a6;
 const RC_ECC_POINT: u32 = 0x0a7;
+const RC_REFERENCE_H0: u32 = 0x910;
+const RC_POLICY: u32 = 0x126;
 const RC_OBJECT_MEMORY: u32 = 0x902;
 const RC_SESSION_MEMORY: u32 = 0x903;
 const RC_AUTH_TYPE: u32 = 0x124;
@@ -102,9 +106,15 @@ const CC_STIR_RANDOM: u32 = 0x146;
 /// Commands in numeric order, for `TPM_CAP_COMMANDS`: the number of handles in
 /// the command (bits 25-27 of `TPMA_CC`), and 8 more when the response has a
 /// handle (bit 28).
-const COMMANDS: [(u32, u32); 38] = [
+const COMMANDS: [(u32, u32); 47] = [
     (object::CC_EVICT_CONTROL, 2),
+    (nv::CC_NV_UNDEFINE_SPACE, 2),
+    (nv::CC_NV_DEFINE_SPACE, 1),
     (object::CC_CREATE_PRIMARY, 1 | 8),
+    (nv::CC_NV_INCREMENT, 2),
+    (nv::CC_NV_SET_BITS, 2),
+    (nv::CC_NV_EXTEND, 2),
+    (nv::CC_NV_WRITE, 2),
     (CC_PCR_RESET, 1),
     (CC_INCREMENTAL_SELF_TEST, 0),
     (CC_SELF_TEST, 0),
@@ -112,6 +122,7 @@ const COMMANDS: [(u32, u32); 38] = [
     (CC_SHUTDOWN, 0),
     (CC_STIR_RANDOM, 0),
     (CC_PCR_EVENT, 1),
+    (nv::CC_NV_READ, 2),
     (session::CC_POLICY_SECRET, 2),
     (object::CC_CREATE, 1),
     (object::CC_LOAD, 1 | 8),
@@ -122,6 +133,7 @@ const COMMANDS: [(u32, u32); 38] = [
     (object::CC_CONTEXT_SAVE, 1),
     (object::CC_FLUSH_CONTEXT, 0),
     (object::CC_LOAD_EXTERNAL, 8),
+    (nv::CC_NV_READ_PUBLIC, 1),
     (session::CC_POLICY_AUTHORIZE, 1),
     (session::CC_POLICY_AUTH_VALUE, 1),
     (session::CC_POLICY_COMMAND_CODE, 1),
@@ -141,6 +153,7 @@ const COMMANDS: [(u32, u32); 38] = [
     (session::CC_POLICY_GET_DIGEST, 1),
     (object::CC_TEST_PARMS, 0),
     (session::CC_POLICY_PASSWORD, 1),
+    (session::CC_POLICY_NV_WRITTEN, 1),
 ];
 
 /// A command that names objects or sessions: how many handles it has, how many
@@ -151,7 +164,7 @@ struct Spec {
     authorized: usize,
 }
 
-const OBJECT_COMMANDS: [Spec; 24] = [
+const OBJECT_COMMANDS: [Spec; 33] = [
     Spec { code: object::CC_EVICT_CONTROL, handles: 2, authorized: 1 },
     Spec { code: object::CC_CREATE_PRIMARY, handles: 1, authorized: 1 },
     Spec { code: object::CC_CREATE, handles: 1, authorized: 1 },
@@ -176,6 +189,15 @@ const OBJECT_COMMANDS: [Spec; 24] = [
     Spec { code: session::CC_POLICY_AUTH_VALUE, handles: 1, authorized: 0 },
     Spec { code: session::CC_POLICY_PASSWORD, handles: 1, authorized: 0 },
     Spec { code: session::CC_POLICY_COMMAND_CODE, handles: 1, authorized: 0 },
+    Spec { code: session::CC_POLICY_NV_WRITTEN, handles: 1, authorized: 0 },
+    Spec { code: nv::CC_NV_DEFINE_SPACE, handles: 1, authorized: 1 },
+    Spec { code: nv::CC_NV_UNDEFINE_SPACE, handles: 2, authorized: 1 },
+    Spec { code: nv::CC_NV_READ_PUBLIC, handles: 1, authorized: 0 },
+    Spec { code: nv::CC_NV_READ, handles: 2, authorized: 1 },
+    Spec { code: nv::CC_NV_WRITE, handles: 2, authorized: 1 },
+    Spec { code: nv::CC_NV_EXTEND, handles: 2, authorized: 1 },
+    Spec { code: nv::CC_NV_INCREMENT, handles: 2, authorized: 1 },
+    Spec { code: nv::CC_NV_SET_BITS, handles: 2, authorized: 1 },
 ];
 
 const ALG_HMAC: u16 = 0x0005;
@@ -205,7 +227,7 @@ const fn four(s: &[u8; 4]) -> u32 {
 }
 
 /// `TPM_PT_*` fixed and variable properties, in property order.
-const PROPERTIES: [(u32, u32); 56] = [
+const PROPERTIES: [(u32, u32); 58] = [
     (0x100, four(b"2.0\0")),
     (0x101, 0),
     (0x102, 159),
@@ -228,8 +250,8 @@ const PROPERTIES: [(u32, u32); 56] = [
     (0x113, 3),
     (0x114, 0xffff),
     (0x115, 0),
-    (0x116, 0),
-    (0x117, 0),
+    (0x116, nv::SLOTS as u32),
+    (0x117, nv::DATA_MAX as u32),
     (0x118, 0),
     (0x119, 0x1000),
     (0x11a, ALG_SHA256 as u32),
@@ -250,7 +272,7 @@ const PROPERTIES: [(u32, u32); 56] = [
     (0x129, COMMANDS.len() as u32),
     (0x12a, COMMANDS.len() as u32),
     (0x12b, 0),
-    (0x12c, 1024),
+    (0x12c, nv::DATA_MAX as u32),
     (0x12d, 0),
     (0x200, 0),
     (0x201, 0xf),
@@ -262,6 +284,8 @@ const PROPERTIES: [(u32, u32); 56] = [
     (0x207, 3),
     (0x208, 0),
     (0x209, object::PERSISTENT_SLOTS as u32),
+    (0x20a, 0),
+    (0x20b, 0),
 ];
 
 /// Where a response is built.
@@ -359,7 +383,10 @@ pub fn execute(command: &[u8], response: &mut [u8]) -> usize {
             response[6..10].copy_from_slice(&RC_SUCCESS.to_be_bytes());
             len
         }
-        Err(rc) => fail(response, rc),
+        Err(rc) => {
+            crate::warn!("tpm2", "command failed"; code = format_args!("{:#x}", code), rc = format_args!("{:#x}", rc));
+            fail(response, rc)
+        }
     }
 }
 
@@ -367,6 +394,9 @@ pub fn execute(command: &[u8], response: &mut [u8]) -> usize {
 /// object's name, and for everything else the handle itself.
 pub(self) fn name_for(handle: u32) -> ([u8; 34], usize) {
     let mut name = [0u8; 34];
+    if let Some(index) = nv::index_of(handle) {
+        return (nv::name(index), 34);
+    }
     match object::slot_of(handle) {
         Some(slot) => (slot.name, 34),
         None => {
@@ -386,7 +416,10 @@ fn object_command(spec: &Spec, tag: u16, input: &mut In, response: &mut [u8]) ->
     crate::debug!("tpm2", "object command done"; code = format_args!("{:#x}", spec.code), us = stc::now() - started);
     match result {
         Ok(len) => len,
-        Err(rc) => fail(response, rc),
+        Err(rc) => {
+            crate::warn!("tpm2", "command failed"; code = format_args!("{:#x}", spec.code), rc = format_args!("{:#x}", rc));
+            fail(response, rc)
+        }
     }
 }
 
@@ -441,6 +474,14 @@ fn dispatch(code: u32, handles: &[u32; 3], params: &mut In, a: &mut session::Aut
         object::CC_FLUSH_CONTEXT => context::flush(params),
         object::CC_CONTEXT_SAVE => context::save(handles[0], params, a),
         object::CC_CONTEXT_LOAD => context::load(params, a),
+        nv::CC_NV_DEFINE_SPACE => nv::define_space([handles[0], handles[1]], params, a),
+        nv::CC_NV_UNDEFINE_SPACE => nv::undefine_space([handles[0], handles[1]]),
+        nv::CC_NV_READ_PUBLIC => nv::read_public(handles[0], a),
+        nv::CC_NV_READ => nv::read([handles[0], handles[1]], params, a),
+        nv::CC_NV_WRITE => nv::write([handles[0], handles[1]], params, a),
+        nv::CC_NV_EXTEND => nv::extend([handles[0], handles[1]], params, a),
+        nv::CC_NV_INCREMENT => nv::increment([handles[0], handles[1]], a),
+        nv::CC_NV_SET_BITS => nv::set_bits([handles[0], handles[1]], params, a),
         session::CC_START_AUTH_SESSION => session::start_auth_session(code, &handles[..2], params, a),
         _ => session::policy(code, handles[0], params, a),
     }
@@ -575,6 +616,14 @@ fn get_capability(input: &mut In, out: &mut Out) -> Result<(), u32> {
                     loaded[..n].sort_unstable();
                     &loaded[..n]
                 }
+                0x01 => {
+                    for handle in nv::handles() {
+                        loaded[n] = handle;
+                        n += 1;
+                    }
+                    loaded[..n].sort_unstable();
+                    &loaded[..n]
+                }
                 0x02 | 0x03 => {
                     for handle in session::handles().filter(|h| h >> 24 == kind) {
                         loaded[n] = handle;
@@ -613,11 +662,16 @@ fn get_capability(input: &mut In, out: &mut Out) -> Result<(), u32> {
             more = list.count() > shown;
             out.u32(shown as u32);
             let held = object::persistent().count() as u32;
+            let indices = nv::handles().count() as u32;
+            let counters = nv::counters() as u32;
             for (p, v) in PROPERTIES.iter().filter(|(p, _)| *p >= property).take(count) {
                 out.u32(*p);
                 out.u32(match *p {
                     0x208 => held,
                     0x209 => object::PERSISTENT_SLOTS as u32 - held,
+                    0x202 => indices,
+                    0x20a => counters,
+                    0x20b => nv::SLOTS as u32 - counters,
                     _ => *v,
                 });
             }
