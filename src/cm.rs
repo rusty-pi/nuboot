@@ -160,6 +160,23 @@ pub fn countdown(ticks: u32) {
     timer::wait(10_000, || read(COUNTDOWN) == 0);
 }
 
+/// The clock the SCB peripherals run from: the PCIe root complex, the GENET
+/// Ethernet MAC and the AVS/PVT monitors (the `0x7d5x_xxxx` block). It is
+/// generator `0x200` off PLLC's peripheral channel, which the stock bootloader
+/// starts for `start4` in its `start_pllc`.
+///
+/// The bootloader leaves it running on an SD or network boot, so this firmware
+/// inherited it and never started it; on a boot off a USB drive it does not,
+/// and then the first access to any SCB register does not fault but stalls the
+/// VPU's bus for about 11 s and reads back zero. A handful of those -- the
+/// temperature sensor, `pcie::reset`, `pcie::init` -- overrun the boot
+/// watchdog's budget before the ARM starts, and the board resets in a loop.
+/// Measured on a Raspberry Pi 4B d03115. Starting it here makes the firmware
+/// bring the SCB up itself rather than depend on the medium it booted from.
+pub fn start_scb_clock() {
+    switch_generator(GEN_200_CTL, 6 << 12, SRC_PLLC_PER);
+}
+
 /// A PLL's words: its channel holds and analog reset in the clock manager,
 /// and its analog, control and fraction words in the A2W half (Linux's
 /// clk-bcm2835 offsets).
