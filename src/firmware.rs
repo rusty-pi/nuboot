@@ -91,6 +91,7 @@ fn firmware_main() -> ! {
     announce();
     chain_update();
     take_over_watchdog();
+    nuboot::cm::start_scb_clock();
 
     let board = Board::read();
     match thermal::start() {
