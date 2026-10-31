@@ -124,9 +124,17 @@ pub fn set_level(level: Level) {
     LEVEL.store(level as u8, Ordering::Relaxed);
 }
 
+/// Whether nothing is logged at all: the runtime services run in an OS's
+/// context, where the console is not theirs to write.
+static MUTED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+pub fn mute(on: bool) {
+    MUTED.store(on, Ordering::Relaxed);
+}
+
 #[inline(always)]
 pub fn enabled(level: Level) -> bool {
-    level as u8 <= LEVEL.load(Ordering::Relaxed)
+    level as u8 <= LEVEL.load(Ordering::Relaxed) && !MUTED.load(Ordering::Relaxed)
 }
 
 /// Send every record from here on to `sink` as well. Whether there was room.

@@ -32,6 +32,7 @@ const HMAC_LOCKED: u32 = 1 << 11;
 const TAG_TPM2_COMMAND: u32 = 0x0003_00a3;
 const TAG_GET_EARLY_EVENT: u32 = 0x0003_00a4;
 const TAG_GET_OWNER_DB: u32 = 0x0003_00a8;
+const TAG_GET_BOOT_MEDIUM: u32 = 0x0003_00ab;
 /// The largest `owner-db.der` (`src/ramdisk.rs`).
 const OWNER_DB_MAX: usize = 4096;
 /// The largest TPM command or response (`src/tpm2.rs`).
@@ -298,4 +299,36 @@ pub fn extend(pcr: u32, digest: &[u8; 32]) {
     if !call(TAG_EXTEND_BOOT_MEASUREMENT, &words) {
         warn!("measure", "the VPU did not take a measurement"; pcr = pcr);
     }
+}
+
+/// How the bootloader says it loaded the firmware.
+pub struct BootMedium {
+    /// `BSTM`: 0 SD, 1 network, 2 USB on the VL805, 4 USB-C, 5 a `boot.img`
+    /// in RAM, which says nothing of the medium it was read from.
+    pub code: u32,
+    /// The length of that `boot.img`, if one was loaded.
+    pub ramdisk_len: Option<u64>,
+}
+
+/// Ask the VPU how the firmware was loaded. A VPU that does not know the tag
+/// leaves the answer unmarked: none.
+pub fn boot_medium() -> Option<BootMedium> {
+    const WORDS: usize = 3;
+    let buf = BIG.0.get() as *mut u32;
+    unsafe {
+        write_volatile(buf, (4 * (6 + WORDS)) as u32);
+        write_volatile(buf.add(1), 0);
+        write_volatile(buf.add(2), TAG_GET_BOOT_MEDIUM);
+        write_volatile(buf.add(3), 4 * WORDS as u32);
+        write_volatile(buf.add(4), 0);
+        for i in 0..WORDS {
+            write_volatile(buf.add(5 + i), 0);
+        }
+        write_volatile(buf.add(5 + WORDS), 0);
+    }
+    if !post(buf as u64, 4 * (6 + WORDS), ANSWER_US) || unsafe { read_volatile(buf.add(4)) } & RESPONSE == 0 {
+        return None;
+    }
+    let word = |i: usize| unsafe { read_volatile(buf.add(5 + i)) };
+    Some(BootMedium { code: word(0), ramdisk_len: (word(1) != 0).then(|| word(2) as u64) })
 }

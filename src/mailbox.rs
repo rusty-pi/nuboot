@@ -12,7 +12,7 @@
 //! firmware does not know is left as it came, and the buffer is marked
 //! answered either way, which is what the stock firmware does.
 
-use crate::{arm, crypto, debug, error, expander, idle, info, keystore, measure, mmio, ramdisk, seal, tpm2, vl805, wake, warn, watchdog};
+use crate::{arm, crypto, debug, error, expander, idle, info, keystore, measure, mmio, handover, ramdisk, seal, tpm2, usb, vl805, wake, warn, watchdog};
 
 const VPU_VIEW: u32 = 0x7e00_b980;
 /// Mailbox 0, which the ARM reads.
@@ -93,6 +93,10 @@ const TAG_STORE_SEAL: u32 = 0x0003_00a9;
 /// store to the card at `ResetSystem`, whatever the OS left it as. The answer
 /// is a status word: 0, or 5 when the card's supply could not be switched.
 const TAG_STORE_PREPARE_CARD: u32 = 0x0003_00aa;
+/// The same for a drive on the VL805: reset the PCIe link and the controller
+/// and give it its firmware again, as at boot, whatever the OS made of them.
+/// The answer is a status word: 0, or 5 when the controller did not come back.
+const TAG_STORE_PREPARE_USB: u32 = 0x0003_00ac;
 
 /// Event `n` of what the VPU measured before the ARM started, for the log
 /// UEFI keeps: the index in, then the PCR, the event type, the digest, the
@@ -103,6 +107,10 @@ const TAG_GET_EARLY_EVENT: u32 = 0x0003_00a4;
 /// the built-in `db` stays; 1: the certificate follows; 2: the file there
 /// could not be read, and nothing is trusted), its length, and its bytes.
 const TAG_GET_OWNER_DB: u32 = 0x0003_00a8;
+/// The medium the bootloader loaded this firmware from, as the handover block
+/// says it: its code, whether a `boot.img` was loaded (`BSTM` says ramdisk
+/// and nothing about the medium under it) and that image's length.
+const TAG_GET_BOOT_MEDIUM: u32 = 0x0003_00ab;
 const OWNER_DB_NONE: u32 = 0;
 const OWNER_DB_PRESENT: u32 = 1;
 const OWNER_DB_INVALID: u32 = 2;
@@ -227,7 +235,7 @@ fn respond(bus: u32, runtime: bool) {
             set(1, CODE_ERROR);
             return;
         }
-        if runtime != matches!(tag, TAG_STORE_SEAL | TAG_STORE_PREPARE_CARD) {
+        if runtime != matches!(tag, TAG_STORE_SEAL | TAG_STORE_PREPARE_CARD | TAG_STORE_PREPARE_USB) {
             i = value + room / 4;
             continue;
         }
@@ -244,6 +252,10 @@ fn respond(bus: u32, runtime: bool) {
                 };
                 set(value, status);
                 set(i + 2, RESPONSE | 36);
+            }
+            TAG_STORE_PREPARE_USB if room >= 4 => {
+                set(value, if usb::recover() { 0 } else { 5 });
+                set(i + 2, RESPONSE | 4);
             }
             TAG_STORE_PREPARE_CARD if room >= 4 => {
                 set(value, if arm::prepare_card() { 0 } else { 5 });
@@ -420,6 +432,13 @@ fn respond(bus: u32, runtime: bool) {
                     }
                     set(i + 2, RESPONSE | room);
                 }
+            }
+            TAG_GET_BOOT_MEDIUM if room >= 12 => {
+                let (present, length) = handover::ramdisk().map_or((0, 0), |(_, length)| (1, length));
+                set(value, handover::boot_device_code());
+                set(value + 1, present);
+                set(value + 2, length);
+                set(i + 2, RESPONSE | 12);
             }
             TAG_GET_OWNER_DB if room >= 8 + ramdisk::MAX_OWNER_DB as u32 => {
                 let der = ramdisk::owner_db();

@@ -726,6 +726,28 @@ pub fn read_file(handle: efi::Handle, path: &[u16], max: usize) -> Result<Vec<u8
     Ok(data)
 }
 
+/// The length of the file at `path` on the file system on `handle`, if there
+/// is one.
+pub fn file_size(handle: efi::Handle, path: &[u16]) -> Option<u64> {
+    let sfs = proto::get(handle, &simple_file_system::PROTOCOL_GUID)? as *mut simple_file_system::Protocol;
+    let mut root = core::ptr::null_mut();
+    if unsafe { ((*sfs).open_volume)(sfs, &mut root) }.is_error() {
+        return None;
+    }
+    let mut name: Vec<u16> = path.to_vec();
+    name.push(0);
+    let mut f = core::ptr::null_mut();
+    let s = open(root, &mut f, name.as_mut_ptr(), file::MODE_READ, 0);
+    close(root);
+    if s.is_error() {
+        return None;
+    }
+    let file = this(f);
+    let size = (file.entry.attr & ATTR_DIR == 0).then_some(file.entry.size as u64);
+    close(f);
+    size
+}
+
 /// The names of the files (not directories) in the directory at `path` on
 /// the file system on `handle`.
 pub fn list_files(handle: efi::Handle, path: &[u16]) -> Result<Vec<Vec<u16>>, efi::Status> {

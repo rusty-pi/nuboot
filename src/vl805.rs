@@ -89,6 +89,16 @@ pub fn keep(images: Images) {
     unsafe { IMAGES = Some(images) };
 }
 
+/// Load the chip on `bus` again from the copies [`keep`] took, as the
+/// bootloader loaded it at boot: the chip has just been reset. Whether the hub
+/// image read back; true for a chip that needs no host firmware.
+pub fn load_kept(bus: u32) -> bool {
+    match unsafe { IMAGES } {
+        Some(images) => boot_load(bus, images.hub(), images.mcu.0),
+        None => true,
+    }
+}
+
 /// The port as the bootloader drives it: every access selects the function
 /// and every write is read back; a verify read writes the index straight.
 struct BootPort(Function);

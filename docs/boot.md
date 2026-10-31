@@ -217,11 +217,13 @@ pimu boot --scenario scenarios/capsule-eeprom-updated.yaml  # after the bootload
 pimu boot --scenario scenarios/capsule-eeprom-failed.yaml   # an EEPROM update the bootloader did not make
 pimu boot --scenario scenarios/runtime-variables.yaml  # variables through the runtime services
 pimu boot --scenario scenarios/persist.yaml     # what the OS writes through them outlasts a reset
+pimu boot --scenario scenarios/persist-usb.yaml  # the same with a USB drive as the boot medium
 pimu boot --scenario scenarios/shutdown.yaml    # a shutdown through them ends in the bootloader's halt
 pimu boot --scenario scenarios/store-compact.yaml  # the store has room again at the next boot
 pimu boot --scenario scenarios/crypto.yaml      # the firmware cryptography service, locked from the OS
 scripts/build-linux-test.sh && pimu boot --scenario scenarios/linux.yaml  # Debian's kernel, from its own initramfs, to a power off a magic packet wakes from
 pimu boot --scenario scenarios/linux-acpi.yaml   # the same kernel with acpi=on
+pimu boot --scenario scenarios/linux-usb.yaml    # the same kernel off a USB drive, its variable written back to the drive at the reset
 pimu boot --scenario scenarios/linux-no-dt.yaml  # and with an empty device tree, which it takes the ACPI tables for
 pimu boot --scenario scenarios/watchdog-hang.yaml  # a hang in UEFI resets the board
 pimu boot --scenario scenarios/watchdog-exit.yaml  # ExitBootServices hands the dog to the OS
@@ -246,8 +248,11 @@ they are signed with ([uefi.md](uefi.md#secure-boot)).
   command response buffer, which makes the VPU run the command in the page at
   `0x3EBFF000`, [tpm2.md](tpm2.md#the-command-response-buffer)), and, on channel 7 for the
   runtime services, the store's `0x000300a9` (seal a variable's write) and
-  `0x000300aa` (power the SD card off and on and hand its host back, so that the
-  runtime services can write the store at `ResetSystem`), and, for the SD card's regulators, the GPIO expander's
+  `0x000300aa` (power the SD card off and on and hand its host back) and
+  `0x000300ac` (reset the PCIe link and the VL805 and load its firmware again),
+  so that the runtime services can write the store at `ResetSystem`, and, on
+  channel 8, `0x000300ab` (how the bootloader says the firmware was loaded,
+  which tells UEFI the disk the store is on), and, for the SD card's regulators, the GPIO expander's
   two SD pins (`0x00030041`, `0x00038041`, `0x00030043` and `0x00038043`: the
   card's power switch and its signalling voltage select), and no other tag. None
   returns a fuse. The expander's other pins, which belong to the radios, the

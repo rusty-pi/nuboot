@@ -38,6 +38,8 @@ mod proto;
 mod pkcs7;
 mod rng;
 mod rsa;
+mod rtmode;
+mod rtusb;
 mod rtvar;
 mod sd;
 mod secure;
@@ -120,7 +122,12 @@ fn memory_map(tree: &fdt::Fdt, tree_addr: u64) {
     map.add_mmio(rtvar::MAILBOX_PAGE, rtvar::MAILBOX_PAGE + mem::PAGE);
     map.add_mmio(watchdog::PM_PAGE, watchdog::PM_PAGE + mem::PAGE);
     map.add_mmio(sd::EMMC2_PAGE, sd::EMMC2_PAGE + mem::PAGE);
-    map.mark(DMA_ARENA.0, DMA_ARENA.1, efi::BOOT_SERVICES_DATA);
+    // The DMA arena stays for the runtime services, which bring the USB
+    // controller up again to write the variable store to a drive.
+    map.mark(DMA_ARENA.0, DMA_ARENA.1, efi::RUNTIME_SERVICES_DATA);
+    for (start, end) in xhci::RUNTIME_MMIO {
+        map.add_mmio(start, end);
+    }
     map.mark(tree_addr, tree_addr + tree.size() as u64, efi::BOOT_SERVICES_DATA);
     map.mark(start, runtime_end, efi::RUNTIME_SERVICES_CODE);
     map.mark(runtime_end, end, efi::BOOT_SERVICES_CODE);
@@ -193,6 +200,7 @@ extern "C" fn pi4_main(tree_addr: u64) -> ! {
     esrt::init();
     sd::init();
     xhci::init();
+    diskstore::choose();
     secure::init();
     let parent = firmware_handle();
 

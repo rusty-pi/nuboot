@@ -136,7 +136,7 @@ From the boot ROM to the threads that run for as long as the board is up:
 | The network interface gets the address in the OTP's MAC rows, the one Raspberry Pi's firmware gives it; blank rows give a locally administered address from the serial number | ✅ | ✅ | ➖ | ➖ |
 | The GPIO expander's two SD pins over the property mailbox, every other pin refused | ✅ | ✅ | ➖ | ➖ |
 | The variable store in a window on the boot disk, listed in the partition table of a GPT disk (checked with `sfdisk`) | ✅ | ➖ | ➖ | ➖ |
-| Variables the OS writes through the runtime services, a signed `db` update among them, appended to the store on the SD card at `ResetSystem` and kept across the reset | ✅ | ➖ | ➖ | ➖ |
+| Variables the OS writes through the runtime services, a signed `db` update among them, appended to the store on the boot medium, the SD card or a drive on the VL805, at `ResetSystem` and kept across the reset | ✅ | ➖ | ➖ | ➖ |
 | The variable store has room for the OS's writes after a boot: a bank the OS filled with the variables it replaced is started afresh with what the variables still need, and the OS writes again | ✅ | ➖ | ➖ | ➖ |
 | A shutdown through the runtime services, after `ExitBootServices`, ends in the bootloader's halt | ✅ | ➖ | ➖ | ➖ |
 | Update bundles: an update capsule's bundle is kept, left in RAM across a reset, checked against the update key and run in the update slot by the firmware the bootloader loaded, and proven at `ExitBootServices`; one no update key signed is refused | ✅ | ✅ | ➖ | ➖ |

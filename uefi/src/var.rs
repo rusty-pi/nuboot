@@ -97,7 +97,7 @@ pub fn bytes(name: &str, guid: &efi::Guid) -> Option<Vec<u8>> {
 /// takes keys from), and is the boot chain's to write.
 pub fn export_runtime() {
     crate::rtvar::clear();
-    crate::rtvar::arm(*PLAIN_SEQ.get(), crate::diskstore::target());
+    crate::rtvar::arm(*PLAIN_SEQ.get(), crate::diskstore::snapshot_taken());
     for v in VARS.get().iter().filter(|v| visible(v) && v.attributes & RT != 0) {
         let key = !v.fixed && is_key(&v.name, &v.guid);
         let writable = !v.fixed && !key && v.attributes & AUTH == 0 && v.attributes & NV != 0;

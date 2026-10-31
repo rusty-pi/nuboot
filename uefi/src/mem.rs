@@ -419,10 +419,16 @@ pub struct FirmwareHeap;
 
 unsafe impl GlobalAlloc for FirmwareHeap {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        if crate::rtmode::active() {
+            return crate::rtmode::alloc(layout);
+        }
         heap(efi::BOOT_SERVICES_DATA).unwrap().alloc(layout.size() as u64, layout.align() as u64)
     }
 
     unsafe fn dealloc(&self, p: *mut u8, layout: Layout) {
+        if crate::rtmode::active() {
+            return;
+        }
         heap(efi::BOOT_SERVICES_DATA).unwrap().free(p, layout.size() as u64)
     }
 }

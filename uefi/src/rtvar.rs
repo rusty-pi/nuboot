@@ -24,6 +24,7 @@ use core::ffi::c_void;
 
 use r_efi::efi;
 
+use crate::diskstore::Kind;
 use crate::util::{Global, wstr};
 
 const CAPACITY: usize = 128 * 1024;
@@ -53,6 +54,7 @@ const CHANNEL_RUNTIME: u32 = 7;
 const RESPONSE: u32 = 0x8000_0000;
 const TAG_STORE_SEAL: u32 = 0x0003_00a9;
 const TAG_STORE_PREPARE_CARD: u32 = 0x0003_00aa;
+const TAG_STORE_PREPARE_USB: u32 = 0x0003_00ac;
 /// The most the VPU takes of a variable.
 const PERSIST_MAX: usize = 16 * 1024;
 const PERSIST_NAME_MAX: usize = 512;
@@ -72,23 +74,27 @@ struct Message([u32; MESSAGE_WORDS]);
 
 static MESSAGE: Global<Message> = Global::new(Message([0; MESSAGE_WORDS]));
 
-/// The block size of the SD card, which the flush writes in.
-const BLOCK: usize = 512;
+/// The largest block a disk the store is on has.
+const BLOCK_MAX: usize = 4096;
 /// The most records written since boot that are kept for `ResetSystem`.
 const QUEUE_MAX: usize = 64 * 1024;
 
 /// The records to append to the store: the block the log ends in as it was, up
 /// to where the log ends, then the records.
 #[repr(C, align(8))]
-struct Queue([u8; BLOCK + QUEUE_MAX + BLOCK]);
+struct Queue([u8; BLOCK_MAX + QUEUE_MAX + BLOCK_MAX]);
 
-static QUEUE: Global<Queue> = Global::new(Queue([0; BLOCK + QUEUE_MAX + BLOCK]));
+static QUEUE: Global<Queue> = Global::new(Queue([0; BLOCK_MAX + QUEUE_MAX + BLOCK_MAX]));
 
 /// Where the queue goes and how much of it is used.
 struct Pending {
-    /// Whether the store is on the SD card, and the OS may write to it.
+    /// Whether the store is on a disk the flush reaches, and the OS may write
+    /// to it.
     armed: bool,
-    /// The card's block the log ends in, and where in it.
+    kind: Kind,
+    /// The disk's block size, the block of it the log ends in, and where in that
+    /// block.
+    block: usize,
     lba: u64,
     skip: usize,
     /// How much of the queue the records take, and how much more fits.
@@ -96,28 +102,51 @@ struct Pending {
     room: usize,
     /// The number of the next write the VPU seals.
     seq: u64,
+    /// The first block of the active bank, and the eight bytes it starts with:
+    /// what the drive that holds the store is known by when the controller has
+    /// been brought up again.
+    bank_lba: u64,
+    expect: [u8; 8],
 }
 
-static PENDING: Global<Pending> = Global::new(Pending { armed: false, lba: 0, skip: 0, len: 0, room: 0, seq: 0 });
+const NOT_ARMED: Pending =
+    Pending { armed: false, kind: Kind::Sd, block: 512, lba: 0, skip: 0, len: 0, room: 0, seq: 0, bank_lba: 0, expect: [0; 8] };
+
+static PENDING: Global<Pending> = Global::new(NOT_ARMED);
 
 /// Where the log of the store ends, for the writes of the OS to be added to.
 pub struct Target {
+    pub kind: Kind,
+    pub block: usize,
     pub lba: u64,
     /// The bytes of that block before the end of the log.
-    pub head: [u8; BLOCK],
+    pub head: [u8; BLOCK_MAX],
     pub skip: usize,
     /// How much room the bank has left.
     pub room: usize,
+    pub bank_lba: u64,
+    pub expect: [u8; 8],
 }
 
 /// Keep the writes the OS makes for `ResetSystem`, numbered from `seq`, when
 /// the store is where the flush reaches.
 pub fn arm(seq: u64, target: Option<Target>) {
     let p = PENDING.get();
-    *p = Pending { armed: false, lba: 0, skip: 0, len: 0, room: 0, seq };
+    *p = Pending { seq, ..NOT_ARMED };
     if let Some(t) = target {
-        QUEUE.get().0[..BLOCK].copy_from_slice(&t.head);
-        *p = Pending { armed: true, lba: t.lba, skip: t.skip, len: 0, room: t.room.min(QUEUE_MAX), seq };
+        QUEUE.get().0[..BLOCK_MAX].copy_from_slice(&t.head);
+        *p = Pending {
+            armed: true,
+            kind: t.kind,
+            block: t.block,
+            lba: t.lba,
+            skip: t.skip,
+            len: 0,
+            room: t.room.min(QUEUE_MAX),
+            seq,
+            bank_lba: t.bank_lba,
+            expect: t.expect,
+        };
     }
 }
 
@@ -468,13 +497,33 @@ pub fn flush_store() {
         return;
     }
     value()[..4].fill(0);
-    if post(TAG_STORE_PREPARE_CARD, 4) != Some(0) {
+    let tag = match p.kind {
+        Kind::Sd => TAG_STORE_PREPARE_CARD,
+        Kind::Usb => TAG_STORE_PREPARE_USB,
+    };
+    if post(tag, 4) != Some(0) {
         return;
     }
-    let end = (p.skip + p.len).next_multiple_of(BLOCK);
+    let end = (p.skip + p.len).next_multiple_of(p.block);
     QUEUE.get().0[p.skip + p.len..end].fill(0xff);
-    if let Some(mut card) = crate::sd::Runtime::open() {
-        card.write(p.lba, &QUEUE.get().0[..end]);
+    crate::rtmode::on_stack(write_pending);
+}
+
+/// The queue, written to the disk on a stack of the firmware's own.
+extern "C" fn write_pending() {
+    let p = PENDING.get();
+    let end = (p.skip + p.len).next_multiple_of(p.block);
+    let queue = &QUEUE.get().0[..end];
+    match p.kind {
+        Kind::Sd => {
+            if let Some(mut card) = crate::sd::Runtime::open() {
+                card.write(p.lba, queue);
+            }
+        }
+        Kind::Usb => {
+            let job = crate::rtusb::Job { block: p.block, lba: p.lba, skip: p.skip, bank_lba: p.bank_lba, expect: p.expect };
+            crate::rtusb::write(&job, queue);
+        }
     }
 }
 

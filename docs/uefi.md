@@ -299,9 +299,14 @@ byte offset 512 KiB, and come back at the next boot. The window is two banks of
 256 KiB, each a log of records. The firmware never writes the EEPROM: updating
 it leaves the store as it is.
 
-**Where.** Only a GPT disk holds the store; an MBR disk has none. The window
-is in the gap that partitioning tools leave in front of the first partition. The
-SD card holds the store when it can, otherwise the first USB disk that can. The firmware lists the window in the disk's partition
+**Where.** On the disk the firmware came from, the one that holds `start4.elf`
+or the `boot.img` the bootloader started it out of. The bootloader says which
+medium: the SD card, or a drive on the VL805. A `boot.img` in RAM says only
+that, so the disk is the one that holds a `boot.img` of its length. A board
+that came off the network, or whose boot disk cannot hold the store, keeps its
+variables in memory. Only a GPT disk holds the store; an MBR disk has none. The
+window is in the gap that partitioning tools leave in front of the first
+partition. The firmware lists the window in the disk's partition
 table as a partition of its own, so that a tool which discards the gap
 (`systemd-repart` does) leaves it alone, and an OS sees a partition of a type it
 has no use for (type `0ca9cdc0-6c28-49a6-a041-eeec6123df3a`). The listing is
@@ -389,16 +394,25 @@ does not answer.
   UEFI checks it against `PK` and the `KEK`s at the next boot like every stored
   write. The table keeps the old value until then; the update takes effect at
   the restart fwupd asks for.
-- At `ResetSystem` the VPU switches the SD card off and on, signalling at 3.3 V,
-  and gives its host back to the ARM as it was when the ARM started, whatever
-  the OS made of them. The firmware starts the card again, writes the records
-  after the end of the log in the active bank and reads them back. Nothing is
-  logged: the OS's context has no console.
+- At `ResetSystem` the firmware brings the disk back as the boot had it, on a
+  stack of its own, and writes the records after the end of the log in the
+  active bank. Nothing is logged: the OS's context has no console.
+  - An SD card: the VPU switches it off and on, signalling at 3.3 V, and gives
+    its host back to the ARM as it was when the ARM started, whatever the OS
+    made of them. The firmware starts the card again.
+  - A drive on the VL805: the VPU resets the PCIe link and the chip and gives it
+    its firmware again. The firmware brings the controller up the way the boot
+    did, with the same driver on a heap and a DMA arena of its own, finds the
+    drive by what the store's active bank starts with and writes through the
+    drive's own transport, bulk-only or UAS. The arena is typed as runtime data
+    and the OS maps it cacheable, so the driver cleans and invalidates it
+    around every transfer.
 - A write the queue cannot take (64 KiB of records since boot, or no room left
   in the bank) returns `EFI_OUT_OF_RESOURCES`, and the variable lasts until
-  reset. A store that is not on the SD card is not reached from the runtime
-  services: a write of a non-volatile variable succeeds and lasts until reset, and
-  a signed update of `KEK`, `db` or `dbx` returns `EFI_DEVICE_ERROR`. A
+  reset. A board with no store the runtime services reach (it came off the
+  network, or from a drive on the USB-C socket, which this firmware does not
+  drive) takes a write of a non-volatile variable and keeps it until reset,
+  and a signed update of `KEK`, `db` or `dbx` returns `EFI_DEVICE_ERROR`. A
   non-volatile variable has the attributes non-volatile, boot services and
   runtime access, and at most 16 KiB, or the write is refused.
 
@@ -551,7 +565,7 @@ pimu boot --scenario scenarios/owner-db-update.yaml    # an update capsule the b
 - Nothing reads `BootOrder`: the boot is always the removable-media path.
 - `dbx` holds image hashes only; a certificate in it is ignored.
 - Storage is read-only to EFI applications; the firmware writes only the files an update needs.
-- The OS's writes reach the variable store when it calls `ResetSystem`, and only when the store is on the SD card ([below](#variables-the-os-writes)).
+- The OS's writes reach the variable store when it calls `ResetSystem`, and only when the store is on the SD card or on a drive on the VL805 ([below](#variables-the-os-writes)).
 - A write the OS makes to a variable after 64 KiB of records since boot, or with no room left in the bank, fails.
 - No NVMe, no network boot, no USB keyboards.
 - The xHCI driver gives each empty root port 400 ms to show a connection,

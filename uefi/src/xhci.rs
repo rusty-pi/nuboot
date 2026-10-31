@@ -27,6 +27,14 @@ const WINDOW_BUS: u64 = 0x8000_0000;
 const WINDOW_CPU: u64 = 0x6_0000_0000;
 const WINDOW_SIZE: u64 = 0x4000_0000;
 
+/// Where `start4.elf` puts the controller's registers in the outbound window.
+const CONTROLLER: u64 = WINDOW_CPU + 0x0200_0000;
+
+/// What the runtime services touch to bring the controller up: the root
+/// complex's config window, and the controller's registers in the outbound
+/// window.
+pub const RUNTIME_MMIO: [(u64, u64); 2] = [(EXT_CFG_DATA, EXT_CFG_INDEX + 0x1000), (CONTROLLER, CONTROLLER + 0x1_0000)];
+
 /// The buses the VL805 answers on through the config window: behind the root
 /// port, which is where the model puts it, and a Raspberry Pi 4B's own
 /// answer, bus 0.
@@ -215,6 +223,12 @@ pub fn registers_base() -> Option<u64> {
     *REGISTERS.get()
 }
 
+/// Forget the controller the boot brought up without dropping it: its memory
+/// is the OS's now.
+pub fn forget_boot_state() {
+    core::mem::forget(XHCI.get().take());
+}
+
 pub fn controller() -> &'static mut Xhci {
     XHCI.get().as_mut().unwrap()
 }
@@ -245,6 +259,7 @@ impl Xhci {
     }
 
     fn ring_doorbell(&self, slot: u32, target: u32) {
+        dma::sync();
         unsafe { core::arch::asm!("dsb sy") };
         write32(self.doorbells + 4 * slot as u64, target);
     }
@@ -329,11 +344,14 @@ impl Xhci {
     }
 
     fn next_event(&mut self) -> Option<[u32; 4]> {
+        dma::sync();
         let p = (self.events + self.event_index as u64 * 16) as *const u32;
         let dw3 = unsafe { p.add(3).read_volatile() };
         if dw3 & 1 != self.event_cycle {
             return None;
         }
+        dma::sync();
+        let dw3 = unsafe { p.add(3).read_volatile() };
         let e = unsafe { [p.read_volatile(), p.add(1).read_volatile(), p.add(2).read_volatile(), dw3] };
         self.event_index += 1;
         if self.event_index == EVENT_TRBS {
@@ -926,7 +944,9 @@ pub fn init() {
         return;
     };
     *REGISTERS.get() = Some(base);
-    crate::tables::on_exit_boot_services(leave_the_interrupt_line_to_the_os);
+    if !crate::rtmode::active() {
+        crate::tables::on_exit_boot_services(leave_the_interrupt_line_to_the_os);
+    }
     let xhci = match Xhci::init(base) {
         Ok(x) => x,
         Err(e) => {
@@ -936,7 +956,9 @@ pub fn init() {
     };
     let ports = xhci.max_ports;
     *XHCI.get() = Some(xhci);
-    crate::tables::on_exit_boot_services(|| controller().stop());
+    if !crate::rtmode::active() {
+        crate::tables::on_exit_boot_services(|| controller().stop());
+    }
 
     // SuperSpeed ports read empty until their links train; give them all the
     // same while, together.

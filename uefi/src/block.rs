@@ -324,12 +324,34 @@ pub fn gpt_data(path: &[u8]) -> Option<&'static [u8]> {
     GPT_DATA.get().iter().find(|(disk, _)| path.starts_with(&disk[..disk.len() - 4])).map(|(_, data)| data.as_slice())
 }
 
+/// The disks the drivers found, in the order they found them.
+pub struct Found {
+    pub name: &'static str,
+    pub disk: *mut dyn Disk,
+    pub whole: &'static Volume,
+}
+
+static FOUND: Global<Vec<Found>> = Global::new(Vec::new());
+
+pub fn found() -> &'static [Found] {
+    FOUND.get()
+}
+
+/// The window the variable store is in, if the disk lists it.
+pub fn store_partition(whole: &Volume) -> Option<(u64, u64)> {
+    partitions(whole).into_iter().find(|p| p.store).map(|p| (p.first, p.blocks))
+}
+
 fn remember_gpt(disk: &Volume, header: &[u8], table: &[u8], count: usize, size: usize) {
     let used: Vec<&[u8]> = (0..count).map(|i| &table[i * size..(i + 1) * size]).filter(|e| e[0..16].iter().any(|&b| b != 0)).collect();
     let mut data = header[..(le32(header, 12) as usize).clamp(92, header.len())].to_vec();
     data.extend_from_slice(&(used.len() as u64).to_le_bytes());
     used.iter().for_each(|e| data.extend_from_slice(e));
-    GPT_DATA.get().push((disk.path.clone(), data));
+    let all = GPT_DATA.get();
+    match all.iter_mut().find(|(path, _)| *path == disk.path) {
+        Some(known) => known.1 = data,
+        None => all.push((disk.path.clone(), data)),
+    }
 }
 
 fn gpt(disk: &Volume) -> Vec<Partition> {
@@ -370,12 +392,14 @@ pub fn fat_signature(boot: &[u8]) -> bool {
 /// Publish a disk a driver found, its partitions, and the file systems on
 /// them. `path` is the disk's device path.
 pub fn add_disk(disk: Box<dyn Disk>, path: Vec<u8>, name: &'static str) {
+    if crate::rtmode::active() {
+        crate::rtmode::offer(disk, name);
+        return;
+    }
     let disk: *mut dyn Disk = Box::into_raw(disk);
     let blocks = unsafe { (*disk).blocks() };
     let whole = publish(disk, 0, blocks, false, path);
-    if !crate::diskstore::taken() {
-        crate::diskstore::list(whole, name);
-    }
+    FOUND.get().push(Found { name, disk, whole });
     let parts = partitions(whole);
     info!("disk", "disk found"; name = name, mib = blocks * whole.block_size() as u64 >> 20,
         partitions = parts.len(), path = devpath::Text(&whole.path));
@@ -383,7 +407,7 @@ pub fn add_disk(disk: Box<dyn Disk>, path: Vec<u8>, name: &'static str) {
         crate::fat::mount(whole);
     }
     for p in parts {
-        if p.store && crate::diskstore::adopt(disk, p.first, p.blocks, name) {
+        if p.store {
             continue;
         }
         let path = Builder::from(&whole.path).node(devpath::MEDIA, devpath::MEDIA_HD, &p.node).done();

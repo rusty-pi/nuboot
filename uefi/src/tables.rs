@@ -456,6 +456,7 @@ extern "efiapi" fn exit_boot_services(_handle: efi::Handle, key: usize) -> efi::
         warn!("uefi", "ExitBootServices: a notification changed the map"; asked = key, current = mem::map().key);
         return efi::Status::INVALID_PARAMETER;
     }
+    crate::diskstore::snapshot();
     for f in QUIESCE.get().iter() {
         f();
     }

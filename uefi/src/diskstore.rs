@@ -5,8 +5,12 @@
 
 use alloc::boxed::Box;
 use alloc::vec;
+use alloc::vec::Vec;
 
-use crate::block::{Disk, Volume};
+use r_efi::protocols::{device_path, simple_file_system};
+
+use crate::block::{self, Disk, Volume};
+use crate::{devpath, fat, proto};
 use crate::store::{self, Medium};
 use crate::util::Global;
 use crate::window::{self, Blocks, Plan};
@@ -15,11 +19,18 @@ use crate::{info, warn};
 /// Where the store is, for the runtime services that write it at `ResetSystem`.
 #[derive(Clone, Copy)]
 pub struct Placement {
-    /// Whether the disk is the SD card, which is all the runtime flush can reach.
-    pub sd: bool,
+    /// What kind of disk it is, which decides how the runtime services reach it.
+    pub kind: Kind,
     /// The window's first block on the disk, and the disk's block size.
     pub first: u64,
     pub block_size: u32,
+}
+
+/// What sort of disk holds the store.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Sd,
+    Usb,
 }
 
 static PLACED: Global<Option<Placement>> = Global::new(None);
@@ -32,6 +43,48 @@ pub fn placement() -> Option<Placement> {
 /// Whether a disk holds the store already.
 pub fn taken() -> bool {
     PLACED.get().is_some()
+}
+
+/// The file system of one of `disk`'s partitions that holds `name` of length
+/// `len` (any length when `len` is none).
+fn holds(disk: &block::Found, name: &str, len: Option<u64>) -> bool {
+    let wide: Vec<u16> = name.encode_utf16().collect();
+    let prefix = &disk.whole.path[..disk.whole.path.len() - 4];
+    proto::with(Some(&simple_file_system::PROTOCOL_GUID)).into_iter().any(|fs| {
+        let Some(dp) = proto::get(fs, &device_path::PROTOCOL_GUID) else { return false };
+        devpath::bytes(dp as *const u8).starts_with(prefix) && fat::file_size(fs, &wide).is_some_and(|size| len.is_none_or(|l| l == size))
+    })
+}
+
+/// Keep the store on the disk the firmware came from, the one that holds
+/// `start4.elf` or the `boot.img` the bootloader started it out of. The
+/// bootloader says which medium: a `boot.img` in RAM says nothing of the disk
+/// under it, so that one is the disk that holds a `boot.img` of its length.
+/// A board that came off the network, or that the VPU does not say, keeps its
+/// variables in memory.
+pub fn choose() {
+    let Some(medium) = crate::mailbox::boot_medium() else {
+        info!("store", "the VPU does not say where the firmware came from, the variables stay in memory");
+        return;
+    };
+    let disks = block::found();
+    let picked = match medium.code {
+        0 => disks.iter().find(|d| d.name == "sd"),
+        2 => disks.iter().filter(|d| d.name == "usb").find(|d| holds(d, "start4.elf", None)).or_else(|| disks.iter().find(|d| d.name == "usb")),
+        5 => medium.ramdisk_len.and_then(|len| disks.iter().find(|d| holds(d, "boot.img", Some(len)))),
+        _ => None,
+    };
+    let Some(disk) = picked else {
+        info!("store", "no disk to keep the store on, the variables stay in memory"; medium = medium.code);
+        return;
+    };
+    list(disk.whole, disk.name);
+    match block::store_partition(disk.whole) {
+        Some((first, blocks)) => {
+            adopt(disk.disk, first, blocks, disk.name);
+        }
+        None => info!("store", "the disk the firmware came from does not hold the store, the variables stay in memory"; disk = disk.name),
+    }
 }
 
 struct Window {
@@ -133,21 +186,48 @@ pub fn adopt(disk: *mut dyn Disk, first: u64, blocks: u64, name: &'static str) -
     if taken() || window::range(block_size).is_none_or(|w| w.first != first || w.blocks != blocks) {
         return false;
     }
-    *PLACED.get() = Some(Placement { sd: name == "sd", first, block_size });
+    let kind = if name == "sd" { Kind::Sd } else { Kind::Usb };
+    *PLACED.get() = Some(Placement { kind, first, block_size });
     store::attach(Box::new(Window { disk, first, block_size }));
     info!("store", "the store is on the disk"; disk = name, first = first, blocks = blocks);
     true
 }
 
-/// Where the OS's writes go once the firmware is gone, if the store is on the
-/// SD card, which is all the flush at `ResetSystem` reaches.
-pub fn target() -> Option<crate::rtvar::Target> {
-    let placed = placement().filter(|p| p.sd && p.block_size == 512)?;
+static SNAPSHOT: Global<Option<crate::rtvar::Target>> = Global::new(None);
+
+/// Read where the log ends while the disk can still be read: the controllers
+/// stop at `ExitBootServices`, and the last write of boot services is made.
+pub fn snapshot() {
+    *SNAPSHOT.get() = target();
+}
+
+/// What [`snapshot`] read.
+pub fn snapshot_taken() -> Option<crate::rtvar::Target> {
+    SNAPSHOT.get().take()
+}
+
+/// Where the OS's writes go once the firmware is gone, if the store is on a
+/// disk the runtime services reach: the SD card, with 512-byte blocks, or a
+/// drive on the VL805.
+fn target() -> Option<crate::rtvar::Target> {
+    let placed = placement().filter(|p| p.kind == Kind::Usb || p.block_size == 512)?;
+    let bs = placed.block_size as usize;
     let (tail, end) = store::tail();
-    let skip = tail as usize % 512;
-    let mut head = [0u8; 512];
-    if !store::read_raw(tail - skip as u32, &mut head) {
+    let bank = end - (window::LEN / 2) as u32;
+    let skip = tail as usize % bs;
+    let mut head = [0u8; 4096];
+    let mut expect = [0u8; 8];
+    if !store::read_raw(tail - skip as u32, &mut head[..bs]) || !store::read_raw(bank, &mut expect) {
         return None;
     }
-    Some(crate::rtvar::Target { lba: placed.first + (tail / 512) as u64, head, skip, room: (end - tail) as usize })
+    Some(crate::rtvar::Target {
+        kind: placed.kind,
+        block: bs,
+        lba: placed.first + (tail as usize / bs) as u64,
+        head,
+        skip,
+        room: (end - tail) as usize,
+        bank_lba: placed.first + (bank as usize / bs) as u64,
+        expect,
+    })
 }
