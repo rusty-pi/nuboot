@@ -349,6 +349,20 @@ def check_signing(r):
     expect_rc(r, "load-external-long", 0x95 | 0x40 | 0x200)
     expect_rc(r, "flush-external", 0)
 
+    final = r.get("final-events")
+    if not final or "eventlog-after" not in r:
+        fail("no final events table, or no log after the event")
+    version, count = struct.unpack("<QQ", final[:16])
+    if version != 1 or count != 1:
+        fail(f"final events table: version {version}, {count} events; wanted version 1 and the one event logged after the log was asked for")
+    event = struct.pack("<III", 9, 0xD, 1) + struct.pack("<H", 0xB) + sha256(b"final") + struct.pack("<I", 5) + b"final"
+    if final[16:] != event:
+        fail(f"final events table holds {final[16:].hex()}, wanted {event.hex()}")
+    _, events_before = replay(r["eventlog"])
+    _, events_after = replay(r["eventlog-after"])
+    if events_after[-1][:2] != (9, 0xD) or events_after[-1][3] != b"final" or any(e[3] == b"final" for e in events_before):
+        fail("the event logged after the log was asked for is in the log as well, and not in the log that was asked for")
+
 
 if __name__ == "__main__":
     main()

@@ -48,13 +48,20 @@ Shim, GRUB, systemd-boot and systemd-stub measure the rest through
 the sections of a unified kernel image in PCR 11, shim the MOK list in PCR 14,
 GRUB its commands and files in PCRs 8 and 9.
 
+The log is the one `GetEventLog` returns. An event logged after a loader has
+asked for it is also appended to the final events table
+(`EFI_TCG2_FINAL_EVENTS_TABLE`, a configuration table), which the Linux EFI
+stub's copy of the log needs to be completed with: the stub measures the initrd
+after it has taken the log. The table holds 32 KiB of events.
+
 Nothing is measured into PCRs 2, 3 and 6: there are no option ROMs and no
 suspend. The ExitBootServices actions are not logged.
 
 ## What it implements
 
-One bank, SHA-256, of 24 PCRs. Every PCR can be extended from locality 0 but
-17-22 (DRTM, which nothing here does), and PCRs 16 and 23 can be reset.
+One bank, SHA-256, of 24 PCRs. They start at zero but for 17-22 (DRTM, which
+nothing here does), which start at all ones. Every PCR can be extended from
+locality 0 but 17-22, and PCRs 16 and 23 can be reset.
 
 | command | |
 |---|---|
@@ -72,7 +79,7 @@ One bank, SHA-256, of 24 PCRs. Every PCR can be extended from locality 0 but
 | `TPM2_EvictControl` | a primary key made persistent at a handle in the owner's or the platform's range, two at most, and removed again; they last until the TPM restarts, and a tool that finds none makes the primary again |
 | `TPM2_StartAuthSession` | HMAC, policy and trial sessions, unsalted or salted to a primary key with ECDH, bound to nothing or to an object, with AES-128-CFB for parameter encryption or none |
 | `TPM2_NV_DefineSpace`, `NV_UndefineSpace`, `NV_ReadPublic`, `NV_Read`, `NV_Write`, `NV_Extend`, `NV_Increment`, `NV_SetBits` | ordinary, counter, bit field and extend indices under the owner's or the platform's authorization, with the index's own authorization value or policy as its attributes say; eight indices of up to 256 bytes, kept in the variable store ([below](#nv-indices)) |
-| `TPM2_PolicyPCR`, `PolicyOR`, `PolicyAuthValue`, `PolicyPassword`, `PolicySecret`, `PolicyAuthorize`, `PolicyCommandCode`, `PolicyNvWritten`, `PolicyGetDigest`, `PolicyRestart` | |
+| `TPM2_PolicyPCR`, `PolicyOR`, `PolicyAuthValue`, `PolicyPassword`, `PolicySecret`, `PolicyAuthorize`, `PolicyAuthorizeNV`, `PolicyCommandCode`, `PolicyNvWritten`, `PolicyGetDigest`, `PolicyRestart` | `PolicyAuthorizeNV` takes the policy from the first 34 bytes of an index, a SHA-256 `TPMT_HA`, as `systemd-pcrlock` stores its policy |
 
 Anything else gets `TPM_RC_COMMAND_CODE`. There are no RSA keys of the TPM's own
 (an RSA public key can be loaded to verify with) and no
