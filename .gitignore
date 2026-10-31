@@ -19,3 +19,4 @@
 /tools/acpi-check/target
 /tools/log-check/target
 __pycache__/
+/tools/store-check/target

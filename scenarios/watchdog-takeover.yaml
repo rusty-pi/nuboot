@@ -14,10 +14,7 @@ boot:
     - "61=0xc0de7556"
     - "62=0xc0de8667"
     - "63=0xc0de9778"
-  sd:
-    files:
-      start4.elf: "../out/start4-test.elf"
-      EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-takeover.efi"
+  sd: "../out/card-watchdog-takeover.img"
   until: "watchdog test: the board reset and booted again"
   wall_secs: 900
 
@@ -28,5 +25,5 @@ milestones:
     line: "the OS has the boot watchdog, left to it"
   - why: "The board reset and start4.elf armed the watchdog again."
     line: "boot watchdog armed  budget_s=30"
-  - why: "The board reset and the application ran again: what it left in the flash store was still there."
+  - why: "The board reset and the application ran again: what it left in the variable store was still there."
     line: "watchdog test: the board reset and booted again"

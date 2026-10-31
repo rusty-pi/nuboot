@@ -119,8 +119,7 @@ From the boot ROM to the threads that run for as long as the board is up:
 | systemd-boot and systemd-stub (a unified kernel image) measuring into the TPM | ✅ | ➖ | ➖ | ➖ |
 | Firmware update capsules: one signed by a key in `db` with a newer version is verified; an older one, a changed one, one signed by another key and a file that is not a capsule are refused | ✅ | ✅ | ➖ | ➖ |
 | Firmware update, the firmware's side: a capsule staged as `tryboot.img` with the bootloader's tryboot request, the updated firmware proven once it reaches the OS and committed as `boot.img`, or dropped when it does not | ✅ | ✅ | ➖ | ➖ |
-| EEPROM update, the firmware's side: a capsule staged with the variable store saved, dropped when the bootloader did not update the EEPROM | ✅ | ✅ | ➖ | ➖ |
-| EEPROM update the stock bootloader makes from the capsule's `pieeprom.upd`, with the variable store put back | ✅ | ➖ | ➖ | ➖ |
+| EEPROM update, the firmware's side: a capsule staged, dropped when the bootloader did not update the EEPROM, reported as done when the EEPROM carries the update's time | ✅ | ➖ | ➖ | ➖ |
 | The firmware cryptography service: the fused key signs and HMACs for UEFI, gives its public key, never itself, and is locked from the OS | ✅ | ✅ | ➖ | ➖ |
 | Linux 6.12 (Debian's arm64 kernel in a signed unified kernel image, started by systemd-boot): its loader variables are there, Secure Boot reads as on and the kernel locks down, `efivarfs` and the ESRT read, `tools/tpm-vpu` (signed with a key in `db`) gives `/dev/tpm0` with the PCRs and the event log | ✅ | ✅ | ➖ | ➖ |
 | Linux 6.12 as above: `bootctl status` (systemd 257) reads Secure Boot as enabled and the unified kernel image as measured | ✅ | ✅ | ➖ | ➖ |
@@ -136,8 +135,9 @@ From the boot ROM to the threads that run for as long as the board is up:
 | The ARM at 1800 MHz on a 4B rev 1.4 and at 1500 MHz on a 4B rev 1.2, whose core rail is on the system PMIC | ✅ | ➖ | ➖ | ➖ |
 | The network interface gets the address in the OTP's MAC rows, the one Raspberry Pi's firmware gives it; blank rows give a locally administered address from the serial number | ✅ | ✅ | ➖ | ➖ |
 | The GPIO expander's two SD pins over the property mailbox, every other pin refused | ✅ | ✅ | ➖ | ➖ |
-| Variables the OS writes through the runtime services, a signed `db` update among them, kept across a reset | ✅ | ✅ | ➖ | ➖ |
-| The flash variable store has room for the OS's writes after a boot: a bank the OS filled with the variables it replaced is started afresh with what the variables still need, and the OS writes again | ✅ | ✅ | ➖ | ➖ |
+| The variable store in a window on the boot disk, listed in the partition table of a GPT disk (checked with `sfdisk`) | ✅ | ➖ | ➖ | ➖ |
+| Variables the OS writes through the runtime services, a signed `db` update among them, appended to the store on the SD card at `ResetSystem` and kept across the reset | ✅ | ➖ | ➖ | ➖ |
+| The variable store has room for the OS's writes after a boot: a bank the OS filled with the variables it replaced is started afresh with what the variables still need, and the OS writes again | ✅ | ➖ | ➖ | ➖ |
 | A shutdown through the runtime services, after `ExitBootServices`, ends in the bootloader's halt | ✅ | ➖ | ➖ | ➖ |
 | Update bundles: an update capsule's bundle is kept, left in RAM across a reset, checked against the update key and run in the update slot by the firmware the bootloader loaded, and proven at `ExitBootServices`; one no update key signed is refused | ✅ | ✅ | ➖ | ➖ |
 | A kept update bundle is staged again at the next power-up and runs; one that does not reach the OS is tried three times, counted in its file name, and then dropped for the one that ran before it; one that does is blessed and the older ones are removed | ✅ | ✅ | ➖ | ➖ |
@@ -218,6 +218,7 @@ pimu boot --eeprom out/stock-pieeprom.bin --sd boot/
 | `src/tpm2.rs`, `src/keystore.rs`, `src/crypto.rs`, `src/rng.rs` | The TPM 2.0 on the VPU, its PCRs, the secrets derived from the device private key and the firmware cryptography service for it, the random number generator |
 | `src/console.rs`, `src/cm.rs`, `src/otp.rs`, `src/board.rs` | The PL011, clock generators, OTP and the board's identity |
 | `src/spi_flash.rs`, `src/eeprom.rs`, `src/elf.rs`, `src/cache.rs` | The EEPROM and its sections, loading the ARM's image |
+| `src/seal.rs` | The seal on the OS's variable writes |
 | `src/pcie.rs`, `src/vl805.rs`, `src/usb.rs`, `src/lzss.rs` | The PCIe link, and the VL805 and its firmware |
 | `src/wake.rs`, `src/genet.rs` | Waiting for a magic packet after the OS powers the board off, and the Ethernet MAC and PHY that wait on |
 | `src/i2c.rs`, `src/expander.rs`, `src/pmic.rs` | The master the PMICs and the GPIO expander hang off, the expander's pins, and the SoC core rail and the PMICs' status |

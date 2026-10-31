@@ -38,7 +38,7 @@ this order:
 | 7 | `EV_EFI_VARIABLE_DRIVER_CONFIG` | the Secure Boot configuration: `SecureBoot`, `PK`, `KEK`, `db` and `dbx` |
 | 1 | `EV_EFI_HANDOFF_TABLES2` | the pointers to the ACPI and SMBIOS tables handed to the OS |
 | 0-7 | `EV_SEPARATOR` | one in each PCR, once the configuration is measured |
-| 5 | `EV_EFI_GPT_EVENT` | the GPT of the disk the boot option is on, when it has one |
+| 5 | `EV_EFI_GPT_EVENT` | the GPT of the disk the boot option is on, when it has one, with the entry of the variable store's window if the firmware listed it ([uefi.md](uefi.md#the-variable-store)) |
 | 4 | `EV_EFI_ACTION` | `Calling EFI Application from Boot Option`, ahead of the boot option's image |
 | 4 | `EV_EFI_BOOT_SERVICES_APPLICATION` | each image UEFI loads |
 | 7 | `EV_EFI_VARIABLE_AUTHORITY` | the `db` certificate that verified each image |

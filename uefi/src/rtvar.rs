@@ -6,14 +6,19 @@
 //! the board but one page, the mailbox's. The variables that are readable at
 //! runtime are copied into it at `ExitBootServices`.
 //!
-//! A write the OS makes to a non-volatile variable no signature guards goes to
-//! the VPU too, which signs it with the device key and appends it to the flash
-//! store, so that it is there at the next boot. A write to `KEK`, `db` or
-//! `dbx` is made of a signature and is appended as it is, for UEFI to check at
+//! A write the OS makes to a non-volatile variable no signature guards is
+//! sealed by the VPU with the device key, and kept with the records of the
+//! other writes until `ResetSystem`, which appends them to the variable store
+//! on the SD card (the OS owns the card until then). A write to `KEK`, `db` or
+//! `dbx` is made of a signature and is kept as it is, for UEFI to check at
 //! the next boot against `PK` and the `KEK`s, and takes effect then; the table
 //! keeps the old value until then. The VPU's answer comes in the message's own
 //! buffer: its channel is not the one the OS's mailbox driver listens on, and
 //! nothing is posted back.
+//!
+//! Writes the board loses power or resets without `ResetSystem` for are lost.
+//! A store that is not on the SD card is not reached from here: the writes
+//! last until reset.
 
 use core::ffi::c_void;
 
@@ -46,8 +51,8 @@ const MAIL1_STATUS: u64 = 0xfe00_b8b8;
 const MAIL_FULL: u32 = 1 << 31;
 const CHANNEL_RUNTIME: u32 = 7;
 const RESPONSE: u32 = 0x8000_0000;
-const TAG_STORE_APPEND: u32 = 0x0003_00a6;
-const TAG_STORE_PERSIST: u32 = 0x0003_00a7;
+const TAG_STORE_SEAL: u32 = 0x0003_00a9;
+const TAG_STORE_PREPARE_CARD: u32 = 0x0003_00aa;
 /// The most the VPU takes of a variable.
 const PERSIST_MAX: usize = 16 * 1024;
 const PERSIST_NAME_MAX: usize = 512;
@@ -56,6 +61,8 @@ const NV: u32 = efi::VARIABLE_NON_VOLATILE;
 const SET: u32 = 1;
 const DELETE: u32 = 2;
 const RECORD_MAGIC: u32 = 0x5245_4331;
+/// The device key's seal on a record.
+const SEAL: usize = 32;
 
 const MESSAGE_WORDS: usize = 6 + 8 + (PERSIST_MAX + PERSIST_NAME_MAX + 4096) / 4;
 
@@ -64,6 +71,55 @@ const MESSAGE_WORDS: usize = 6 + 8 + (PERSIST_MAX + PERSIST_NAME_MAX + 4096) / 4
 struct Message([u32; MESSAGE_WORDS]);
 
 static MESSAGE: Global<Message> = Global::new(Message([0; MESSAGE_WORDS]));
+
+/// The block size of the SD card, which the flush writes in.
+const BLOCK: usize = 512;
+/// The most records written since boot that are kept for `ResetSystem`.
+const QUEUE_MAX: usize = 64 * 1024;
+
+/// The records to append to the store: the block the log ends in as it was, up
+/// to where the log ends, then the records.
+#[repr(C, align(8))]
+struct Queue([u8; BLOCK + QUEUE_MAX + BLOCK]);
+
+static QUEUE: Global<Queue> = Global::new(Queue([0; BLOCK + QUEUE_MAX + BLOCK]));
+
+/// Where the queue goes and how much of it is used.
+struct Pending {
+    /// Whether the store is on the SD card, and the OS may write to it.
+    armed: bool,
+    /// The card's block the log ends in, and where in it.
+    lba: u64,
+    skip: usize,
+    /// How much of the queue the records take, and how much more fits.
+    len: usize,
+    room: usize,
+    /// The number of the next write the VPU seals.
+    seq: u64,
+}
+
+static PENDING: Global<Pending> = Global::new(Pending { armed: false, lba: 0, skip: 0, len: 0, room: 0, seq: 0 });
+
+/// Where the log of the store ends, for the writes of the OS to be added to.
+pub struct Target {
+    pub lba: u64,
+    /// The bytes of that block before the end of the log.
+    pub head: [u8; BLOCK],
+    pub skip: usize,
+    /// How much room the bank has left.
+    pub room: usize,
+}
+
+/// Keep the writes the OS makes for `ResetSystem`, numbered from `seq`, when
+/// the store is where the flush reaches.
+pub fn arm(seq: u64, target: Option<Target>) {
+    let p = PENDING.get();
+    *p = Pending { armed: false, lba: 0, skip: 0, len: 0, room: 0, seq };
+    if let Some(t) = target {
+        QUEUE.get().0[..BLOCK].copy_from_slice(&t.head);
+        *p = Pending { armed: true, lba: t.lba, skip: t.skip, len: 0, room: t.room.min(QUEUE_MAX), seq };
+    }
+}
 
 #[repr(C, align(8))]
 struct Table([u8; CAPACITY]);
@@ -296,12 +352,59 @@ fn post(tag: u32, len: usize) -> Option<u32> {
     }
 }
 
-/// Have the VPU sign and store a change of a non-volatile variable no
-/// signature guards: `data` is what it holds now, none for a deletion. The
-/// variable stays in the table whatever the answer.
+/// Add a record to the queue. Whether it fitted.
+fn queue_record(kind: u32, attributes: u32, guid: &[u8; 16], time: &[u8], name: &[u16], data: &[u8], auth: &[u8]) -> bool {
+    let body = 60 + name.len() * 2 + data.len() + auth.len();
+    let total = body.next_multiple_of(4) + 32;
+    let p = PENDING.get();
+    if total > p.room - p.len.min(p.room) {
+        return false;
+    }
+    let at = p.skip + p.len;
+    let out = &mut QUEUE.get().0[at..at + total];
+    out.fill(0);
+    out[0..4].copy_from_slice(&RECORD_MAGIC.to_le_bytes());
+    out[4..8].copy_from_slice(&(total as u32).to_le_bytes());
+    out[8..12].copy_from_slice(&kind.to_le_bytes());
+    out[12..16].copy_from_slice(&attributes.to_le_bytes());
+    out[16..32].copy_from_slice(guid);
+    out[32..48].copy_from_slice(time);
+    out[48..52].copy_from_slice(&(name.len() as u32).to_le_bytes());
+    out[52..56].copy_from_slice(&(data.len() as u32).to_le_bytes());
+    out[56..60].copy_from_slice(&(auth.len() as u32).to_le_bytes());
+    for (i, c) in name.iter().enumerate() {
+        out[60 + 2 * i..62 + 2 * i].copy_from_slice(&c.to_le_bytes());
+    }
+    let data_at = 60 + name.len() * 2;
+    out[data_at..data_at + data.len()].copy_from_slice(data);
+    out[data_at + data.len()..body].copy_from_slice(auth);
+    let digest = crate::sha256::digest(&out[..body.next_multiple_of(4)]);
+    out[body.next_multiple_of(4)..total].copy_from_slice(&digest);
+    p.len += total;
+    true
+}
+
+/// Whether a record of a name of `units` characters, `data` bytes of value and
+/// `auth` bytes of seal or signature still fits the queue.
+fn queue_fits(units: usize, data: usize, auth: usize) -> bool {
+    let p = PENDING.get();
+    let total = (60 + units * 2 + data + auth).next_multiple_of(4) + 32;
+    total <= p.room - p.len.min(p.room)
+}
+
+/// Have the VPU seal a change of a non-volatile variable no signature guards,
+/// and keep the record for `ResetSystem`: `data` is what it holds now, none
+/// for a deletion. The variable stays in the table whatever the answer.
 fn persist(kind: u32, attributes: u32, guid: &efi::Guid, name: &[u16], data: *const u8, len: usize) -> efi::Status {
-    if attributes & NV == 0 {
+    if attributes & NV == 0 || !PENDING.get().armed {
         return efi::Status::SUCCESS;
+    }
+    if !queue_fits(name.len(), len, SEAL) {
+        return efi::Status::OUT_OF_RESOURCES;
+    }
+    let seq = PENDING.get().seq;
+    if seq == u64::MAX {
+        return efi::Status::OUT_OF_RESOURCES;
     }
     let out = value();
     out[0..4].copy_from_slice(&kind.to_le_bytes());
@@ -309,17 +412,28 @@ fn persist(kind: u32, attributes: u32, guid: &efi::Guid, name: &[u16], data: *co
     out[8..12].copy_from_slice(&((name.len() * 2) as u32).to_le_bytes());
     out[12..16].copy_from_slice(&(len as u32).to_le_bytes());
     out[16..32].copy_from_slice(guid.as_bytes());
+    out[32..40].copy_from_slice(&seq.to_le_bytes());
     for (i, c) in name.iter().enumerate() {
-        out[32 + 2 * i..34 + 2 * i].copy_from_slice(&c.to_le_bytes());
+        out[40 + 2 * i..42 + 2 * i].copy_from_slice(&c.to_le_bytes());
     }
-    let at = 32 + (name.len() * 2).next_multiple_of(4);
-    out[32 + name.len() * 2..at].fill(0);
+    let at = 40 + (name.len() * 2).next_multiple_of(4);
+    out[40 + name.len() * 2..at].fill(0);
     unsafe { core::ptr::copy_nonoverlapping(data, out.as_mut_ptr().add(at), len) };
-    match post(TAG_STORE_PERSIST, at + len) {
-        Some(0) => efi::Status::SUCCESS,
-        // No device key to sign with: the variable lasts until reset.
+    match post(TAG_STORE_SEAL, at + len) {
+        Some(0) => {
+            let mut seal = [0u8; SEAL];
+            seal.copy_from_slice(&value()[4..4 + SEAL]);
+            let mut time = [0u8; 16];
+            time[..8].copy_from_slice(&seq.to_le_bytes());
+            let data = if len == 0 { &[][..] } else { unsafe { core::slice::from_raw_parts(data, len) } };
+            if !queue_record(kind, attributes, guid.as_bytes(), &time, name, data, &seal) {
+                return efi::Status::OUT_OF_RESOURCES;
+            }
+            PENDING.get().seq = seq + 1;
+            efi::Status::SUCCESS
+        }
+        // No device key to seal with: the variable lasts until reset.
         Some(3) => efi::Status::SUCCESS,
-        Some(4) => efi::Status::OUT_OF_RESOURCES,
         Some(1) | Some(2) => efi::Status::INVALID_PARAMETER,
         _ => efi::Status::DEVICE_ERROR,
     }
@@ -327,40 +441,40 @@ fn persist(kind: u32, attributes: u32, guid: &efi::Guid, name: &[u16], data: *co
 
 /// A write of `KEK`, `db` or `dbx`, the value `bytes` that `SetVariable` was
 /// given: a time, a certificate holding a signature, and the new value. The
-/// VPU appends the record UEFI made of such a write when it took one.
+/// record UEFI makes of such a write when it takes one is kept for
+/// `ResetSystem`.
 fn write_key(name: &[u16], guid: &efi::Guid, attributes: u32, bytes: &[u8], append: bool) -> efi::Status {
     let length = u32::from_le_bytes([bytes.get(16).copied().unwrap_or(0), bytes.get(17).copied().unwrap_or(0), bytes.get(18).copied().unwrap_or(0), bytes.get(19).copied().unwrap_or(0)]) as usize;
     let end = 16usize.saturating_add(length);
     if bytes.len() < 40 || length < 24 || end > bytes.len() || name.len() * 2 > PERSIST_NAME_MAX || bytes.len() > PERSIST_MAX {
         return efi::Status::INVALID_PARAMETER;
     }
+    if !PENDING.get().armed {
+        return efi::Status::DEVICE_ERROR;
+    }
     let (time, descriptor, payload) = (&bytes[..16], &bytes[16..end], &bytes[end..]);
     let kind = if payload.is_empty() && !append { DELETE } else { SET };
-    let body = 60 + name.len() * 2 + payload.len() + descriptor.len();
-    let total = body.next_multiple_of(4) + 32;
-    let out = value();
-    out[..total].fill(0);
-    out[0..4].copy_from_slice(&RECORD_MAGIC.to_le_bytes());
-    out[4..8].copy_from_slice(&(total as u32).to_le_bytes());
-    out[8..12].copy_from_slice(&kind.to_le_bytes());
-    out[12..16].copy_from_slice(&attributes.to_le_bytes());
-    out[16..32].copy_from_slice(guid.as_bytes());
-    out[32..48].copy_from_slice(time);
-    out[48..52].copy_from_slice(&(name.len() as u32).to_le_bytes());
-    out[52..56].copy_from_slice(&(payload.len() as u32).to_le_bytes());
-    out[56..60].copy_from_slice(&(descriptor.len() as u32).to_le_bytes());
-    for (i, c) in name.iter().enumerate() {
-        out[60 + 2 * i..62 + 2 * i].copy_from_slice(&c.to_le_bytes());
+    if queue_record(kind, attributes, guid.as_bytes(), time, name, payload, descriptor) { efi::Status::SUCCESS } else { efi::Status::OUT_OF_RESOURCES }
+}
+
+/// `ResetSystem`: append what the OS wrote since boot to the store on the SD
+/// card. The OS has quiesced its driver for the card; the VPU gives the card
+/// and its host back to this firmware as they were at the start, and this
+/// writes the records after the end of the log. What cannot be written is lost
+/// with the reset, which nothing can report.
+pub fn flush_store() {
+    let p = PENDING.get();
+    if !p.armed || p.len == 0 {
+        return;
     }
-    let data_at = 60 + name.len() * 2;
-    out[data_at..data_at + payload.len()].copy_from_slice(payload);
-    out[data_at + payload.len()..data_at + payload.len() + descriptor.len()].copy_from_slice(descriptor);
-    let digest = crate::sha256::digest(&out[..body.next_multiple_of(4)]);
-    out[body.next_multiple_of(4)..total].copy_from_slice(&digest);
-    match post(TAG_STORE_APPEND, total) {
-        Some(0) => efi::Status::SUCCESS,
-        Some(4) => efi::Status::OUT_OF_RESOURCES,
-        _ => efi::Status::DEVICE_ERROR,
+    value()[..4].fill(0);
+    if post(TAG_STORE_PREPARE_CARD, 4) != Some(0) {
+        return;
+    }
+    let end = (p.skip + p.len).next_multiple_of(BLOCK);
+    QUEUE.get().0[p.skip + p.len..end].fill(0xff);
+    if let Some(mut card) = crate::sd::Runtime::open() {
+        card.write(p.lba, &QUEUE.get().0[..end]);
     }
 }
 

@@ -1,0 +1,13 @@
+[package]
+name = "store-check"
+version = "0.0.0"
+edition = "2024"
+license = "MIT"
+description = "The UEFI firmware's variable store and the window it keeps on the boot disk, built for the host and checked on disk images."
+
+[workspace]
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]

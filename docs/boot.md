@@ -65,12 +65,10 @@ rules). A board that boots from a medium with no `boot.img` has no such file.
 | from | what |
 |---|---|
 | `0x00000` | the bootloader's sections: the boot ROM's bootcode, `bootmain`, the SDRAM training firmware, `vl805hub.bin`, `vl805mcu.bin`, its configuration |
-| `0x74000` | the variable store, two banks of 20 KiB ([uefi.md](uefi.md#the-variable-store)) |
 | `0x7fff8` | after an update, its time and the time's complement, which the ESRT reports as the EEPROM's version |
 
-The sections end near `0x73068`; the store sits in the flash that follows,
-which the bootloader and its signature do not cover. Writing a whole new
-`pieeprom.bin` clears the store.
+The sections end near `0x73068`. The firmware only reads the EEPROM: the
+variable store is on the boot disk ([uefi.md](uefi.md#the-variable-store)).
 
 ## Boot watchdog
 
@@ -214,13 +212,13 @@ pimu boot --scenario scenarios/capsule-stage.yaml   # a capsule written as trybo
 pimu boot --scenario scenarios/capsule-trial.yaml   # the updated firmware proves itself
 pimu boot --scenario scenarios/capsule-commit.yaml  # the proven update becomes boot.img
 pimu boot --scenario scenarios/capsule-drop.yaml    # an update that never reached the OS is dropped
-pimu boot --scenario scenarios/capsule-eeprom-stage.yaml    # an EEPROM update staged, the store saved
-pimu boot --scenario scenarios/capsule-eeprom-restore.yaml  # after it, the store put back
+pimu boot --scenario scenarios/capsule-eeprom-stage.yaml    # an EEPROM update staged
+pimu boot --scenario scenarios/capsule-eeprom-updated.yaml  # after the bootloader made it
 pimu boot --scenario scenarios/capsule-eeprom-failed.yaml   # an EEPROM update the bootloader did not make
 pimu boot --scenario scenarios/runtime-variables.yaml  # variables through the runtime services
 pimu boot --scenario scenarios/persist.yaml     # what the OS writes through them outlasts a reset
 pimu boot --scenario scenarios/shutdown.yaml    # a shutdown through them ends in the bootloader's halt
-pimu boot --scenario scenarios/store-compact.yaml  # the flash store has room again at the next boot
+pimu boot --scenario scenarios/store-compact.yaml  # the store has room again at the next boot
 pimu boot --scenario scenarios/crypto.yaml      # the firmware cryptography service, locked from the OS
 scripts/build-linux-test.sh && pimu boot --scenario scenarios/linux.yaml  # Debian's kernel, from its own initramfs, to a power off a magic packet wakes from
 pimu boot --scenario scenarios/linux-acpi.yaml   # the same kernel with acpi=on
@@ -247,9 +245,9 @@ they are signed with ([uefi.md](uefi.md#secure-boot)).
   and, on channel 6, the TPM's doorbell (the ACPI start method of the TPM's
   command response buffer, which makes the VPU run the command in the page at
   `0x3EBFF000`, [tpm2.md](tpm2.md#the-command-response-buffer)), and, on channel 7 for the
-  runtime services, the store's `0x000300a6` (append the record of a signed
-  `KEK`, `db` or `dbx` update as it is) and `0x000300a7` (seal and append a
-  variable's write), and, for the SD card's regulators, the GPIO expander's
+  runtime services, the store's `0x000300a9` (seal a variable's write) and
+  `0x000300aa` (power the SD card off and on and hand its host back, so that the
+  runtime services can write the store at `ResetSystem`), and, for the SD card's regulators, the GPIO expander's
   two SD pins (`0x00030041`, `0x00038041`, `0x00030043` and `0x00038043`: the
   card's power switch and its signalling voltage select), and no other tag. None
   returns a fuse. The expander's other pins, which belong to the radios, the

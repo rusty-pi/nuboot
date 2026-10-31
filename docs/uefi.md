@@ -57,7 +57,7 @@ from `start4.elf`'s:
 | Device tree | Passed on to the OS as the `EFI_DTB_TABLE` configuration table. Besides the stock tree's content it has the memory, the network address, the TPM, and the board's identity: `serial-number` and `rusty-pi,board-revision` in the root. The wireless chip's SD host (`/soc/mmcnr`) and Bluetooth are disabled, and on BCM2711 C0 the SD host's bus (`/emmc2bus`) has its DMA window of the low 4 GiB, as the stock firmware gives it |
 | SMBIOS | Version 3.1.1, as the `EFI_SMBIOS3_TABLE` configuration table, whichever way the OS describes the board: the firmware (its vendor, the commit and its date), the system (maker, the board's name from its revision code, the revision code, the serial number and a UUID made from it), the board and its enclosure, the processor and the memory. `/sys/class/dmi/id`, `dmidecode`, `hostnamectl` and fwupd's hardware IDs read them, and an OS on the ACPI tables has no device tree to get the model and serial number from |
 | ACPI | The tables of the [next section](#acpi), as the `EFI_ACPI_20_TABLE_GUID` configuration table |
-| Variables | Held in RAM, with the non-volatile ones also in the flash store ([below](#the-variable-store)) |
+| Variables | Held in RAM, with the non-volatile ones also in the variable store on the boot disk ([below](#the-variable-store)) |
 
 The SD card is tried before USB.
 
@@ -290,13 +290,37 @@ scripts/mkauth.py keys/kek.key keys/kek.crt db customer.crt db-customer.auth
 ```
 
 An accepted write takes effect for the next `LoadImage` and is kept in the
-flash store.
+variable store.
 
 ### The variable store
 
-Non-volatile variables are kept in the flash after the stock bootloader's
-sections ([boot.md](boot.md#what-the-eeprom-holds-besides-the-bootloader)), a
-log in two banks of 20 KiB from `0x74000`, and come back at the next boot.
+Non-volatile variables are kept in a window of 512 KiB on the boot disk, from
+byte offset 512 KiB, and come back at the next boot. The window is two banks of
+256 KiB, each a log of records. The firmware never writes the EEPROM: updating
+it leaves the store as it is.
+
+**Where.** Only a GPT disk holds the store; an MBR disk has none. The window
+is in the gap that partitioning tools leave in front of the first partition. The
+SD card holds the store when it can, otherwise the first USB disk that can. The firmware lists the window in the disk's partition
+table as a partition of its own, so that a tool which discards the gap
+(`systemd-repart` does) leaves it alone, and an OS sees a partition of a type it
+has no use for (type `0ca9cdc0-6c28-49a6-a041-eeec6123df3a`). The listing is
+made once, when all of these hold, and changes nothing else on the disk:
+
+- The GPT is intact: its two headers and entry arrays pass their checksums
+  and agree.
+- No partition starts before the end of the window or reaches into it, and the
+  table has a free entry.
+- The window is blank: all zeros, or all ones.
+
+The first block partitions may use is moved down to the window if it was above
+it, in both headers. A disk that does not hold these is left alone
+and logged with the reason (`this disk cannot hold the store`); with no disk
+that holds the store, variables stay in RAM and a signed update of `KEK`, `db`
+or `dbx` cannot be kept. The store partition is not published to the EFI
+applications.
+
+**Records.**
 
 - `KEK`, `db` and `dbx` are stored as the signed writes that made them. Every
   boot starts from the built-in keys and checks each stored write again against
@@ -305,66 +329,78 @@ log in two banks of 20 KiB from `0x74000`, and come back at the next boot.
   with a seal: the device private key's HMAC-SHA256
   ([keystore.md](keystore.md#the-firmware-cryptography-service)) of the SHA-256
   of its attributes, name, value and a counter, which the VPU computes, so the
-  firmware never hands the key to the ARM. A record whose seal does not match, or whose
-  counter is not above the one before it, is ignored. A variable is at most
-  16 KiB.
+  firmware never hands the key to the ARM. A record whose seal does not match, or
+  whose counter is not above the one before it, is ignored. A variable is at
+  most 16 KiB.
 - A record is intact when its framing and SHA-256 are. One that is not, such as
   a write a power loss cut short, is stepped over to the next intact one, and
   the store moves to the other bank without it at that boot.
 - A bank more than half full at boot is replaced by the other, started with
-  the records the variables still need, when that frees room: the VPU only
-  appends once UEFI is gone, and the OS's writes fail while the bank is full.
+  the records the variables still need, when that frees room: nothing can make
+  room once UEFI is gone, and the OS's writes fail when the bank is full.
   What the boot refused goes with what the writes replaced: a write signed by
   keys the board does not hold, and a variable that is not the OS's. A board
   with no device private key keeps its bank, since it read none of the plain
   records, and so does a boot in which the VPU did not answer for a record,
   which may be sound.
 
-The OS can write the flash, and can drop records, but not make one: the
-device key seals for it only through the VPU's runtime tag, in a domain UEFI
-accepts for a variable of the OS's own and nothing else (below). UEFI forbids
-the device key to sign and to HMAC at `ExitBootServices`, and stops the boot
-when the VPU does not say it is locked. Dropping the newest record of a
-variable returns it to its previous value, which for a `dbx` update is to
-revoke less, and erasing both banks returns the keys the firmware was built
-with. Nothing outside the flash says how many records there should be, so the
-store cannot tell a rollback from an older state; the keys are measured into
-PCR 7 ([tpm2.md](tpm2.md#what-is-measured)), which is what a TPM policy
-notices it by. Where the flash does not answer, or
-no device private key is fused, there is no seal and a
-variable other than `KEK`, `db` and `dbx` lasts until reset. Writing a whole new
-`pieeprom.bin` clears the store.
+The OS owns the disk after `ExitBootServices`. It can drop or replace records,
+but not make one: the device key seals for it only through the VPU's runtime
+tag, in a domain UEFI accepts for a variable of the OS's own and nothing else
+(below). UEFI forbids the device key to sign and to HMAC at `ExitBootServices`,
+and stops the boot when the VPU does not say it is locked. Dropping the newest
+record of a variable returns it to its previous value, which for a `dbx` update
+is to revoke less, and putting back an older copy of the window returns the
+whole store to that time, as does erasing both banks, which returns the keys
+the firmware was built with. Nothing outside the disk says how many records
+there should be, so the store cannot tell a rollback from an older state; the
+keys are measured into PCR 7 ([tpm2.md](tpm2.md#what-is-measured)), which is
+what a TPM policy notices it by. Where no disk holds the store, or no device
+private key is fused, there is no seal and a variable other than `KEK`, `db`
+and `dbx` lasts until reset.
 
 ### Variables the OS writes
 
-After `ExitBootServices` the runtime services keep a write the OS makes in
-their table, and tell the VPU over the mailbox, on a channel of their own
-(7) that the OS's mailbox driver does not listen on, so that nothing is posted
-back to disturb it: the VPU answers in the message's own buffer.
+After `ExitBootServices` the OS owns the SD card and the USB controller, so the
+runtime services cannot write the store as the OS makes its writes. They keep a
+write in their table and in a queue of records, and append the queue to the
+store when the OS calls `ResetSystem`, which Linux does for `reboot`,
+`poweroff` and the reboot after a panic. A write is lost with a power cut, a
+watchdog reset, a restart that does not go through `ResetSystem`, or a VPU that
+does not answer.
 
-- A non-volatile variable no signature guards is sealed by the VPU with the
-  device key and appended to the flash store, with the sequence number the next
-  record needs. The VPU seals, in a domain of its own, only a write or a
+- A non-volatile variable no signature guards is sealed by the VPU, over the
+  mailbox on a channel of its own (7) that the OS's mailbox driver does not
+  listen on, so that nothing is posted back to disturb it: the VPU answers in
+  the message's own buffer. It seals, in a domain of its own, only a write or a
   deletion with the attributes non-volatile, boot services and runtime, a name
   without a NUL and at most 16 KiB of value: what the OS asks it to seal is the
-  OS's word. At the next boot UEFI takes such a record only for a variable the
-  OS owns, one that the table holds with those attributes, or none. A
-  `SecureBoot`, `PK` or other variable the firmware keeps, or one the boot
-  chain keeps from the OS (non-volatile without runtime access, such as shim's
-  MOK lists and the update records), is left as it is, and a variable under the
-  firmware's own class, where its update state is kept, is refused to the OS.
-  A board with no device key keeps the write in the table until reset.
+  OS's word. The record is numbered by the runtime services, from the number
+  after the last one UEFI read. At the next boot UEFI takes such a record only
+  for a variable the OS owns, one that the table holds with those attributes, or
+  none. A `SecureBoot`, `PK` or other variable the firmware keeps, or one the
+  boot chain keeps from the OS (non-volatile without runtime access, such as
+  shim's MOK lists and the update records), is left as it is, and a variable
+  under the firmware's own class, where its update state is kept, is refused to
+  the OS. A board with no device key keeps the write in the table until reset.
 - A write of `KEK`, `db` or `dbx` is a signed update (what `efi-updatevar` and
   fwupd's `uefi-db`, `uefi-dbx` and `uefi-kek` plugins write). The runtime
-  services cannot check the signature, so they append the record as it is, and
+  services cannot check the signature, so they keep the record as it is, and
   UEFI checks it against `PK` and the `KEK`s at the next boot like every stored
   write. The table keeps the old value until then; the update takes effect at
   the restart fwupd asks for.
-- A write the VPU does not take, such as one into a bank that is full until
-  UEFI compacts it at the next boot, returns `EFI_OUT_OF_RESOURCES` or
-  `EFI_DEVICE_ERROR`, and the variable lasts until reset. A non-volatile variable
-  has the attributes non-volatile, boot services and runtime access, and at most
-  16 KiB, or the write is refused.
+- At `ResetSystem` the VPU switches the SD card off and on, signalling at 3.3 V,
+  and gives its host back to the ARM as it was when the ARM started, whatever
+  the OS made of them. The firmware starts the card again, writes the records
+  after the end of the log in the active bank and reads them back. Nothing is
+  logged: the OS's context has no console.
+- A write the queue cannot take (64 KiB of records since boot, or no room left
+  in the bank) returns `EFI_OUT_OF_RESOURCES`, and the variable lasts until
+  reset. A store that is not on the SD card is not reached from the runtime
+  services: a write of a non-volatile variable succeeds and lasts until reset, and
+  a signed update of `KEK`, `db` or `dbx` returns `EFI_DEVICE_ERROR`. A
+  non-volatile variable has the attributes non-volatile, boot services and
+  runtime access, and at most 16 KiB, or the write is refused.
 
 ### The test build
 
@@ -417,7 +453,7 @@ image too large) and is logged with the reason. `scripts/mkcapsule.py` builds
 one.
 
 A capsule that passes is staged as a tryboot, when the board has a device key
-and the flash store answers, so that the update can be recorded. The update
+and the variable store is on a disk, so that the update can be recorded. The update
 takes three boots:
 
 1. The firmware that finds the capsule writes `tryboot.img` and `tryboot.sig`
@@ -439,26 +475,20 @@ takes three boots:
 A capsule for the EEPROM bootloader carries, in its `boot.img`, a `pieeprom.upd`
 and a `pieeprom.sig`, which the stock bootloader writes to the EEPROM when it
 boots them, if the time in `pieeprom.sig` is later than its own. The capsule's
-version is that time. It is staged like a firmware update's, with one more step
-and a different end:
+version is that time. It is staged like a firmware update's, with a different end:
 
-- The bootloader's update writes the whole flash, so the variable store, the
-  record of the update in it included, would be lost. The firmware copies the
-  store to `STORE.BAK` on the file system before it resets, and reads the copy
-  back to check it.
 - The bootloader stamps the update's time into the last 8 bytes of the flash.
   The ESRT's version for the EEPROM is that time.
-- When the firmware next starts with an empty store and a `STORE.BAK`, it puts
-  the copy back and restarts. The record then says an update of the EEPROM was
-  pending: the flash is as new as the capsule said, and the ESRT reports
-  success, or it is not, and the ESRT reports failure. Either way the staged pair
-  and the copy go.
+- At the next start the record says an update of the EEPROM was pending: the
+  flash is as new as the capsule said, and the ESRT reports success, or it is
+  not, and the ESRT reports failure. Either way the staged pair goes. The
+  variable store is on the disk, so the update leaves it as it is.
 
 The configuration, signature and public key the EEPROM holds are part of the
 image the capsule's builder prepares (`rpi-eeprom-config`), so the update keeps
 them.
 
-The result stays in the flash store for the OS to read in the ESRT until the
+The result stays in the variable store for the OS to read in the ESRT until the
 next update.
 
 ## Building
@@ -521,8 +551,8 @@ pimu boot --scenario scenarios/owner-db-update.yaml    # an update capsule the b
 - Nothing reads `BootOrder`: the boot is always the removable-media path.
 - `dbx` holds image hashes only; a certificate in it is ignored.
 - Storage is read-only to EFI applications; the firmware writes only the files an update needs.
-- A write the OS makes to a variable while a full bank of the store waits for
-  UEFI to compact it lasts until reset.
+- The OS's writes reach the variable store when it calls `ResetSystem`, and only when the store is on the SD card ([below](#variables-the-os-writes)).
+- A write the OS makes to a variable after 64 KiB of records since boot, or with no room left in the bank, fails.
 - No NVMe, no network boot, no USB keyboards.
 - The xHCI driver gives each empty root port 400 ms to show a connection,
   since a SuperSpeed port reads empty until its link has trained.

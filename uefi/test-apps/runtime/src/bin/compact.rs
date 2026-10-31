@@ -1,13 +1,14 @@
-//! The flash store has room again at the next boot, and keeps what has to last.
-//! What the OS writes through the runtime services is appended to the bank, and
-//! the VPU cannot make room once it is full, so UEFI starts a fresh bank with
-//! what the variables still need when it finds the bank more than half full.
+//! The store has room again at the next boot, and keeps what has to last.
+//! What the OS writes through the runtime services is appended to the bank
+//! when it resets, and nothing can make room in a bank once the firmware is
+//! gone, so UEFI starts a fresh bank with what the variables still need when
+//! it finds the bank more than half full.
 //!
 //! The first boot writes a variable, adds a certificate to `db` with a signed
-//! update, then writes another variable over and over until the bank is mostly
-//! what the writes replaced, and resets. The second boot finds all of it as it
-//! was, writes as much again and resets, and the third finds that the bank the
-//! second started over still holds what the first wrote.
+//! update, then writes another variable over and over, and resets. The next
+//! two write as much again, which fills the bank past half. The fourth finds
+//! the bank started over with what the variables still need, writes as much
+//! again, and the fifth finds that the new bank holds what the others wrote.
 
 #![no_std]
 #![no_main]
@@ -26,10 +27,11 @@ const SECURITY_DB: Guid = Guid::from_fields(0xd719b2cb, 0x3d3a, 0x4596, 0xa3, 0x
 /// An update of `db` appending a certificate, signed by a key `KEK` holds.
 static DB_UPDATE: &[u8] = include_bytes!("../../../../../out/db-x.auth");
 
-/// A write is a record of about 1.7 KiB in the flash: this many are most of a
-/// bank of 20 KiB, and twice as many do not fit in one.
-const WRITES: u8 = 8;
-const SIZE: usize = 1500;
+/// A boot's writes are about 48 KiB of records, which the runtime services
+/// keep for the reset: three boots of them are more than half of a bank of
+/// 256 KiB.
+const WRITES: u8 = 6;
+const SIZE: usize = 8000;
 
 fn set(rt: *mut RuntimeServices, var: &str, guid: &Guid, attributes: u32, data: &[u8]) -> Status {
     let mut buf = [0u16; 32];
@@ -76,10 +78,15 @@ const AFTER_THE_FIRST: Names = Names {
     churn: "the other holds what was written last",
     db: "db still holds the certificate the signed update added",
 };
-const AFTER_THE_SECOND: Names = Names {
+const AFTER_STARTING_OVER: Names = Names {
     keep: "the variable written once is there after the store started over",
     churn: "the other holds what was written last after the store started over",
     db: "db holds the certificate after the store started over",
+};
+const AFTER_THE_LAST: Names = Names {
+    keep: "the variable written once is there at the end",
+    churn: "the other holds the last write at the end",
+    db: "db holds the certificate at the end",
 };
 
 /// What the variables hold after a reset: the one written once, the one written
@@ -120,19 +127,29 @@ pub extern "efiapi" fn efi_main(image: Handle, system_table: *mut SystemTable) -
         reset(rt)
     }
 
-    if out[..size] == [1] {
-        say("compact test: second boot\r\n");
-        check_what_lasted(rt, WRITES - 1, &AFTER_THE_FIRST);
-        let rt = exit_boot_services(image, system_table);
-        settle();
-        check("as much again is written", churn(rt, WRITES));
-        set(rt, "RtBoot", &OURS, NV_BS_RT, &[2]);
-        say("compact test: resetting\r\n");
-        reset(rt)
+    let boots = if size == 1 { out[0] } else { 0 };
+    match boots {
+        1 => {
+            say("compact test: second boot\r\n");
+            check_what_lasted(rt, WRITES - 1, &AFTER_THE_FIRST);
+        }
+        2 => say("compact test: third boot\r\n"),
+        3 => say("compact test: fourth boot\r\n"),
+        _ => {}
     }
-
-    say("compact test: third boot\r\n");
-    check_what_lasted(rt, 2 * WRITES - 1, &AFTER_THE_SECOND);
-    say("compact test: done\r\n");
-    runtime_efi::hang()
+    if boots == 3 {
+        check_what_lasted(rt, 3 * WRITES - 1, &AFTER_STARTING_OVER);
+    }
+    if boots == 4 {
+        say("compact test: fifth boot\r\n");
+        check_what_lasted(rt, 4 * WRITES - 1, &AFTER_THE_LAST);
+        say("compact test: done\r\n");
+        runtime_efi::hang()
+    }
+    let rt = exit_boot_services(image, system_table);
+    settle();
+    check("as much again is written", churn(rt, boots * WRITES));
+    set(rt, "RtBoot", &OURS, NV_BS_RT, &[boots + 1]);
+    say("compact test: resetting\r\n");
+    reset(rt)
 }

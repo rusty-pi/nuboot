@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Put a variable store in a copy of an EEPROM image, for the scenarios that
-start from what an earlier boot left in it. The device key is the test key
-they fuse, and a record is sealed with an HMAC-SHA256 of its digest by it.
+"""Make the variable store's window, for the scenarios that start from what an
+earlier boot left in it. The device key is the test key they fuse, and a
+record is sealed with an HMAC-SHA256 of its digest by it.
 
-    mkstore.py PIEEPROM OUT [--update pending|proven VERSION [--eeprom]] [--stamp TS] [--backup FILE] [--empty]
+    mkstore.py OUT [--update pending|proven VERSION [--eeprom]] [--empty]
 
 By default the store is the tamper scenario's, with known damage in it: what a
-board's OS could do to the flash, done to it. It holds, in order: Good and Fresh, sealed and in sequence; Forged, whose seal is
+board's OS could do to the disk, done to it. It holds, in order: Good and Fresh, sealed and in sequence; Forged, whose seal is
 wrong; Stale, sealed but numbered below what came before it; Torn, whose
 digest does not match; and AfterTorn, sealed and in sequence, behind it. Then what the OS had the VPU
 seal: a hidden variable's deletion, a variable of its own, SecureBoot's deletion and a record under the
@@ -14,10 +14,10 @@ firmware's own class, FwUpdateResult.
 
 With --update the store holds one sealed record, what the firmware keeps while
 a capsule's update is under way: its state, and the version it carries. With
---eeprom the update is the EEPROM's. --stamp puts the time of an EEPROM update in
-the flash's last 8 bytes, as the bootloader does, and --backup writes the
-store's region of the result to a file, as the firmware copies it before an
-EEPROM update. With --empty the store holds nothing.
+--eeprom the update is the EEPROM's. With --empty the store holds nothing.
+
+OUT is the window as it is on the disk, 512 KiB: two banks of 256 KiB, the
+first holding the records. scripts/mkcard.py puts it on a card.
 """
 
 import hashlib
@@ -26,8 +26,7 @@ import struct
 import sys
 import uuid
 
-BASE = 0x74000
-BANK = 0x5000
+BANK = 0x40000
 BANK_MAGIC = 0x56344950
 RECORD_MAGIC = 0x52454331
 SET = 1
@@ -72,22 +71,12 @@ def main():
     eeprom = "--eeprom" in args
     empty = "--empty" in args
     args = [a for a in args if a not in ("--eeprom", "--empty")]
-    stamp = backup = None
-    if "--stamp" in args:
-        at = args.index("--stamp")
-        stamp = int(args[at + 1], 0)
-        del args[at : at + 2]
-    if "--backup" in args:
-        at = args.index("--backup")
-        backup = args[at + 1]
-        del args[at : at + 2]
     if "--update" in args:
         at = args.index("--update")
         update = (STATES[args[at + 1]], int(args[at + 2], 0))
         del args[at : at + 3]
-    if len(args) != 2:
+    if len(args) != 1:
         sys.exit(__doc__)
-    image = bytearray(open(args[0], "rb").read())
     if empty:
         records = []
     elif update:
@@ -110,18 +99,12 @@ def main():
             record("SecureBoot", b"", 8, guid=GLOBAL, attributes=ATTRIBUTES, kind=DELETE, label=RUNTIME_LABEL),
             record("FwUpdateResult", struct.pack("<II", 1, 0), 9, guid=FIRMWARE_CLASS, attributes=ATTRIBUTES, label=RUNTIME_LABEL),
         ]
-    log = b"".join(records)
-    head = struct.pack("<II", BANK_MAGIC, 1)
-    if any(b != 0xFF for b in image[BASE : BASE + len(head) + len(log)]):
-        sys.exit("the image's variable store is not empty")
+    window = bytearray(b"\xff" * (2 * BANK))
     if records:
-        image[BASE : BASE + len(head)] = head
-        image[BASE + 8 : BASE + 8 + len(log)] = log
-    if stamp is not None:
-        image[-8:] = struct.pack("<II", ~stamp & 0xFFFFFFFF, stamp)
-    if backup:
-        open(backup, "wb").write(image[BASE : BASE + 2 * BANK])
-    open(args[1], "wb").write(image)
+        log = b"".join(records)
+        window[:8] = struct.pack("<II", BANK_MAGIC, 1)
+        window[8 : 8 + len(log)] = log
+    open(args[0], "wb").write(window)
 
 
 main()

@@ -12,7 +12,7 @@
 //! firmware does not know is left as it came, and the buffer is marked
 //! answered either way, which is what the stock firmware does.
 
-use crate::{arm, crypto, debug, error, expander, idle, info, keystore, measure, mmio, ramdisk, tpm2, varstore, vl805, wake, warn, watchdog};
+use crate::{arm, crypto, debug, error, expander, idle, info, keystore, measure, mmio, ramdisk, seal, tpm2, vl805, wake, warn, watchdog};
 
 const VPU_VIEW: u32 = 0x7e00_b980;
 /// Mailbox 0, which the ARM reads.
@@ -81,11 +81,18 @@ const TAG_CRYPTO_GEN_ECDSA_KEY: u32 = 0x0003_0095;
 const TAG_CRYPTO_GET_KEY_USAGE: u32 = 0x0003_009c;
 const TAG_CRYPTO_SET_KEY_USAGE: u32 = 0x0003_809c;
 
-/// Add a record to the variable store, as UEFI wrote it, or sign and add the
-/// write of a variable no signature guards. Both are for the runtime services
-/// ([`CHANNEL_RUNTIME`]). The answer is a status word: 0, or what went wrong.
-const TAG_STORE_APPEND: u32 = 0x0003_00a6;
-const TAG_STORE_PERSIST: u32 = 0x0003_00a7;
+/// Seal the write of a variable no signature guards ([`seal`]): the kind,
+/// the attributes, the lengths of the name and the value in bytes, the GUID,
+/// the number of the write (two words), the name padded to 4 bytes and the
+/// value. The answer is a status word, 0 or what went wrong, and the 32 bytes
+/// of the seal. For the runtime services ([`CHANNEL_RUNTIME`]), which keep the
+/// record until `ResetSystem`.
+const TAG_STORE_SEAL: u32 = 0x0003_00a9;
+/// Power the SD card off and on and give its host to the ARM again, as it was
+/// when the ARM started, so that the runtime services can write the variable
+/// store to the card at `ResetSystem`, whatever the OS left it as. The answer
+/// is a status word: 0, or 5 when the card's supply could not be switched.
+const TAG_STORE_PREPARE_CARD: u32 = 0x0003_00aa;
 
 /// Event `n` of what the VPU measured before the ARM started, for the log
 /// UEFI keeps: the index in, then the PCR, the event type, the digest, the
@@ -129,6 +136,29 @@ pub fn serve(timeout_us: u32) {
 /// Whether the ARM has posted a request that has not been read yet.
 pub fn request_pending() -> bool {
     mmio::read(STATUS1) & STATUS_EMPTY == 0
+}
+
+/// Answer what the ARM has posted while the OS shuts down, as long as it is
+/// for the runtime services or the TPM: the runtime services write the variable
+/// store when the OS resets the board, and ask the VPU for the card first.
+/// False once the ARM has posted something else, which has been answered too.
+pub fn serve_for_shutdown() -> bool {
+    while request_pending() {
+        let message = mmio::read(DATA1);
+        match message & 0xf {
+            CHANNEL_RUNTIME => answer(message & !0xf, true),
+            CHANNEL_TPM => arm::crb().answer(),
+            channel => {
+                if channel == CHANNEL_PROPERTY {
+                    answer(message & !0xf, false);
+                }
+                while mmio::read(STATUS0) & STATUS_FULL != 0 {}
+                mmio::write(DATA0, message);
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// What the buffer held when the ARM posted it. The ARM goes on running while
@@ -197,48 +227,26 @@ fn respond(bus: u32, runtime: bool) {
             set(1, CODE_ERROR);
             return;
         }
-        if runtime != matches!(tag, TAG_STORE_APPEND | TAG_STORE_PERSIST) {
+        if runtime != matches!(tag, TAG_STORE_SEAL | TAG_STORE_PREPARE_CARD) {
             i = value + room / 4;
             continue;
         }
         match tag {
-            TAG_STORE_APPEND => {
-                let length = word(i + 2) as usize;
-                let record = store_buffer();
-                let status = if length <= room as usize && length <= record.len() {
-                    for (n, byte) in record[..length].iter_mut().enumerate() {
-                        *byte = (word(value + n as u32 / 4) >> (8 * (n % 4))) as u8;
-                    }
-                    store_status(varstore::append(&record[..length]))
-                } else {
-                    1
-                };
-                set(value, status);
-                set(i + 2, RESPONSE | 4);
-            }
-            TAG_STORE_PERSIST if room >= 32 => {
-                let (kind, attributes) = (word(value), word(value + 1));
-                let (name_bytes, data_bytes) = (word(value + 2) as usize, word(value + 3) as usize);
-                let mut guid = [0u8; 16];
-                for (n, byte) in guid.iter_mut().enumerate() {
-                    *byte = (word(value + 4 + n as u32 / 4) >> (8 * (n % 4))) as u8;
-                }
-                let status = if name_bytes <= 512 && data_bytes <= varstore::MAX_SEALED_DATA {
-                    let data_at = name_bytes.next_multiple_of(4);
-                    if 32 + data_at + data_bytes <= room as usize && data_at + data_bytes <= store_buffer().len() {
-                        let scratch = store_buffer();
-                        for (n, byte) in scratch[..data_at + data_bytes].iter_mut().enumerate() {
-                            *byte = (word(value + 8 + n as u32 / 4) >> (8 * (n % 4))) as u8;
+            TAG_STORE_SEAL if room >= 36 => {
+                let status = match seal_request(&word, value, room as usize) {
+                    Ok(sealed) => {
+                        for (n, chunk) in sealed.chunks_exact(4).enumerate() {
+                            set(value + 1 + n as u32, u32::from_le_bytes(chunk.try_into().unwrap()));
                         }
-                        let (name, data) = scratch.split_at(data_at);
-                        store_status(varstore::persist(kind, attributes, &guid, &name[..name_bytes], &data[..data_bytes]))
-                    } else {
-                        1
+                        0
                     }
-                } else {
-                    1
+                    Err(status) => status,
                 };
                 set(value, status);
+                set(i + 2, RESPONSE | 36);
+            }
+            TAG_STORE_PREPARE_CARD if room >= 4 => {
+                set(value, if arm::prepare_card() { 0 } else { 5 });
                 set(i + 2, RESPONSE | 4);
             }
             TAG_NOTIFY_XHCI_RESET if room >= 4 => {
@@ -466,19 +474,35 @@ fn crypto_message() -> &'static mut [u8; crypto::HMAC_MESSAGE_MAX] {
     unsafe { &mut *(&raw mut MESSAGE) }
 }
 
-fn store_status(result: Result<(), varstore::Error>) -> u32 {
-    match result {
-        Ok(()) => 0,
-        Err(varstore::Error::Malformed) => 1,
-        Err(varstore::Error::Refused) => 2,
-        Err(varstore::Error::NoDeviceKey) => 3,
-        Err(varstore::Error::Full) => 4,
-        Err(varstore::Error::Flash) => 5,
+/// The seal a [`TAG_STORE_SEAL`] request asks for, or the status word to
+/// answer with: 1 for a request that does not hold together, 2 for one the VPU
+/// refuses, 3 when there is no device key.
+fn seal_request(word: &impl Fn(u32) -> u32, value: u32, room: usize) -> Result<[u8; 32], u32> {
+    const HEADER: usize = 40;
+    let (kind, attributes) = (word(value), word(value + 1));
+    let (name_bytes, data_bytes) = (word(value + 2) as usize, word(value + 3) as usize);
+    let data_at = name_bytes.next_multiple_of(4);
+    if name_bytes > 2 * seal::MAX_NAME_UNITS || data_bytes > seal::MAX_SEALED_DATA || HEADER + data_at + data_bytes > room {
+        return Err(1);
     }
+    let mut guid = [0u8; 16];
+    for (n, byte) in guid.iter_mut().enumerate() {
+        *byte = (word(value + 4 + n as u32 / 4) >> (8 * (n % 4))) as u8;
+    }
+    let seq = word(value + 8) as u64 | (word(value + 9) as u64) << 32;
+    let scratch = seal_buffer();
+    for (n, byte) in scratch[..data_at + data_bytes].iter_mut().enumerate() {
+        *byte = (word(value + 10 + n as u32 / 4) >> (8 * (n % 4))) as u8;
+    }
+    let (name, data) = scratch.split_at(data_at);
+    seal::seal(kind, attributes, &guid, seq, &name[..name_bytes], &data[..data_bytes]).map_err(|e| match e {
+        seal::Error::Refused => 2,
+        seal::Error::NoDeviceKey => 3,
+    })
 }
 
-/// Room for a record or a variable's name and value on its way into the store.
-fn store_buffer() -> &'static mut [u8; varstore::MAX_RECORD] {
-    static mut BUFFER: [u8; varstore::MAX_RECORD] = [0; varstore::MAX_RECORD];
+/// Room for a variable's name and value on its way to be sealed.
+fn seal_buffer() -> &'static mut [u8; 2 * seal::MAX_NAME_UNITS + 4 + seal::MAX_SEALED_DATA] {
+    static mut BUFFER: [u8; 2 * seal::MAX_NAME_UNITS + 4 + seal::MAX_SEALED_DATA] = [0; 2 * seal::MAX_NAME_UNITS + 4 + seal::MAX_SEALED_DATA];
     unsafe { &mut *(&raw mut BUFFER) }
 }

@@ -3,7 +3,7 @@ name: "capsule-commit"
 description: "The boot after a staged update proved itself: the build in boot.img finds tryboot.img and tryboot.sig beside it and the update recorded as proven, makes them boot.img and boot.sig, checks that the pair belongs together and resets into the new build."
 
 boot:
-  eeprom: "../out/pieeprom-proven.bin"
+  eeprom: "../out/stock-pieeprom.bin"
   eeprom_pubkey: "../out/boot-test-pubkey.bin"
   boot_order: "0x1"
   bootconf:
@@ -17,13 +17,7 @@ boot:
     - "61=0xc0de7556"
     - "62=0xc0de8667"
     - "63=0xc0de9778"
-  sd:
-    files:
-      boot.img: "../out/boot-test.img"
-      boot.sig: "../out/boot-test.sig"
-      tryboot.img: "../out/boot-next.img"
-      tryboot.sig: "../out/boot-next.sig"
-      EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+  sd: "../out/card-capsule-commit.img"
   until: "firmware committed  version=2147483000"
   wall_secs: 1800
 

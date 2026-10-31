@@ -3,7 +3,7 @@ name: "capsule-drop"
 description: "The boot after a staged update that never reached the OS: the build in boot.img finds the update still pending, removes tryboot.img and tryboot.sig and tells the OS the update failed."
 
 boot:
-  eeprom: "../out/pieeprom-pending.bin"
+  eeprom: "../out/stock-pieeprom.bin"
   eeprom_pubkey: "../out/boot-test-pubkey.bin"
   boot_order: "0x1"
   bootconf:
@@ -17,13 +17,7 @@ boot:
     - "61=0xc0de7556"
     - "62=0xc0de8667"
     - "63=0xc0de9778"
-  sd:
-    files:
-      boot.img: "../out/boot-test.img"
-      boot.sig: "../out/boot-test.sig"
-      tryboot.img: "../out/boot-next.img"
-      tryboot.sig: "../out/boot-next.sig"
-      EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+  sd: "../out/card-capsule-drop.img"
   until: "hello test: done"
   wall_secs: 1800
 

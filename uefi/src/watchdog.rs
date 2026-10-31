@@ -208,6 +208,7 @@ pub fn reset(halt: bool) -> ! {
 /// before the dog runs out puts the reset off by seconds, so the count is asked
 /// for again whenever the dog has been reloaded.
 pub extern "efiapi" fn runtime_reset_system(kind: efi::ResetType, _status: efi::Status, _size: usize, _data: *mut c_void) {
+    crate::rtvar::flush_store();
     start_reset(kind == efi::RESET_SHUTDOWN);
     loop {
         if (read32(PM_WDOG) & PM_WDOG_MAX) > RELOADED_ABOVE {

@@ -198,10 +198,12 @@ Three things hold the loader's side together:
   bundle works. The counter is a limit on retries and nothing more: whoever can
   write the medium can reset or remove it, and can still only run what an update
   key signed.
-- **A bundle does not go backwards.** The flash store holds the version of the
+- **A bundle does not go backwards.** The variable store holds the version of the
   newest bundle that has reached the OS, which is all of the update's state it
   keeps, and a capsule or a kept bundle below it is refused. The store is sealed by the device key, so an attacker who can
-  only write the boot medium cannot lower it.
+  only write the boot medium cannot forge a lower version. The store is on the
+  boot medium, though, so one who can write it can put back an older copy of the
+  window, which lowers the version with the rest ([below](#what-is-not-protected)).
 
 The loader's own code is not updated this way. What reads the medium before the
 bundle is staged (the file system, the capsule scan) stays as the owner signed
@@ -273,14 +275,14 @@ same `db` certificate reproduces.
 
 ## State that outlasts a boot
 
-The variable store is a log in the EEPROM's tail, in two banks. Writes of
+The variable store is a log in a window of the boot disk, in two banks. Writes of
 `KEK`, `db` and `dbx` are stored as the signed writes themselves and checked
 again at every boot against the keys as they stood when each was made; other
 non-volatile variables are sealed with the device key's HMAC over their
 attributes, name, value and a counter, which the VPU computes. A record whose
 seal fails, or whose counter does not rise, is ignored, as is one that is not
-intact; the store steps over it. The OS can write the flash only as far as some
-driver gives it a way to, and cannot make a record: the VPU seals for the OS
+intact; the store steps over it. The OS can write the disk, and cannot make a
+record: the VPU seals for the OS
 only in the runtime domain, and UEFI accepts such a record only for a variable
 that is absent or has exactly the attributes non-volatile, boot services and
 runtime, and never under the firmware's own class GUID. The VPU seals a write
@@ -295,15 +297,20 @@ is read-only to the OS. The keys, `SecureBoot`, `PK` and the Secure Boot state
 refuse writes; `KEK`, `db` and `dbx` take only a signed one, which the runtime
 services cannot check and so append for the next boot to check.
 
-What an attacker who can write the EEPROM from the OS can do, and the firmware
-cannot prevent: **drop records**, which returns a variable to an older value (for
-`dbx`, to revoke less), and **erase both banks**, which returns the keys the
-firmware was built with. Nothing outside the flash counts how many records there
-should be. The keys are measured into PCR 7 and the MOK lists into PCR 14, so a
-TPM policy that includes them notices; and the bootloader's own sections lie below the store and are covered
-by the boot ROM's signature on a board with signed boot, so tampering there
-only prevents a boot. A store bank is 20 KiB and a signed update is a few KiB, so a few updates fill
-one.
+What an attacker who can write the disk can do, and the firmware cannot
+prevent: **drop records**, which returns a variable to an older value (for
+`dbx`, to revoke less), **put back an older copy of the window**, which returns
+every variable to that time, and **erase both banks**, which returns the keys
+the firmware was built with. Nothing outside the disk counts how many records
+there should be. The keys are measured into PCR 7 and the MOK lists into PCR 14,
+so a TPM policy that includes them notices. The firmware never writes the
+EEPROM, whose sections are covered by the boot ROM's signature on a board with
+signed boot. A store bank is 256 KiB and a signed update is a few KiB.
+
+The OS's writes are kept in the runtime services' memory until `ResetSystem`.
+The OS owns the SD card until then, and the VPU takes it back only at that call,
+when it switches the card off and on; whatever the OS left in the card's state
+is gone with the power.
 
 ## The OS's way in
 
@@ -421,7 +428,7 @@ programmed and an OS that keeps lockdown on:
 | run a signed loader's bug | a signed shim, GRUB or kernel that is not in `dbx` and has a flaw (a bug in a loader before `ExitBootServices`, or a kernel with lockdown off) | code on the ARM, so the VPU and the key's HMAC |
 | take the VPU from a locked-down OS | a kernel exploit that gives arbitrary physical memory access; then the VPU's code or the mailbox's buffers are writable | the same |
 | take it from a bus master | a flaw in the VL805's firmware (loaded from the EEPROM) or a hostile PCIe device: the inbound window covers all RAM, the VPU's included | the same |
-| roll the store back | a way to write the EEPROM: a programmer, or an OS driver that reaches the SPI pins | an older `dbx`, no MOK list, no update record; detectable in PCR 7 and PCR 14 |
+| roll the store back | a way to write the boot disk: the OS's block driver, or the disk in another machine | an older `dbx`, no MOK list, no update record, a lower bundle floor; detectable in PCR 7 and PCR 14 |
 | unseal what a policy guards | the PCR values the policy names, or a key the policy names, and for a TPM password as many guesses as it takes: no lockout slows them | the secret |
 | learn the device key | privileged ARM code (a loader before `ExitBootServices`, a kernel module on a kernel without lockdown, a kernel exploit), or a probe on the board | the key, for good, and with it every TPM seed and seal of the board |
 | deny service | a USB stick, a hub, a medium, a TPM user with a command that panics (none known), or a magic packet | a reset loop, a stall, a wake |
@@ -431,9 +438,8 @@ Not defended, and not claimed:
 - A loader Secure Boot accepts that is hostile or buggy. Shim's `SBAT`
   revocations and `dbx` are the mitigation, as on any machine.
 - Anything once code has arbitrary memory access on the ARM.
-- Rollback of the store, or of `boot.img`, by anyone who can write the media. The
-  flash's write protection is not used: the firmware clears the protect bits of
-  the flash's status register when it writes the store.
+- Rollback of the store, or of `boot.img`, by anyone who can write the media.
+  The store is on the boot disk, so the bundle floor in it goes back with it.
 - The VPU's own code is not measured as a hash when it is the loader the
   bootloader started: `EV_S_CRTM_VERSION` names the commit, and PCR 0 holds the
   hashes of the UEFI image and the device tree it starts. An update's VPU image
@@ -483,3 +489,5 @@ The parts of this that the repository runs:
   characters as text
 - `scripts/test-acpi.sh` checks the ACPI and SMBIOS tables with the ACPICA tools
   and `dmidecode`
+- `scripts/test-store.sh` runs the variable store and the listing of its window
+  in a partition table on disk images, and has `sfdisk` read what is written

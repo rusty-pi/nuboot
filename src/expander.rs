@@ -4,7 +4,7 @@
 
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::i2c;
+use crate::{i2c, timer};
 
 const ADDR: u8 = 0x43;
 const DIRECTION: u8 = 0x03;
@@ -103,6 +103,23 @@ const FIRST_GPIO: u32 = 128;
 /// stay with this firmware.
 const SD_IO_SELECT: u8 = 4;
 const SD_POWER_ON: u8 = 6;
+
+/// How long the card's supply stays off, for the card to lose its state.
+const CARD_OFF_US: u32 = 100_000;
+/// How long the card's supply takes to come up.
+const CARD_ON_US: u32 = 10_000;
+
+/// Switch the SD card off and on, signalling at 3.3 V, so that it starts as it
+/// does after power-on whatever the OS made of it. Whether the expander took
+/// the pins.
+pub fn power_cycle_card() -> bool {
+    let output = PinConfig { output: true, pull: false, pull_up: false };
+    let off = set_pin_config(SD_POWER_ON, output, false).is_some() && set_pin_config(SD_IO_SELECT, output, false).is_some();
+    timer::delay_us(CARD_OFF_US);
+    let on = drive_pin(SD_POWER_ON, true);
+    timer::delay_us(CARD_ON_US);
+    off && on
+}
 
 /// The expander pin the mailbox's GPIO number `gpio` names, if it names one the
 /// OS may reach.

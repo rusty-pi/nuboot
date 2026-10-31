@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "persist"
-description: "A board with its device private key fused (a test key, not a board's): an EFI application exits boot services and writes through the runtime services a non-volatile variable, an append to it, a deletion and a signed update of db, then resets. The VPU seals and appends the variable writes to the flash store and appends the db update as it is. After the reset the variables are as written, and UEFI has checked the db update against KEK and applied it."
+description: "A board with its device private key fused (a test key, not a board's): an EFI application exits boot services and writes through the runtime services a non-volatile variable, an append to it, a deletion and a signed update of db, then resets. The VPU seals the variable writes, and the runtime services append them and the db update, as it is, to the variable store on the card when the application resets. After the reset the variables are as written, and UEFI has checked the db update against KEK and applied it."
 
 boot:
   eeprom: "../out/stock-pieeprom.bin"
@@ -14,10 +14,7 @@ boot:
     - "61=0xc0de7556"
     - "62=0xc0de8667"
     - "63=0xc0de9778"
-  sd:
-    files:
-      start4.elf: "../out/start4-test.elf"
-      EFI/BOOT/BOOTAA64.EFI: "../out/persist.efi"
+  sd: "../out/card-persist.img"
   until: "persist test: done"
   wall_secs: 3000
 

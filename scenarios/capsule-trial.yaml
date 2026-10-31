@@ -1,9 +1,9 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "capsule-trial"
-description: "The boot after a capsule's update was staged: the build the capsule carried starts, finds the record the old build left in the sealed flash store, tells the OS it succeeded and, once it reaches ExitBootServices, records the update as proven."
+description: "The boot after a capsule's update was staged: the build the capsule carried starts, finds the record the old build left in the sealed variable store, tells the OS it succeeded and, once it reaches ExitBootServices, records the update as proven."
 
 boot:
-  eeprom: "../out/pieeprom-pending.bin"
+  eeprom: "../out/stock-pieeprom.bin"
   eeprom_pubkey: "../out/boot-test-pubkey.bin"
   boot_order: "0x1"
   bootconf:
@@ -17,11 +17,7 @@ boot:
     - "61=0xc0de7556"
     - "62=0xc0de8667"
     - "63=0xc0de9778"
-  sd:
-    files:
-      boot.img: "../out/boot-next.img"
-      boot.sig: "../out/boot-next.sig"
-      EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-takeover.efi"
+  sd: "../out/card-capsule-trial.img"
   until: "the updated firmware reached the OS  version=2147483000"
   wall_secs: 1800
 

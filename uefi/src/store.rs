@@ -1,19 +1,46 @@
-//! The variable store: a log of records in two banks in the free tail of the
-//! stock EEPROM image's flash, after its last section. Records are only appended; a full bank is replaced by a
-//! fresh one holding what is still live, which becomes valid once its header
-//! is written. A record carries its own SHA-256, so one cut short by a power
-//! loss ends the log instead of being read.
+//! The variable store: a log of records in two banks of a medium (the window
+//! on the boot disk, [`crate::diskstore`]). Records are only appended; a full
+//! bank is replaced by a fresh one holding what is still live, which becomes
+//! valid once its header is written. A record carries its own SHA-256, so one
+//! cut short by a power loss ends the log instead of being read.
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use crate::sha256;
-use crate::spiflash::{self, PAGE, SECTOR};
 use crate::util::Global;
 use crate::{debug, info, warn};
 
-pub const BASE: u32 = 0x74000;
-pub const BANK: u32 = 0x5000;
-const BANKS: [u32; 2] = [BASE, BASE + BANK];
+/// Where the banks are kept: `len` bytes, read and written at any offset.
+/// What `write` returns true for is on the medium.
+pub trait Medium {
+    fn len(&self) -> u32;
+    fn read(&mut self, at: u32, buf: &mut [u8]) -> bool;
+    fn write(&mut self, at: u32, data: &[u8]) -> bool;
+}
+
+static MEDIUM: Global<Option<Box<dyn Medium>>> = Global::new(None);
+
+/// Keep the store on `medium`.
+pub fn attach(medium: Box<dyn Medium>) {
+    *MEDIUM.get() = Some(medium);
+}
+
+fn medium() -> Option<&'static mut dyn Medium> {
+    MEDIUM.get().as_deref_mut()
+}
+
+/// The size of one bank, and where a bank starts.
+fn bank_len() -> u32 {
+    medium().map_or(0, |m| m.len() / 2)
+}
+
+fn bank_base(bank: usize) -> u32 {
+    bank as u32 * bank_len()
+}
+
+/// How much of a bank is read or erased at a time.
+const CHUNK: usize = 16 * 1024;
 
 const BANK_MAGIC: u32 = 0x5634_4950;
 const RECORD_MAGIC: u32 = 0x5245_4331;
@@ -104,21 +131,78 @@ impl Record {
 
 fn bank_header(bank: usize) -> Option<u32> {
     let mut head = [0u8; 8];
-    spiflash::read(BANKS[bank], &mut head);
+    if !medium()?.read(bank_base(bank), &mut head) {
+        return None;
+    }
     (u32_at(&head, 0) == BANK_MAGIC).then(|| u32_at(&head, 4))
 }
 
-/// Whether the store reaches a flash that answers.
+/// Whether the store reaches a medium that answers.
 pub fn available() -> bool {
     STATE.get().ready
+}
+
+/// Read `buf` from `at` in the medium.
+pub fn read_raw(at: u32, buf: &mut [u8]) -> bool {
+    medium().is_some_and(|m| m.read(at, buf))
+}
+
+/// Start the first bank when the store has none, so that the log has a header
+/// to append to once UEFI is gone.
+pub fn start_if_empty() {
+    let state = STATE.get();
+    if !state.ready || state.seq != 0 {
+        return;
+    }
+    match write_bank(0, 1, &[]) {
+        Some(tail) => *state = State { ready: true, bank: 0, seq: 1, tail },
+        None => warn!("store", "the first bank could not be started"),
+    }
+}
+
+/// Where the log of the active bank ends, as an offset in the medium, and the
+/// bank's last byte.
+pub fn tail() -> (u32, u32) {
+    let state = STATE.get();
+    (state.tail, bank_base(state.bank) + bank_len())
+}
+
+/// A bank's bytes. All of it is read: a record can hold a chunk of erased
+/// bytes, so no chunk says where the log ends.
+fn read_bank(bank: usize) -> Option<Vec<u8>> {
+    let m = medium()?;
+    let mut image = alloc::vec![0xffu8; bank_len() as usize];
+    for (n, chunk) in image.chunks_mut(CHUNK).enumerate() {
+        if !m.read(bank_base(bank) + (n * CHUNK) as u32, chunk) {
+            return None;
+        }
+    }
+    Some(image)
+}
+
+/// Erase a bank: every chunk of it that is not erased already is overwritten.
+fn erase_bank(bank: usize) -> bool {
+    let Some(m) = medium() else { return false };
+    let erased = alloc::vec![0xffu8; CHUNK];
+    let mut at = 0;
+    while at < bank_len() {
+        let n = CHUNK.min((bank_len() - at) as usize);
+        let mut got = alloc::vec![0u8; n];
+        let base = bank_base(bank) + at;
+        if !m.read(base, &mut got) || (got.iter().any(|&b| b != 0xff) && !m.write(base, &erased[..n])) {
+            return false;
+        }
+        at += n as u32;
+    }
+    true
 }
 
 /// Read the active bank's records, oldest first.
 pub fn load() -> Vec<Record> {
     let state = STATE.get();
-    let mut out;
-    if !spiflash::present() {
-        warn!("store", "no flash answers, variables stay in memory");
+    let out;
+    if medium().is_none() {
+        warn!("store", "no disk holds the store, variables stay in memory");
         return Vec::new();
     }
     let seqs = [bank_header(0), bank_header(1)];
@@ -131,20 +215,22 @@ pub fn load() -> Vec<Record> {
             state.bank = 1;
             state.seq = 0;
             state.tail = 0;
-            info!("store", "flash store is empty");
+            info!("store", "variable store is empty");
             return Vec::new();
         }
     };
-    let mut image = alloc::vec![0xffu8; BANK as usize];
-    spiflash::read(BANKS[bank], &mut image);
+    let Some(image) = read_bank(bank) else {
+        warn!("store", "the store could not be read, variables stay in memory");
+        return Vec::new();
+    };
     let (records, tail, damaged) = parse(&image);
     out = records;
     let used = tail as u32 - BANK_HEADER;
     state.ready = true;
     state.bank = bank;
     state.seq = seqs[bank].unwrap_or(0);
-    state.tail = BANKS[bank] + tail as u32;
-    info!("store", "flash store loaded"; records = out.len(), bank = bank, used = used, damaged = damaged);
+    state.tail = bank_base(bank) + tail as u32;
+    info!("store", "variable store loaded"; records = out.len(), bank = bank, used = used, damaged = damaged);
     if damaged {
         warn!("store", "a record was unreadable, the store moves to the other bank without it");
         let other = 1 - bank;
@@ -201,47 +287,45 @@ fn record_at(image: &[u8], at: usize) -> Option<(Record, usize)> {
     Some((Record::decode(&image[at..at + total])?, total))
 }
 
-/// The first page at or after `from` of `image` that is erased.
+/// The first block of 256 bytes at or after `from` of `image` that is erased.
 fn first_erased_in(image: &[u8], from: usize) -> usize {
+    const BLOCK: usize = 256;
     let mut at = from.next_multiple_of(4);
-    while at + PAGE <= image.len() {
-        if image[at..at + PAGE].iter().all(|&b| b == 0xff) {
+    while at + BLOCK <= image.len() {
+        if image[at..at + BLOCK].iter().all(|&b| b == 0xff) {
             return at;
         }
-        at += PAGE;
+        at += BLOCK;
     }
     image.len()
 }
 
-/// Program `bytes` at `at`, and whether they read back as they were written.
-fn program_verified(at: u32, bytes: &[u8]) -> bool {
-    if !spiflash::program(at, bytes) {
+/// Write `bytes` at `at`, and whether they read back as they were written.
+fn write_verified(at: u32, bytes: &[u8]) -> bool {
+    let Some(m) = medium() else { return false };
+    if !m.write(at, bytes) {
         return false;
     }
     let mut back = alloc::vec![0u8; bytes.len()];
-    spiflash::read(at, &mut back);
-    back == bytes
+    m.read(at, &mut back) && back == bytes
 }
 
 fn write_bank(bank: usize, seq: u32, records: &[Record]) -> Option<u32> {
-    let base = BANKS[bank];
-    for sector in (0..BANK).step_by(SECTOR) {
-        if !spiflash::erase_sector(base + sector) {
-            return None;
-        }
+    let base = bank_base(bank);
+    if !erase_bank(bank) {
+        return None;
     }
-    let mut at = base + BANK_HEADER;
+    let mut log = Vec::new();
     for r in records {
-        let bytes = r.encode();
-        if at as usize + bytes.len() > (base + BANK) as usize || !program_verified(at, &bytes) {
-            return None;
-        }
-        at += bytes.len() as u32;
+        log.extend_from_slice(&r.encode());
+    }
+    if BANK_HEADER as usize + log.len() > bank_len() as usize || !(log.is_empty() || write_verified(base + BANK_HEADER, &log)) {
+        return None;
     }
     let mut head = [0u8; 8];
     head[..4].copy_from_slice(&BANK_MAGIC.to_le_bytes());
     head[4..].copy_from_slice(&seq.to_le_bytes());
-    program_verified(base, &head).then_some(at)
+    write_verified(base, &head).then_some(base + BANK_HEADER + log.len() as u32)
 }
 
 /// Start the other bank with `live`, every record the variables still need,
@@ -250,11 +334,11 @@ fn write_bank(bank: usize, seq: u32, records: &[Record]) -> Option<u32> {
 /// the boot is where room is made.
 pub fn compact_when_crowded(live: impl FnOnce() -> Vec<Record>) {
     let state = STATE.get();
-    if !state.ready || state.seq == 0 || !spiflash::present() {
+    if !state.ready || state.seq == 0 || medium().is_none() {
         return;
     }
-    let used = (state.tail - BANKS[state.bank] - BANK_HEADER) as usize;
-    if used <= (BANK - BANK_HEADER) as usize / 2 {
+    let used = (state.tail - bank_base(state.bank) - BANK_HEADER) as usize;
+    if used <= (bank_len() - BANK_HEADER) as usize / 2 {
         return;
     }
     let records = live();
@@ -277,25 +361,20 @@ pub fn compact_when_crowded(live: impl FnOnce() -> Vec<Record>) {
 /// still needed, `record` included) starts the other bank.
 pub fn append(record: &Record, live: impl FnOnce() -> Vec<Record>) -> bool {
     let state = STATE.get();
-    if !state.ready || !spiflash::present() {
+    if !state.ready || medium().is_none() {
         return false;
     }
     let bytes = record.encode();
-    let end = BANKS[state.bank] + BANK;
+    let end = bank_base(state.bank) + bank_len();
     if state.seq != 0 && state.tail as usize + bytes.len() <= end as usize {
         debug!("store", "appending"; at = state.tail, len = bytes.len());
-        if spiflash::program(state.tail, &bytes) {
-            let mut back = alloc::vec![0u8; bytes.len()];
-            spiflash::read(state.tail, &mut back);
-            state.tail += bytes.len() as u32;
-            if back != bytes {
-                warn!("store", "record read back differs, not taken"; at = state.tail - bytes.len() as u32);
-                return false;
-            }
-            return true;
+        let at = state.tail;
+        state.tail += bytes.len() as u32;
+        if !write_verified(at, &bytes) {
+            warn!("store", "record not written or read back differently, not taken"; at = at);
+            return false;
         }
-        warn!("store", "record not written");
-        return false;
+        return true;
     }
     let other = 1 - state.bank;
     let seq = state.seq.wrapping_add(1).max(1);
@@ -308,7 +387,7 @@ pub fn append(record: &Record, live: impl FnOnce() -> Vec<Record>) -> bool {
             true
         }
         None => {
-            warn!("store", "store does not fit the flash");
+            warn!("store", "store does not fit the disk window");
             false
         }
     }

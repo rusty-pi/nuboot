@@ -2,8 +2,8 @@
 //! are built in and cannot be written. `KEK`, `db` and `dbx` start as the
 //! built-in keys and take authenticated writes: time-based, signed by the
 //! platform key for `KEK` and by it or a `KEK` entry for the others. Each
-//! accepted write goes to the flash store ([`crate::store`]) and is checked
-//! again from the start at every boot, so what a change to the flash can do is
+//! accepted write goes to the variable store ([`crate::store`]) and is checked
+//! again from the start at every boot, so what a change to the disk can do is
 //! take writes away, never make one up.
 
 use alloc::vec::Vec;
@@ -66,13 +66,13 @@ fn add(name: &str, guid: efi::Guid, attributes: u32, data: Vec<u8>, fixed: bool)
 }
 
 /// Whether what [`keep`] keeps survives a reset: the board has a device key
-/// to seal it with, and the flash store answers.
+/// to seal it with, and the variable store answers.
 pub fn keeps() -> bool {
     *DEVICE.get() && store::available()
 }
 
 /// A variable the firmware keeps across resets for itself: not visible to
-/// the OS, and sealed in the flash store when the board has a device key.
+/// the OS, and sealed in the variable store when the board has a device key.
 pub fn keep(name: &str, guid: efi::Guid, data: &[u8]) -> efi::Status {
     let name: Vec<u16> = name.encode_utf16().collect();
     write_plain(&name, guid, NV | BS, data, None)
@@ -97,6 +97,7 @@ pub fn bytes(name: &str, guid: &efi::Guid) -> Option<Vec<u8>> {
 /// takes keys from), and is the boot chain's to write.
 pub fn export_runtime() {
     crate::rtvar::clear();
+    crate::rtvar::arm(*PLAIN_SEQ.get(), crate::diskstore::target());
     for v in VARS.get().iter().filter(|v| visible(v) && v.attributes & RT != 0) {
         let key = !v.fixed && is_key(&v.name, &v.guid);
         let writable = !v.fixed && !key && v.attributes & AUTH == 0 && v.attributes & NV != 0;
@@ -279,7 +280,7 @@ fn sealed_by(r: &store::Record) -> Option<Origin> {
 }
 
 /// `SetVariable` for a variable no signature guards. `replayed` is the
-/// record the flash store held, when this puts it back.
+/// record the variable store held, when this puts it back.
 fn write_plain(
     name: &[u16],
     guid: efi::Guid,
@@ -504,11 +505,11 @@ fn write_key(name: &[u16], guid: efi::Guid, attributes: u32, buf: &[u8], persist
     efi::Status::SUCCESS
 }
 
-/// Put `record` in the flash store, which on a full bank is given everything
+/// Put `record` in the variable store, which on a full bank is given everything
 /// the variables still need, in the order it was written.
 fn commit(index: usize, record: &store::Record, history: &[(u64, store::Record)]) -> bool {
     if !store::available() {
-        warn!("var", "no flash store, the change lasts until reset");
+        warn!("var", "no variable store, the change lasts until reset");
         return true;
     }
     store::append(record, || live_records(index, history))
@@ -536,7 +537,7 @@ fn lock() {
     }
 }
 
-/// Apply what the flash store holds to the built-in keys and the variables:
+/// Apply what the variable store holds to the built-in keys and the variables:
 /// each write to `KEK`, `db` and `dbx` checked as it was when it was made,
 /// each of the others checked against its seal.
 pub fn load_store() {
@@ -560,6 +561,7 @@ pub fn load_store() {
             warn!("var", "stored write refused"; name = W(&name), status = status.as_usize());
         }
     }
+    store::start_if_empty();
     let plain_records_were_checked = *DEVICE.get() && !*SEAL_CHECK_FAILED.get();
     if *SEAL_CHECK_FAILED.get() {
         warn!("var", "the VPU did not answer for a stored record, the store is left as it is");

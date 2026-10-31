@@ -30,9 +30,8 @@
 //!
 //! An update of the EEPROM carries a `pieeprom.upd` and `pieeprom.sig` in its
 //! `boot.img`, which the bootloader writes to the EEPROM when it boots the
-//! tryboot. That wipes the variable store in the EEPROM's tail, so the store
-//! is copied to the file system first, and put back once the EEPROM says it was
-//! updated. The version of an EEPROM capsule is the time in `pieeprom.sig`.
+//! tryboot. The variable store is on the disk, so the update leaves it as it
+//! is. The version of an EEPROM capsule is the time in `pieeprom.sig`.
 
 use alloc::vec::Vec;
 
@@ -55,10 +54,8 @@ const MAX_SIGNATURE: usize = 4096;
 /// The most a capsule file may be: the image, and the header and the signature
 /// around it.
 const MAX_CAPSULE: usize = MAX_IMAGE + 64 * 1024;
-/// The most a copy of the variable store may be.
-const MAX_BACKUP: usize = 1024 * 1024;
 
-/// What an update leaves in the flash store: the state and the version the
+/// What an update leaves in the variable store: the state and the version the
 /// update carries.
 const RECORD: &str = "FwUpdate";
 /// What the last update came to, for the OS to read in the ESRT: the version
@@ -249,14 +246,8 @@ fn prove() {
     }
 }
 
-/// The variable store as it was before an EEPROM update.
-const BACKUP: &str = "STORE.BAK";
-
 /// Say how an update an earlier boot started has gone, and finish it.
 pub fn resume() {
-    if restore_store() {
-        return;
-    }
     for kind in [Kind::Firmware, Kind::Eeprom] {
         if let Some(data) = var::bytes(kind.result_name(), &esrt::FIRMWARE_CLASS) {
             if let (Some(version), Some(status)) = (u32_at(&data, 0), u32_at(&data, 4)) {
@@ -317,7 +308,6 @@ fn resume_eeprom(version: u32) {
     };
     remove_staged(fs);
     var::forget(RECORD, esrt::FIRMWARE_CLASS);
-    let _ = fat::remove_file(fs, &[], &wide(BACKUP));
     if kind.running() < version {
         warn!("capsule", "the bootloader did not update the EEPROM, update dropped"; version = version, eeprom = kind.running());
         set_result(kind, version, esrt::UNSUCCESSFUL);
@@ -325,24 +315,6 @@ fn resume_eeprom(version: u32) {
     }
     set_result(kind, version, esrt::SUCCESS);
     info!("capsule", "EEPROM updated"; version = version);
-}
-
-/// An EEPROM update wipes the variable store, record of the update included.
-/// With the store empty and the copy the update was staged with on the file
-/// system, put the copy back and start again: the record says what came of it.
-fn restore_store() -> bool {
-    if !crate::eeprom::store_is_empty() {
-        return false;
-    }
-    let Some(fs) = boot_fs() else { return false };
-    let Ok(backup) = fat::read_file(fs, &wide(BACKUP), MAX_BACKUP) else { return false };
-    let _ = fat::remove_file(fs, &[], &wide(BACKUP));
-    if !crate::eeprom::restore(&backup) {
-        warn!("capsule", "variable store not restored");
-        return false;
-    }
-    info!("capsule", "variable store restored after an EEPROM update, restarting");
-    crate::watchdog::reset(false);
 }
 
 /// Look for capsules on every file system and check each one.
@@ -393,7 +365,7 @@ fn stage(capsule_fs: efi::Handle, directory: &[u16], name: &[u16], capsule: &Cap
         esrt::attempted(capsule.kind.class(), capsule.version, esrt::UNSUCCESSFUL);
     };
     if !var::keeps() {
-        return failed("no device key or flash store to record the update in", efi::Status::UNSUPPORTED);
+        return failed("no device key or variable store to record the update in", efi::Status::UNSUPPORTED);
     }
     let Some(fs) = boot_fs() else { return failed("no file system holds boot.img", efi::Status::NOT_FOUND) };
     let status = set_record(PENDING, capsule.kind, capsule.version);
@@ -413,16 +385,6 @@ fn stage(capsule_fs: efi::Handle, directory: &[u16], name: &[u16], capsule: &Cap
         return failed("what was written does not read back", efi::Status::DEVICE_ERROR);
     }
     let _ = fat::remove_file(capsule_fs, directory, name);
-    if capsule.kind == Kind::Eeprom {
-        let saved = crate::eeprom::backup().is_some_and(|bytes| {
-            fat::write_file(fs, &[], &wide(BACKUP), &bytes).is_ok() && holds(fs, BACKUP, &bytes)
-        });
-        if !saved {
-            remove_staged(fs);
-            var::forget(RECORD, esrt::FIRMWARE_CLASS);
-            return failed("the variable store could not be saved", efi::Status::DEVICE_ERROR);
-        }
-    }
     info!("capsule", "update staged, restarting as a tryboot"; version = capsule.version, kind = capsule.kind.name());
     crate::watchdog::request_tryboot();
     crate::watchdog::reset(false);

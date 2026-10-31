@@ -1,9 +1,9 @@
-//! The SPI NOR flash that holds `pieeprom.bin`, from the ARM: SPI0 on GPIO
+//! The SPI NOR flash that holds `pieeprom.bin`, read from the ARM: SPI0 on GPIO
 //! 40..42 (ALT4) with the flash's chip select, GPIO 43, driven as an output,
-//! the way Linux's `spi-gpio40-45` overlay wires it.
+//! the way Linux's `spi-gpio40-45` overlay wires it. The firmware never writes
+//! it.
 
-use crate::util::{delay_us, read32, wait_for, write32};
-use crate::warn;
+use crate::util::{read32, wait_for, write32};
 
 const GPIO: u64 = 0xFE20_0000;
 const GPFSEL4: u64 = GPIO + 0x10;
@@ -26,17 +26,6 @@ const DIVIDER: u32 = 0x20;
 
 const READ: u8 = 0x03;
 const READ_ID: u8 = 0x9f;
-const READ_STATUS: u8 = 0x05;
-const WRITE_ENABLE: u8 = 0x06;
-const WRITE_STATUS: u8 = 0x01;
-const PAGE_PROGRAM: u8 = 0x02;
-const SECTOR_ERASE: u8 = 0x20;
-
-const STATUS_BUSY: u8 = 1;
-const STATUS_PROTECT: u8 = 0b0001_1100;
-
-pub const PAGE: usize = 256;
-pub const SECTOR: usize = 4096;
 
 /// GPFSEL4 for pins 40..43: ALT4 on the three SPI pins, an output for the
 /// select.
@@ -97,22 +86,6 @@ impl Drop for Command {
     }
 }
 
-fn status() -> u8 {
-    let _command = Command::start(READ_STATUS);
-    xfer(0)
-}
-
-fn wait_idle(timeout_us: u64) -> bool {
-    wait_for(timeout_us, || {
-        delay_us(20);
-        status() & STATUS_BUSY == 0
-    })
-}
-
-fn write_enable() {
-    let _command = Command::start(WRITE_ENABLE);
-}
-
 /// The JEDEC manufacturer and device id; all zeros or ones when nothing
 /// answers.
 pub fn id() -> [u8; 3] {
@@ -133,62 +106,4 @@ pub fn read(addr: u32, buf: &mut [u8]) {
     for b in buf {
         *b = xfer(0);
     }
-}
-
-fn unprotect() -> bool {
-    if status() & STATUS_PROTECT == 0 {
-        return true;
-    }
-    write_enable();
-    {
-        let _command = Command::start(WRITE_STATUS);
-        xfer(0);
-    }
-    wait_idle(100_000) && status() & STATUS_PROTECT == 0
-}
-
-/// Erase the 4 KiB sector at `addr`.
-pub fn erase_sector(addr: u32) -> bool {
-    let _pins = Pins::take();
-    if !unprotect() {
-        warn!("spiflash", "flash is write protected"; addr = addr);
-        return false;
-    }
-    write_enable();
-    {
-        let mut command = Command::start(SECTOR_ERASE);
-        command.address(addr & !(SECTOR as u32 - 1));
-    }
-    wait_idle(1_000_000)
-}
-
-/// Program `data` at `addr`, which must be erased there: bits only go from 1
-/// to 0.
-pub fn program(addr: u32, data: &[u8]) -> bool {
-    let _pins = Pins::take();
-    if !unprotect() {
-        warn!("spiflash", "flash is write protected"; addr = addr);
-        return false;
-    }
-    let mut addr = addr as usize;
-    let mut data = data;
-    while !data.is_empty() {
-        let room = PAGE - addr % PAGE;
-        let (page, rest) = data.split_at(room.min(data.len()));
-        write_enable();
-        {
-            let mut command = Command::start(PAGE_PROGRAM);
-            command.address(addr as u32);
-            for &b in page {
-                xfer(b);
-            }
-        }
-        if !wait_idle(100_000) {
-            warn!("spiflash", "page program timed out"; addr = addr);
-            return false;
-        }
-        addr += page.len();
-        data = rest;
-    }
-    true
 }

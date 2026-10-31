@@ -13,6 +13,7 @@ use r_efi::protocols::{block_io, device_path, disk_io};
 
 use crate::devpath::{self, Builder};
 use crate::util::Global;
+use crate::window;
 use crate::{info, proto, warn};
 
 /// What a storage driver gives the firmware.
@@ -261,6 +262,8 @@ struct Partition {
     first: u64,
     blocks: u64,
     node: [u8; 38],
+    /// Whether it is the window the variable store is in.
+    store: bool,
 }
 
 fn hd_node(number: u32, first: u64, blocks: u64, signature: &[u8], gpt: bool) -> [u8; 38] {
@@ -302,8 +305,12 @@ fn partitions(disk: &Volume) -> Vec<Partition> {
             let e = entry(i);
             let (ty, first, blocks) = (e[4], le32(e, 8) as u64, le32(e, 12) as u64);
             let usable = ty != 0 && ty != 0x05 && ty != 0x0f && ty != 0x85 && blocks > 0;
-            (usable && first + blocks <= disk.blocks())
-                .then(|| Partition { first, blocks, node: hd_node(i as u32 + 1, first, blocks, signature, false) })
+            (usable && first + blocks <= disk.blocks()).then(|| Partition {
+                first,
+                blocks,
+                node: hd_node(i as u32 + 1, first, blocks, signature, false),
+                store: false,
+            })
         })
         .collect()
 }
@@ -350,6 +357,7 @@ fn gpt(disk: &Volume) -> Vec<Partition> {
                 first,
                 blocks: last - first + 1,
                 node: hd_node(i as u32 + 1, first, last - first + 1, &e[16..32], true),
+                store: e[0..16] == window::GPT_TYPE,
             })
         })
         .collect()
@@ -365,6 +373,9 @@ pub fn add_disk(disk: Box<dyn Disk>, path: Vec<u8>, name: &'static str) {
     let disk: *mut dyn Disk = Box::into_raw(disk);
     let blocks = unsafe { (*disk).blocks() };
     let whole = publish(disk, 0, blocks, false, path);
+    if !crate::diskstore::taken() {
+        crate::diskstore::list(whole, name);
+    }
     let parts = partitions(whole);
     info!("disk", "disk found"; name = name, mib = blocks * whole.block_size() as u64 >> 20,
         partitions = parts.len(), path = devpath::Text(&whole.path));
@@ -372,6 +383,9 @@ pub fn add_disk(disk: Box<dyn Disk>, path: Vec<u8>, name: &'static str) {
         crate::fat::mount(whole);
     }
     for p in parts {
+        if p.store && crate::diskstore::adopt(disk, p.first, p.blocks, name) {
+            continue;
+        }
         let path = Builder::from(&whole.path).node(devpath::MEDIA, devpath::MEDIA_HD, &p.node).done();
         let v = publish(disk, p.first, p.blocks, true, path);
         crate::fat::mount(v);

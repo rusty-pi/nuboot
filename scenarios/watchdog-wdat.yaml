@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "watchdog-wdat"
-description: "The same Debian arm64 kernel as in the linux-acpi scenario, told to describe the board with the ACPI tables, finds the watchdog the WDAT table describes: its generic wdat_wdt driver takes a page of memory the VPU serves, reads the time the boot watchdog has left, sets a 4 second timeout, and is then left alone with the device open. The VPU, which holds the OS's countdown, lets it run out and resets the board; a variable the OS wrote before is there at the next boot, which then powers the board off."
+description: "The same Debian arm64 kernel as in the linux-acpi scenario, told to describe the board with the ACPI tables, finds the watchdog the WDAT table describes: its generic wdat_wdt driver takes a page of memory the VPU serves, reads the time the boot watchdog has left, sets a 4 second timeout, and is then left alone with the device open. The VPU, which holds the OS's countdown, lets it run out and resets the board."
 
 boot:
   eeprom: "../out/stock-pieeprom.bin"
@@ -22,7 +22,7 @@ boot:
       EFI/BOOT/BOOTAA64.EFI: "../out/systemd-bootaa64.efi"
       EFI/Linux/linux-wdat-test.efi: "../out/linux-wdat-test.efi"
       loader/loader.conf: { inline: "timeout 0\nconsole-mode keep\n" }
-  until: "Halt: wake"
+  until: "the OS did not ping the watchdog in time, resetting the board"
   wall_secs: 3000
 
 milestones:
@@ -44,12 +44,3 @@ milestones:
     line: "linux test: watchdog opened and left alone"
   - why: "The countdown runs out and the VPU resets the board."
     line: "the OS did not ping the watchdog in time, resetting the board"
-  - why: "The board starts again, and the variable the OS wrote before the reset is there."
-    line: "linux test: the watchdog reset the board"
-  - why: "The OS deletes the variable, which keeps the run repeatable on a board whose flash holds the variable store."
-    line: "linux test: variable removed"
-  - why: "The OS powers off, which the VPU's stand-by turns into a halt."
-    line: "Halt: wake"
-  - why: "The first boot's OS was reset by the dog and did not outlive the timeout."
-    line: "linux test: the watchdog did not reset the board"
-    absent: true

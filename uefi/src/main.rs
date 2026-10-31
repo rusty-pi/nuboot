@@ -23,6 +23,7 @@ mod conio;
 mod console;
 mod critical;
 mod devpath;
+mod diskstore;
 mod dma;
 mod eeprom;
 mod entry;
@@ -54,6 +55,7 @@ mod usbdisk;
 mod util;
 mod var;
 mod watchdog;
+mod window;
 mod xhci;
 
 use alloc::vec::Vec;
@@ -117,6 +119,7 @@ fn memory_map(tree: &fdt::Fdt, tree_addr: u64) {
     // and the power manager, which resets it.
     map.add_mmio(rtvar::MAILBOX_PAGE, rtvar::MAILBOX_PAGE + mem::PAGE);
     map.add_mmio(watchdog::PM_PAGE, watchdog::PM_PAGE + mem::PAGE);
+    map.add_mmio(sd::EMMC2_PAGE, sd::EMMC2_PAGE + mem::PAGE);
     map.mark(DMA_ARENA.0, DMA_ARENA.1, efi::BOOT_SERVICES_DATA);
     map.mark(tree_addr, tree_addr + tree.size() as u64, efi::BOOT_SERVICES_DATA);
     map.mark(start, runtime_end, efi::RUNTIME_SERVICES_CODE);
@@ -188,11 +191,11 @@ extern "C" fn pi4_main(tree_addr: u64) -> ! {
     rng::install();
     tcg2::init();
     esrt::init();
+    sd::init();
+    xhci::init();
     secure::init();
     let parent = firmware_handle();
 
-    sd::init();
-    xhci::init();
     acpi::init(&tree, xhci::registers_base());
     smbios::init(&tree);
 
