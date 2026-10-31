@@ -87,7 +87,7 @@ def replay(log):
         fail("the log does not start with a Spec ID event")
     (first,) = struct.unpack("<I", log[28:32])
     at = 32 + first
-    pcrs = [bytes(32)] * 24
+    pcrs = [bytes(32)] * 17 + [b"\xff" * 32] * 6 + [bytes(32)]
     events = []
     while at < len(log):
         pcr, kind, count = struct.unpack("<III", log[at:at + 12])
