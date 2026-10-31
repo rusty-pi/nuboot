@@ -25,6 +25,8 @@ const TAG_EXTEND_BOOT_MEASUREMENT: u32 = 0x0003_00a1;
 const TAG_CRYPTO_KEY_STATUS: u32 = 0x0003_0090;
 const TAG_CRYPTO_SET_KEY_STATUS: u32 = 0x0003_8090;
 const TAG_CRYPTO_HMAC_SHA256: u32 = 0x0003_0092;
+const TAG_NV_EXPORT: u32 = 0x0003_00ae;
+const TAG_NV_IMPORT: u32 = 0x0003_00af;
 /// The device private key's id in the firmware cryptography service.
 const DEVICE_KEY: u32 = 1;
 const SIGN_LOCKED: u32 = 1 << 10;
@@ -273,6 +275,55 @@ pub fn device_hmac(message: &[u8; 32]) -> Option<[u8; 32]> {
         return None;
     }
     word_bytes(&answer[2..], 32).try_into().ok()
+}
+
+/// The most an NV index's record holds, in bytes.
+pub const NV_RECORD_MAX: usize = 390;
+
+/// What the VPU answered when asked for the next change of an NV index.
+pub enum NvExport {
+    Record(alloc::vec::Vec<u8>),
+    Nothing,
+    /// No device key is fused, or the VPU did not answer.
+    Unavailable,
+}
+
+/// The next change to an NV index of the TPM, as a record for the store.
+pub fn nv_export() -> NvExport {
+    let Some(answer) = crypto_call(TAG_NV_EXPORT, &[], 8 + NV_RECORD_MAX.next_multiple_of(4)) else { return NvExport::Unavailable };
+    match (answer[0], answer[1] as usize) {
+        (0, len) if len <= NV_RECORD_MAX => NvExport::Record(word_bytes(&answer[2..], len)),
+        (1, _) => NvExport::Nothing,
+        _ => NvExport::Unavailable,
+    }
+}
+
+/// What the VPU made of a record put back.
+pub enum NvImport {
+    Taken,
+    /// The VPU's status word: 1 not its record, 2 older than one taken, 3 no
+    /// room or place for it, 4 the board is the OS's, 5 no device key.
+    Refused(u32),
+    Silent,
+}
+
+/// Put an NV index back from a record of the store.
+pub fn nv_import(record: &[u8]) -> NvImport {
+    if record.len() > NV_RECORD_MAX {
+        return NvImport::Refused(1);
+    }
+    let mut request = alloc::vec![0u32; 1 + record.len().div_ceil(4)];
+    request[0] = record.len() as u32;
+    for (w, bytes) in request[1..].iter_mut().zip(record.chunks(4)) {
+        let mut word = [0u8; 4];
+        word[..bytes.len()].copy_from_slice(bytes);
+        *w = u32::from_le_bytes(word);
+    }
+    match crypto_call(TAG_NV_IMPORT, &request, 4 + record.len().next_multiple_of(4)) {
+        Some(answer) if answer[0] == 0 => NvImport::Taken,
+        Some(answer) => NvImport::Refused(answer[0]),
+        None => NvImport::Silent,
+    }
 }
 
 /// Forbid the device key to sign and to HMAC until the next boot: the OS has

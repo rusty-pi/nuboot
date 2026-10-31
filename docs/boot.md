@@ -223,6 +223,7 @@ pimu boot --scenario scenarios/capsule-eeprom-failed.yaml   # an EEPROM update t
 pimu boot --scenario scenarios/runtime-variables.yaml  # variables through the runtime services
 pimu boot --scenario scenarios/persist.yaml     # what the OS writes through them outlasts a reset
 pimu boot --scenario scenarios/persist-usb.yaml  # the same with a USB drive as the boot medium
+pimu boot --scenario scenarios/nv-persist.yaml  # the TPM's NV indices outlast a reset, the OS's changes to them too
 pimu boot --scenario scenarios/firmware-setup.yaml  # OsIndications asks for the firmware's screen at the next boot
 pimu boot --scenario scenarios/shutdown.yaml    # a shutdown through them ends in the bootloader's halt
 pimu boot --scenario scenarios/store-compact.yaml  # the store has room again at the next boot
@@ -256,7 +257,11 @@ they are signed with ([uefi.md](uefi.md#secure-boot)).
   runtime services, the store's `0x000300a9` (seal a variable's write) and
   `0x000300aa` (power the SD card off and on and hand its host back) and
   `0x000300ac` (reset the PCIe link and the VL805 and load its firmware again),
-  so that the runtime services can write the store at `ResetSystem`, and, on
+  so that the runtime services can write the store at `ResetSystem`, and
+  `0x000300ae` (the next change to a TPM NV index, as a sealed record for the
+  store; UEFI asks it on channel 8 as well), and, on channel 8 for UEFI only,
+  `0x000300af` (put an NV index back from a record, refused once UEFI has
+  handed the board to the OS), and, on
   channel 8, `0x000300ab` (how the bootloader says the firmware was loaded,
   which tells UEFI the disk the store is on), and, for the SD card's regulators, the GPIO expander's
   two SD pins (`0x00030041`, `0x00038041`, `0x00030043` and `0x00038043`: the

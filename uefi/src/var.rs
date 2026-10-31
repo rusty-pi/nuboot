@@ -534,7 +534,13 @@ fn live_records(index: usize, history: &[(u64, store::Record)]) -> Vec<store::Re
         }
     }
     live.sort_by_key(|(seq, _)| *seq);
-    live.into_iter().map(|(_, r)| r.clone()).collect()
+    let mut records: Vec<store::Record> = live.into_iter().map(|(_, r)| r.clone()).collect();
+    records.extend(crate::nvstore::live());
+    records
+}
+
+fn every_live_record() -> Vec<store::Record> {
+    live_records(usize::MAX, &[])
 }
 
 /// The OS has the board: nothing seals for it from here on.
@@ -552,12 +558,17 @@ fn lock() {
 pub fn load_store() {
     *DEVICE.get() = crate::mailbox::device_hmac(&[0; 32]).is_some();
     crate::tables::on_exit_boot_services(lock);
+    crate::tables::before_exit_boot_services(|| crate::nvstore::flush(every_live_record));
     if !*DEVICE.get() {
         warn!("var", "no device key is fused: variables other than KEK, db and dbx stay in memory");
     }
     for r in store::load() {
         let name = r.name.clone();
         let guid = efi::Guid::from_bytes(&r.guid);
+        if crate::nvstore::is_nv(&r) {
+            crate::nvstore::replay(r);
+            continue;
+        }
         if !is_key(&name, &guid) {
             replay_plain(r);
             continue;
@@ -571,8 +582,8 @@ pub fn load_store() {
         }
     }
     store::start_if_empty();
-    let plain_records_were_checked = *DEVICE.get() && !*SEAL_CHECK_FAILED.get();
-    if *SEAL_CHECK_FAILED.get() {
+    let plain_records_were_checked = *DEVICE.get() && !*SEAL_CHECK_FAILED.get() && !crate::nvstore::silent();
+    if *SEAL_CHECK_FAILED.get() || crate::nvstore::silent() {
         warn!("var", "the VPU did not answer for a stored record, the store is left as it is");
     }
     if plain_records_were_checked {

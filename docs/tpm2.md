@@ -58,7 +58,7 @@ One bank, SHA-256, of 24 PCRs. Every PCR can be extended from locality 0 but
 
 | command | |
 |---|---|
-| `TPM2_Startup`, `Shutdown`, `SelfTest`, `IncrementalSelfTest`, `GetTestResult`, `StirRandom` | accepted; there is no non-volatile state to save |
+| `TPM2_Startup`, `Shutdown`, `SelfTest`, `IncrementalSelfTest`, `GetTestResult`, `StirRandom` | accepted; the NV indices are kept as they change ([below](#nv-indices)), so there is nothing to save |
 | `TPM2_GetCapability` | algorithms, handles, commands, PCRs, ECC curves and the TPM properties; the other capabilities are empty lists |
 | `TPM2_GetRandom` | from the SoC's RNG200, up to 32 bytes |
 | `TPM2_PCR_Read`, `PCR_Extend`, `PCR_Event`, `PCR_Reset` | with a password session with an empty password; no other session. `PCR_Read` answers with the first eight registers of a selection and says which it read, and a caller asks again for the rest |
@@ -71,7 +71,7 @@ One bank, SHA-256, of 24 PCRs. Every PCR can be extended from locality 0 but
 | `TPM2_ContextSave`, `ContextLoad`, `FlushContext` | objects and sessions |
 | `TPM2_EvictControl` | a primary key made persistent at a handle in the owner's or the platform's range, two at most, and removed again; they last until the TPM restarts, and a tool that finds none makes the primary again |
 | `TPM2_StartAuthSession` | HMAC, policy and trial sessions, unsalted or salted to a primary key with ECDH, bound to nothing or to an object, with AES-128-CFB for parameter encryption or none |
-| `TPM2_NV_DefineSpace`, `NV_UndefineSpace`, `NV_ReadPublic`, `NV_Read`, `NV_Write`, `NV_Extend`, `NV_Increment`, `NV_SetBits` | ordinary, counter, bit field and extend indices under the owner's or the platform's authorization, with the index's own authorization value or policy as its attributes say; eight indices of up to 256 bytes, in RAM ([below](#nv-indices)) |
+| `TPM2_NV_DefineSpace`, `NV_UndefineSpace`, `NV_ReadPublic`, `NV_Read`, `NV_Write`, `NV_Extend`, `NV_Increment`, `NV_SetBits` | ordinary, counter, bit field and extend indices under the owner's or the platform's authorization, with the index's own authorization value or policy as its attributes say; eight indices of up to 256 bytes, kept in the variable store ([below](#nv-indices)) |
 | `TPM2_PolicyPCR`, `PolicyOR`, `PolicyAuthValue`, `PolicyPassword`, `PolicySecret`, `PolicyAuthorize`, `PolicyCommandCode`, `PolicyNvWritten`, `PolicyGetDigest`, `PolicyRestart` | |
 
 Anything else gets `TPM_RC_COMMAND_CODE`. There are no RSA keys of the TPM's own
@@ -101,14 +101,36 @@ authorization its attributes name: the index's own authorization value
 `OWNERREAD`, `PPWRITE`, `PPREAD`). The name of an index covers its attributes,
 `TPMA_NV_WRITTEN` included, so it changes with the first write.
 
-The indices are in RAM, as the PCRs are: a restart of the TPM leaves none, and
-a tool that finds one missing defines it again. Locks (`WRITELOCKED`,
+Locks (`WRITELOCKED`,
 `READLOCKED`, `WRITEDEFINE`, `GLOBALLOCK` and the `*_STCLEAR` ones), the PIN
 types and `POLICY_DELETE` are not offered, and a definition that asks for one
 fails with `TPM_RC_ATTRIBUTES`. Eight indices fit, each of at most 256 bytes
 (8 for a counter or bit field, 32 for an extend index); `TPM2_GetCapability`
 lists them under `0x01000000` and the TPM properties say how many there are and
 how large.
+
+An index is in RAM and also on the boot disk, so it is there at the next boot
+on a board with the device private key fused and a boot disk that holds the
+variable store ([uefi.md](uefi.md#the-variable-store)). The VPU hands each
+change over as a record of the index's whole state, encrypted (AES-128-CFB) and
+authenticated (HMAC-SHA256) under keys derived from the device key, so that
+the authorization value and the data are not on the disk in the clear and the
+VPU takes back only what it made. UEFI appends the records of the changes the
+boot made when boot services end, and the runtime services those the OS made
+when it calls `ResetSystem`. At the next boot UEFI gives them back before any
+command, newest last; the VPU takes a record only if it is newer than the last
+it took, and an index with `TPMA_NV_CLEAR_STCLEAR` (systemd's NvPCRs) comes back
+defined and empty, as a restart of the TPM clears it.
+
+The disk is the OS's, so it can drop or put back records, though not read or
+make them. Dropping the newest record of an index returns the index to its
+previous state, a counter included, and erasing the store leaves none: a
+counter or an extend index here does not stop someone who can write the disk
+([uefi.md](uefi.md#the-variable-store)). A change is lost with a power cut, a
+watchdog reset or a restart that does not go through `ResetSystem`. A board with
+no device key, or with no disk that holds the store (or none the runtime
+services reach, for what the OS changes), keeps its indices until reset, and a
+tool that finds one missing defines it again.
 
 ## Keys
 

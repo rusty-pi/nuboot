@@ -34,6 +34,7 @@ mod fdt;
 mod image;
 mod mailbox;
 mod mem;
+mod nvstore;
 mod proto;
 mod pkcs7;
 mod rng;
