@@ -66,6 +66,7 @@ const RC_S: u32 = 0x800;
 const RC_1: u32 = 0x100;
 const RC_2: u32 = 0x200;
 const RC_ATTRIBUTES: u32 = 0x082;
+const RC_BINDING: u32 = 0x0a5;
 const RC_HIERARCHY: u32 = 0x085;
 const RC_KDF: u32 = 0x08c;
 const RC_KEY: u32 = 0x09c;
@@ -107,7 +108,7 @@ const CC_STIR_RANDOM: u32 = 0x146;
 /// Commands in numeric order, for `TPM_CAP_COMMANDS`: the number of handles in
 /// the command (bits 25-27 of `TPMA_CC`), and 8 more when the response has a
 /// handle (bit 28).
-const COMMANDS: [(u32, u32); 48] = [
+const COMMANDS: [(u32, u32); 49] = [
     (object::CC_EVICT_CONTROL, 2),
     (nv::CC_NV_UNDEFINE_SPACE, 2),
     (nv::CC_NV_DEFINE_SPACE, 1),
@@ -130,6 +131,7 @@ const COMMANDS: [(u32, u32); 48] = [
     (sign::CC_QUOTE, 1),
     (sign::CC_SIGN, 1),
     (object::CC_UNSEAL, 1),
+    (session::CC_POLICY_SIGNED, 2),
     (object::CC_CONTEXT_LOAD, 8),
     (object::CC_CONTEXT_SAVE, 1),
     (object::CC_FLUSH_CONTEXT, 0),
@@ -166,7 +168,7 @@ struct Spec {
     authorized: usize,
 }
 
-const OBJECT_COMMANDS: [Spec; 34] = [
+const OBJECT_COMMANDS: [Spec; 35] = [
     Spec { code: object::CC_EVICT_CONTROL, handles: 2, authorized: 1 },
     Spec { code: object::CC_CREATE_PRIMARY, handles: 1, authorized: 1 },
     Spec { code: object::CC_CREATE, handles: 1, authorized: 1 },
@@ -193,6 +195,7 @@ const OBJECT_COMMANDS: [Spec; 34] = [
     Spec { code: session::CC_POLICY_COMMAND_CODE, handles: 1, authorized: 0 },
     Spec { code: session::CC_POLICY_NV_WRITTEN, handles: 1, authorized: 0 },
     Spec { code: session::CC_POLICY_AUTHORIZE_NV, handles: 3, authorized: 1 },
+    Spec { code: session::CC_POLICY_SIGNED, handles: 2, authorized: 0 },
     Spec { code: nv::CC_NV_DEFINE_SPACE, handles: 1, authorized: 1 },
     Spec { code: nv::CC_NV_UNDEFINE_SPACE, handles: 2, authorized: 1 },
     Spec { code: nv::CC_NV_READ_PUBLIC, handles: 1, authorized: 0 },
@@ -467,6 +470,7 @@ fn dispatch(code: u32, handles: &[u32; 3], params: &mut In, a: &mut session::Aut
         object::CC_UNSEAL => object::unseal(&mut command),
         object::CC_LOAD_EXTERNAL => object::load_external(&mut command),
         session::CC_POLICY_AUTHORIZE => session::policy_authorize(handles[0], params, a),
+        session::CC_POLICY_SIGNED => session::policy_signed([handles[0], handles[1]], params, a),
         session::CC_POLICY_AUTHORIZE_NV => {
             if params.rest() != 0 {
                 return Err(RC_COMMAND_SIZE);

@@ -15,7 +15,7 @@ use super::session::Authorization;
 use super::{
     ALG_HMAC, ALG_KEYEDHASH, ALG_NULL, ALG_SHA256, In, Out, RC_ATTRIBUTES, RC_CURVE, RC_HANDLE, RC_HIERARCHY, RC_INTEGRITY,
     RC_KDF, RC_KEY, RC_OBJECT_MEMORY, RC_P, RC_RANGE, RC_SCHEME, RC_SIZE, RC_SYMMETRIC, RC_TYPE, RC_VALUE,
-    RC_COMMAND_SIZE, RC_NV_DEFINED, RC_NV_SPACE, RC_1, RC_2,
+    RC_BINDING, RC_COMMAND_SIZE, RC_NV_DEFINED, RC_NV_SPACE, RC_1, RC_2,
 };
 use crate::{aes, kdf, keystore, p256, rng, sha256};
 
@@ -282,6 +282,35 @@ impl Public {
 
     pub fn is_restricted(&self) -> bool {
         self.attributes & RESTRICTED != 0
+    }
+
+    /// What the TPM takes as an HMAC key handed to it with its secret part: a
+    /// keyed hash that signs with HMAC-SHA256 and has no other use.
+    pub fn check_external_hmac(&self) -> Result<(), u32> {
+        if self.kind != ALG_KEYEDHASH {
+            return Err(RC_TYPE);
+        }
+        if self.name_alg != ALG_SHA256 {
+            return Err(super::RC_HASH);
+        }
+        if self.attributes & !(SIGN_ENCRYPT | USER_WITH_AUTH) != 0 || self.attributes & SIGN_ENCRYPT == 0 {
+            return Err(RC_ATTRIBUTES);
+        }
+        if self.scheme != ALG_HMAC {
+            return Err(RC_SCHEME);
+        }
+        if self.scheme_hash != ALG_SHA256 {
+            return Err(super::RC_HASH);
+        }
+        if self.unique_len != 32 {
+            return Err(RC_SIZE);
+        }
+        Ok(())
+    }
+
+    /// A key that signs with HMAC.
+    pub fn is_hmac(&self) -> bool {
+        self.kind == ALG_KEYEDHASH && self.scheme == ALG_HMAC && self.attributes & SIGN_ENCRYPT != 0
     }
 
     /// A sealed data object: a keyed hash that signs and decrypts nothing.
@@ -967,20 +996,36 @@ pub fn load(c: &mut Command) -> Result<(), u32> {
 }
 
 /// `TPM2_LoadExternal`: a public key the caller names, loaded under a
-/// hierarchy so what it verifies carries that hierarchy's tickets. No private
-/// part is accepted.
+/// hierarchy so what it verifies carries that hierarchy's tickets; or, with a
+/// secret part, an HMAC-SHA256 key under the null hierarchy, which signs for
+/// `TPM2_PolicySigned`. The secret part is kept as [`protect`] makes it.
 pub fn load_external(c: &mut Command) -> Result<(), u32> {
-    let sensitive = c.params.sized().ok_or(RC_COMMAND_SIZE)?;
-    if !sensitive.is_empty() {
-        return Err(RC_VALUE | RC_P | RC_1);
-    }
+    let sensitive_bytes = c.params.sized().ok_or(RC_COMMAND_SIZE)?;
     let public_at = c.params.at;
     let body = c.params.sized().ok_or(RC_COMMAND_SIZE)?;
     let public = Public::parse(body).map_err(|rc| rc | RC_P | 2 * RC_1)?;
-    public.check_external().map_err(|rc| rc | RC_P | 2 * RC_1)?;
     let hierarchy = c.params.u32().ok_or(RC_COMMAND_SIZE)?;
     if c.params.rest() != 0 {
         return Err(RC_COMMAND_SIZE);
+    }
+    let mut sensitive = None;
+    if sensitive_bytes.is_empty() {
+        public.check_external().map_err(|rc| rc | RC_P | 2 * RC_1)?;
+    } else {
+        if hierarchy != RH_NULL {
+            return Err(RC_HIERARCHY | RC_P | 3 * RC_1);
+        }
+        public.check_external_hmac().map_err(|rc| rc | RC_P | 2 * RC_1)?;
+        let mut parsed = Sensitive::parse(sensitive_bytes).ok_or(RC_SIZE | RC_P | RC_1)?;
+        let mut unique = sha256::Sha256::new();
+        unique.update(&parsed.seed);
+        unique.update(&parsed.value[..parsed.value_len]);
+        let bound = unique.finish();
+        if parsed.kind != ALG_KEYEDHASH || public.unique[..32] != bound {
+            parsed.wipe();
+            return Err(if parsed.kind != ALG_KEYEDHASH { RC_TYPE } else { RC_BINDING } | RC_P | RC_1);
+        }
+        sensitive = Some(parsed);
     }
     if hierarchy_label(hierarchy).is_none() {
         return Err(RC_HIERARCHY | RC_P | 3 * RC_1);
@@ -999,6 +1044,10 @@ pub fn load_external(c: &mut Command) -> Result<(), u32> {
     slot.name = name;
     slot.origin = Origin { hierarchy, template: [0; 32] };
     slot.qualified = qualify(&hierarchy.to_be_bytes(), &name);
+    if let Some(mut secret) = sensitive {
+        slot.private_len = protect(&secret, &name, &slot.origin, &mut slot.private);
+        secret.wipe();
+    }
     c.auth.new_handle = Some(TRANSIENT_FIRST + slot_index as u32);
     let mut parameters = Out { buf: &mut [0u8; 40], at: 0 };
     parameters.u16(34);

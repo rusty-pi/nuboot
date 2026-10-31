@@ -9,8 +9,8 @@
 
 use super::object::{self, ALG_AES, ALG_CFB, ALG_ECC, RH_NULL, RH_PASSWORD};
 use super::{
-    ALG_NULL, ALG_SHA256, In, Out, RC_ATTRIBUTES, RC_AUTH_FAIL, RC_AUTH_MISSING, RC_AUTH_TYPE, RC_AUTH_UNAVAILABLE, RC_BAD_AUTH,
-    RC_COMMAND_SIZE, RC_FAILURE, RC_HANDLE, RC_POLICY_CC, RC_PCR_CHANGED, RC_POLICY_FAIL, RC_RANGE, RC_SESSION_MEMORY, RC_SIZE, RC_SYMMETRIC,
+    ALG_HMAC, ALG_NULL, ALG_SHA256, In, Out, RC_ATTRIBUTES, RC_AUTH_FAIL, RC_AUTH_MISSING, RC_AUTH_TYPE, RC_AUTH_UNAVAILABLE, RC_BAD_AUTH,
+    RC_COMMAND_SIZE, RC_FAILURE, RC_HANDLE, RC_HASH, RC_POLICY_CC, RC_PCR_CHANGED, RC_POLICY_FAIL, RC_RANGE, RC_SCHEME, RC_SESSION_MEMORY, RC_SIGNATURE, RC_SIZE, RC_SYMMETRIC,
     RC_VALUE, RC_P, RC_S, RC_1, RC_2, ST_NO_SESSIONS, ST_SESSIONS,
 };
 use crate::{aes, kdf, keystore, p256, rng, sha256};
@@ -31,6 +31,7 @@ pub const CC_POLICY_AUTHORIZE: u32 = 0x16a;
 pub const CC_POLICY_COMMAND_CODE: u32 = 0x16c;
 pub const CC_POLICY_NV_WRITTEN: u32 = 0x18f;
 pub const CC_POLICY_AUTHORIZE_NV: u32 = 0x192;
+pub const CC_POLICY_SIGNED: u32 = 0x160;
 
 const ATTR_CONTINUE: u8 = 0x01;
 const ATTR_DECRYPT: u8 = 0x20;
@@ -766,6 +767,76 @@ pub fn policy_secret(entity: u32, handle: u32, params: &mut In, a: &mut Authoriz
     session.digest = update_reference.finish();
     let mut response = [0u8; 10];
     response[2..4].copy_from_slice(&0x8023u16.to_be_bytes());
+    response[4..8].copy_from_slice(&RH_NULL.to_be_bytes());
+    a.response_params(&response);
+    Ok(())
+}
+
+/// `TPM2_PolicySigned`: the session's policy now needs the key `handles[0]` to
+/// have vouched for it, which an HMAC-SHA256 key does by an HMAC over a digest of
+/// what the session's nonce, the expiry (none), the command hash (none) and the
+/// reference are. A trial session takes the step with no check.
+pub fn policy_signed(handles: [u32; 2], params: &mut In, a: &mut Authorization) -> Result<(), u32> {
+    let slot = object::slot_of(handles[0]).ok_or(RC_HANDLE | RC_1)?;
+    let session = session_of(handles[1]).ok_or(RC_HANDLE | RC_2)?;
+    if session.kind == KIND_HMAC {
+        return Err(RC_ATTRIBUTES | RC_2);
+    }
+    let nonce = params.sized().ok_or(RC_COMMAND_SIZE)?;
+    let command_hash = params.sized().ok_or(RC_COMMAND_SIZE)?;
+    let reference = params.sized().ok_or(RC_COMMAND_SIZE)?;
+    let expiration = params.take(4).ok_or(RC_COMMAND_SIZE)?;
+    let signature_alg = params.u16().ok_or(RC_COMMAND_SIZE)?;
+    let signature_hash = params.u16().ok_or(RC_COMMAND_SIZE)?;
+    let signature = params.take(32).ok_or(RC_COMMAND_SIZE)?;
+    if params.rest() != 0 {
+        return Err(RC_COMMAND_SIZE);
+    }
+    if !slot.public().is_hmac() {
+        return Err(RC_ATTRIBUTES | RC_1);
+    }
+    if !nonce.is_empty() && !constant_eq(nonce, &session.nonce_tpm) {
+        return Err(RC_VALUE | RC_P | RC_1);
+    }
+    if !command_hash.is_empty() {
+        return Err(RC_VALUE | RC_P | 2 * RC_1);
+    }
+    if reference.len() > 32 {
+        return Err(RC_SIZE | RC_P | 3 * RC_1);
+    }
+    if expiration != [0; 4] {
+        return Err(RC_VALUE | RC_P | 4 * RC_1);
+    }
+    if signature_alg != ALG_HMAC {
+        return Err(RC_SCHEME | RC_P | 5 * RC_1);
+    }
+    if signature_hash != ALG_SHA256 {
+        return Err(RC_HASH | RC_P | 5 * RC_1);
+    }
+    if session.kind != KIND_TRIAL {
+        let mut data = sha256::Sha256::new();
+        data.update(nonce);
+        data.update(expiration);
+        data.update(command_hash);
+        data.update(reference);
+        let (_, _, _, mut key, key_len) = object::open(slot)?;
+        let expected = sha256::hmac(&key[..key_len], &data.finish());
+        keystore::zero(&mut key);
+        if !constant_eq(signature, &expected) {
+            return Err(RC_SIGNATURE | RC_P | 5 * RC_1);
+        }
+    }
+    let (name, len) = super::name_for(handles[0]);
+    let mut update = sha256::Sha256::new();
+    update.update(&session.digest);
+    update.update(&CC_POLICY_SIGNED.to_be_bytes());
+    update.update(&name[..len]);
+    let mut update_reference = sha256::Sha256::new();
+    update_reference.update(&update.finish());
+    update_reference.update(reference);
+    session.digest = update_reference.finish();
+    let mut response = [0u8; 10];
+    response[2..4].copy_from_slice(&0x8024u16.to_be_bytes());
     response[4..8].copy_from_slice(&RH_NULL.to_be_bytes());
     a.response_params(&response);
     Ok(())
