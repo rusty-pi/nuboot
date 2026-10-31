@@ -30,6 +30,7 @@ pub const CC_POLICY_SECRET: u32 = 0x151;
 pub const CC_POLICY_AUTHORIZE: u32 = 0x16a;
 pub const CC_POLICY_COMMAND_CODE: u32 = 0x16c;
 pub const CC_POLICY_NV_WRITTEN: u32 = 0x18f;
+pub const CC_POLICY_AUTHORIZE_NV: u32 = 0x192;
 
 const ATTR_CONTINUE: u8 = 0x01;
 const ATTR_DECRYPT: u8 = 0x20;
@@ -767,6 +768,32 @@ pub fn policy_secret(entity: u32, handle: u32, params: &mut In, a: &mut Authoriz
     response[2..4].copy_from_slice(&0x8023u16.to_be_bytes());
     response[4..8].copy_from_slice(&RH_NULL.to_be_bytes());
     a.response_params(&response);
+    Ok(())
+}
+
+/// `TPM2_PolicyAuthorizeNV`: the session's policy digest must be the one the
+/// NV index holds, as a `TPMT_HA`, and gives way to a digest of that index's
+/// name. Whoever may write the index can then change what the policy requires
+/// by writing another digest, and take back the old one by writing over it,
+/// without changing the policy an object was made with. A trial session takes
+/// the step without the check.
+pub fn policy_authorize_nv(handles: [u32; 3], a: &mut Authorization) -> Result<(), u32> {
+    let session = session_of(handles[2]).ok_or(RC_HANDLE | 3 * RC_1)?;
+    if session.kind == KIND_HMAC {
+        return Err(RC_ATTRIBUTES | 3 * RC_1);
+    }
+    if session.kind != KIND_TRIAL {
+        let approved = super::nv::approved_policy(handles[0], handles[1], a)?;
+        if !constant_eq(&approved, &session.digest) {
+            return Err(RC_VALUE);
+        }
+    }
+    let (name, len) = super::name_for(handles[1]);
+    let mut update = sha256::Sha256::new();
+    update.update(&[0u8; 32]);
+    update.update(&CC_POLICY_AUTHORIZE_NV.to_be_bytes());
+    update.update(&name[..len]);
+    session.digest = update.finish();
     Ok(())
 }
 
