@@ -14,7 +14,15 @@ boot:
     - "61=0xc0de7556"
     - "62=0xc0de8667"
     - "63=0xc0de9778"
-  sd: "../out/card-update-dropped.img"
+  sd:
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-takeover.efi"
+          nuboot-200.1.0+0-3.upd: "../out/bundle-next.bin"
+          nuboot-200.0.0.upd: "../out/bundle-next.bin"
   until: "running as an update  version=3355443200"
   wall_secs: 1800
 

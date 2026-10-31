@@ -14,7 +14,13 @@ boot:
     - "61=0xc0de7556"
     - "62=0xc0de8667"
     - "63=0xc0de9778"
-  sd: "../out/card-watchdog-hang.img"
+  sd:
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-hang.efi"
   until: "watchdog test: the board reset and booted again"
   wall_secs: 900
 

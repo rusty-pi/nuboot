@@ -8,9 +8,12 @@ boot:
   board_rev: "c03112"
   stepping: "b0"
   sd:
-    files:
-      start4.elf: "../out/start4-test.elf"
-      EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
   until: "hello test: done"
   wall_secs: 600
 

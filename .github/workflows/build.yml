@@ -117,7 +117,6 @@ jobs:
           scripts/build.sh
           scripts/build.sh --test-keys
           scripts/build-capsule-test.sh
-          scripts/build-cards.sh
           scripts/build-bundle-test.sh
           scripts/build-linux-test.sh
           # The optional features have to keep building too.
@@ -128,29 +127,6 @@ jobs:
           name: firmware
           path: |
             out/stock-pieeprom.bin
-            out/card-store-tamper.img
-            out/card-capsule-trial.img
-            out/card-capsule-commit.img
-            out/card-capsule-drop.img
-            out/card-capsule-eeprom-failed.img
-            out/card-capsule-eeprom-updated.img
-            out/card-persist.img
-            out/card-store.img
-            out/card-store-compact.img
-            out/card-capsule-stage.img
-            out/card-capsule-eeprom-stage.img
-            out/card-watchdog-fault.img
-            out/card-watchdog-hang.img
-            out/card-watchdog-stuck.img
-            out/card-watchdog-takeover.img
-            out/card-linux.img
-            out/card-linux-acpi.img
-            out/card-linux-no-dt.img
-            out/card-update-apply.img
-            out/card-update-counting.img
-            out/card-update-dropped.img
-            out/card-update-refused.img
-            out/card-owner-db-update.img
             out/pieeprom-stamped.bin
             out/boot-next.img
             out/boot-next.sig

@@ -17,7 +17,7 @@ a capsule's update is under way: its state, and the version it carries. With
 --eeprom the update is the EEPROM's. With --empty the store holds nothing.
 
 OUT is the window as it is on the disk, 512 KiB: two banks of 256 KiB, the
-first holding the records. scripts/mkcard.py puts it on a card.
+first holding the records. A scenario puts it on the card as the data of a partition.
 """
 
 import hashlib

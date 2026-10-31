@@ -6,15 +6,18 @@ boot:
   eeprom: "../out/stock-pieeprom.bin"
   boot_order: "0x1"
   sd:
-    files:
-      start4.elf: "../out/start4-test.elf"
-      EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
-      EFI/UpdateCapsule/new.cap: "../out/capsule-new.cap"
-      EFI/UpdateCapsule/old.cap: "../out/capsule-old.cap"
-      EFI/UpdateCapsule/corrupt.cap: "../out/capsule-corrupt.cap"
-      EFI/UpdateCapsule/stranger.cap: "../out/capsule-stranger.cap"
-      EFI/UpdateCapsule/junk.cap: "../out/capsule-junk.cap"
-      EFI/UpdateCapsule/relabeled.cap: "../out/capsule-relabeled.cap"
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+          EFI/UpdateCapsule/new.cap: "../out/capsule-new.cap"
+          EFI/UpdateCapsule/old.cap: "../out/capsule-old.cap"
+          EFI/UpdateCapsule/corrupt.cap: "../out/capsule-corrupt.cap"
+          EFI/UpdateCapsule/stranger.cap: "../out/capsule-stranger.cap"
+          EFI/UpdateCapsule/junk.cap: "../out/capsule-junk.cap"
+          EFI/UpdateCapsule/relabeled.cap: "../out/capsule-relabeled.cap"
   until: "hello test: done"
   wall_secs: 900
 

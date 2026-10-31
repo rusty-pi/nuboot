@@ -17,7 +17,18 @@ boot:
     - "61=0xc0de7556"
     - "62=0xc0de8667"
     - "63=0xc0de9778"
-  sd: "../out/card-capsule-trial.img"
+  sd:
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          boot.img: "../out/boot-next.img"
+          boot.sig: "../out/boot-next.sig"
+          EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-takeover.efi"
+      - type: 0ca9cdc0-6c28-49a6-a041-eeec6123df3a
+        start: 512K
+        size: 512K
+        data: "../out/store-pending.bin"
   until: "the updated firmware reached the OS  version=2147483000"
   wall_secs: 1800
 

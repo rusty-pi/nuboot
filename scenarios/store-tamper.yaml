@@ -14,7 +14,17 @@ boot:
     - "61=0xc0de7556"
     - "62=0xc0de8667"
     - "63=0xc0de9778"
-  sd: "../out/card-store-tamper.img"
+  sd:
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/store-tamper.efi"
+      - type: 0ca9cdc0-6c28-49a6-a041-eeec6123df3a
+        start: 512K
+        size: 512K
+        data: "../out/store-tamper.bin"
   until: "tamper test: done"
   wall_secs: 900
 

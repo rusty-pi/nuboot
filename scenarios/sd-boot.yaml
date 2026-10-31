@@ -5,8 +5,11 @@ description: "The stock EEPROM bootloader starts start4.elf from the SD card, wh
 boot:
   eeprom: "https://raw.githubusercontent.com/raspberrypi/rpi-eeprom/master/firmware-2711/latest/pieeprom-2026-08-04.bin"
   sd:
-    files:
-      start4.elf: "../out/start4.elf"
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4.elf"
   boot_order: "0x1"
   bootconf:
     - "BOOT_UART=1"

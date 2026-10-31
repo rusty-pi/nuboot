@@ -9,10 +9,13 @@ boot:
   bootconf:
     - "SIGNED_BOOT=1"
   sd:
-    files:
-      boot.img: "../out/boot-test.img"
-      boot.sig: "../out/boot-test.sig"
-      EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          boot.img: "../out/boot-test.img"
+          boot.sig: "../out/boot-test.sig"
+          EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
   until: "hello test: done"
   wall_secs: 900
 
