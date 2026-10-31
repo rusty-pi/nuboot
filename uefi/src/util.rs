@@ -151,6 +151,48 @@ fn line_size() -> u64 {
     4 << ((ctr >> 16) & 0xf)
 }
 
+/// Copy `src`, in the non-cacheable DMA arena, to `dst`.
+pub fn copy_from_dma(dst: &mut [u8], src: &[u8]) {
+    assert_eq!(dst.len(), src.len());
+    let bulk = dst.len() & !127;
+    if bulk > 0 {
+        unsafe {
+            core::arch::asm!(
+                "2:",
+                "ldp {a}, {b}, [{s}]",
+                "ldp {c}, {d}, [{s}, #16]",
+                "ldp {e}, {f}, [{s}, #32]",
+                "ldp {g}, {h}, [{s}, #48]",
+                "ldp {i}, {j}, [{s}, #64]",
+                "ldp {k}, {l}, [{s}, #80]",
+                "ldp {m}, {n}, [{s}, #96]",
+                "ldp {o}, {p}, [{s}, #112]",
+                "stp {a}, {b}, [{d_}]",
+                "stp {c}, {d}, [{d_}, #16]",
+                "stp {e}, {f}, [{d_}, #32]",
+                "stp {g}, {h}, [{d_}, #48]",
+                "stp {i}, {j}, [{d_}, #64]",
+                "stp {k}, {l}, [{d_}, #80]",
+                "stp {m}, {n}, [{d_}, #96]",
+                "stp {o}, {p}, [{d_}, #112]",
+                "add {s}, {s}, #128",
+                "add {d_}, {d_}, #128",
+                "subs {left}, {left}, #128",
+                "b.ne 2b",
+                s = inout(reg) src.as_ptr() => _,
+                d_ = inout(reg) dst.as_mut_ptr() => _,
+                left = inout(reg) bulk => _,
+                a = out(reg) _, b = out(reg) _, c = out(reg) _, d = out(reg) _,
+                e = out(reg) _, f = out(reg) _, g = out(reg) _, h = out(reg) _,
+                i = out(reg) _, j = out(reg) _, k = out(reg) _, l = out(reg) _,
+                m = out(reg) _, n = out(reg) _, o = out(reg) _, p = out(reg) _,
+                options(nostack),
+            );
+        }
+    }
+    dst[bulk..].copy_from_slice(&src[bulk..]);
+}
+
 /// Write `[addr, addr + len)` back to memory and drop it from the data cache.
 pub fn cache_flush(addr: u64, len: usize) {
     let line = line_size();

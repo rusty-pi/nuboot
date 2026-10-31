@@ -155,7 +155,7 @@ impl Disk for UsbDisk {
                     }
                 }
             }
-            chunk.copy_from_slice(&self.buffer()[..chunk.len()]);
+            crate::util::copy_from_dma(chunk, &self.buffer()[..chunk.len()]);
         }
         Ok(())
     }
