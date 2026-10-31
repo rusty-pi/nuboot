@@ -44,6 +44,13 @@ const BANK_SHA256: u32 = 0x2;
 const LOG_FORMAT_TCG_2: u32 = 0x2;
 const PCRS: usize = 24;
 const LOG_MAX: usize = 64 * 1024;
+/// What the final events table holds at most, after its header.
+const FINAL_MAX: usize = 32 * 1024;
+const FINAL_HEADER: usize = 16;
+
+/// `EFI_TCG2_FINAL_EVENTS_TABLE_GUID`.
+const FINAL_EVENTS_GUID: efi::Guid =
+    efi::Guid::from_fields(0x1e2ed096, 0x30e2, 0x4254, 0xbd, 0x89, &[0x86, 0x3b, 0xbe, 0xf8, 0x23, 0x25]);
 
 #[repr(C)]
 struct Protocol {
@@ -72,6 +79,18 @@ struct Log {
     last: usize,
     truncated: bool,
 }
+
+/// The events logged after a loader asked for the log, which the OS reads
+/// from a configuration table: `version: u64`, `number_of_events: u64`, the
+/// events. A loader that took the log has no later event in it.
+struct FinalEvents {
+    table: *mut u8,
+    len: usize,
+    count: u64,
+    log_taken: bool,
+}
+
+static FINAL: Global<FinalEvents> = Global::new(FinalEvents { table: core::ptr::null_mut(), len: 0, count: 0, log_taken: false });
 
 static LOG: Global<Log> = Global::new(Log { bytes: Vec::new(), last: 0, truncated: false });
 
@@ -119,6 +138,41 @@ fn append(pcr: u32, event_type: u32, digest: &[u8; 32], data: &[u8]) {
     }
     log.last = log.bytes.len();
     log.bytes.extend_from_slice(&entry);
+    add_to_final_events(&entry);
+}
+
+fn add_to_final_events(entry: &[u8]) {
+    let events = FINAL.get();
+    if !events.log_taken || events.table.is_null() {
+        return;
+    }
+    if events.len + entry.len() > FINAL_MAX {
+        warn!("tcg2", "the final events table is full, an event is only in the log"; events = events.count);
+        return;
+    }
+    unsafe {
+        core::ptr::copy_nonoverlapping(entry.as_ptr(), events.table.add(FINAL_HEADER + events.len), entry.len());
+        events.len += entry.len();
+        events.count += 1;
+        core::ptr::copy_nonoverlapping(events.count.to_le_bytes().as_ptr(), events.table.add(8), 8);
+    }
+}
+
+fn install_final_events() {
+    let Ok(table) = crate::mem::pool_alloc(efi::ACPI_MEMORY_NVS, FINAL_HEADER + FINAL_MAX) else {
+        warn!("tcg2", "no memory for the final events table");
+        return;
+    };
+    unsafe {
+        core::ptr::write_bytes(table, 0, FINAL_HEADER + FINAL_MAX);
+        core::ptr::copy_nonoverlapping(1u64.to_le_bytes().as_ptr(), table, 8);
+    }
+    FINAL.get().table = table;
+    let status = crate::tables::install_table(FINAL_EVENTS_GUID, table as *mut c_void);
+    if status.is_error() {
+        warn!("tcg2", "the final events table was not offered"; status = status.as_usize());
+        FINAL.get().table = core::ptr::null_mut();
+    }
 }
 
 /// Extend `pcr` with `digest` and log the event.
@@ -256,6 +310,7 @@ extern "efiapi" fn get_event_log(
         return efi::Status::UNSUPPORTED;
     }
     let log = LOG.get();
+    FINAL.get().log_taken = true;
     unsafe {
         *location = log.bytes.as_ptr() as u64;
         *last = log.bytes.as_ptr() as u64 + log.last as u64;
@@ -339,6 +394,7 @@ pub fn init() {
         append(event.pcr, event.kind, &event.digest, &event.data);
         early += 1;
     }
+    install_final_events();
     let p = PROTOCOL.get() as *mut Protocol as *mut c_void;
     match crate::proto::install(core::ptr::null_mut(), &GUID, p) {
         Ok(_) => info!("tcg2", "measured boot on the VPU's PCRs"; early_events = early),

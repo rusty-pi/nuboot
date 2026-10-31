@@ -72,5 +72,6 @@ itself, not only what the VPU computes with it.
 - A computation with the device key leaves intermediate values in registers,
   on the stack or in the cache while it runs; the firmware overwrites what it
   can reach afterwards.
-- The event log is not handed to the OS in the final events table, and
-  `GetEventLog` is the only way to read it.
+- Events logged after a loader asked for the log are also in the final events
+  table, which the OS reads from a configuration table, and not only in the log
+  that loader got ([tpm2.md](tpm2.md#what-is-measured)).

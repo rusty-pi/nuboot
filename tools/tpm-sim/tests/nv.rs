@@ -23,6 +23,7 @@ const CC_START_AUTH_SESSION: u32 = 0x176;
 const CC_POLICY_OR: u32 = 0x171;
 const CC_POLICY_COMMAND_CODE: u32 = 0x16c;
 const CC_POLICY_NV_WRITTEN: u32 = 0x18f;
+const CC_POLICY_AUTHORIZE_NV: u32 = 0x192;
 const CC_POLICY_GET_DIGEST: u32 = 0x189;
 const CC_POLICY_RESTART: u32 = 0x180;
 const CC_GET_CAPABILITY: u32 = 0x17a;
@@ -50,6 +51,8 @@ const RC_NV_UNINITIALIZED: u32 = 0x14a;
 const RC_NV_RANGE: u32 = 0x146;
 const RC_AUTH_UNAVAILABLE: u32 = 0x12f;
 const RC_POLICY: u32 = 0x126;
+const RC_VALUE: u32 = 0x84;
+const RC_HASH: u32 = 0x83;
 
 fn sized(bytes: &[u8]) -> Vec<u8> {
     let mut out = (bytes.len() as u16).to_be_bytes().to_vec();
@@ -215,9 +218,92 @@ fn handles_listed() -> Vec<u32> {
     (0..count).map(|i| u32::from_be_bytes(body[9 + 4 * i..13 + 4 * i].try_into().unwrap())).collect()
 }
 
+fn policy_authorize_nv(auth: u32, index: u32, session: u32, secret: &[u8]) -> u32 {
+    rc(&send(ST_SESSIONS, CC_POLICY_AUTHORIZE_NV, &[auth, index, session], &password(secret), &[]))
+}
+
+fn approved(policy: &[u8]) -> Vec<u8> {
+    let mut out = 0x000bu16.to_be_bytes().to_vec();
+    out.extend_from_slice(policy);
+    out
+}
+
+fn write_all(index: u32, data: &[u8]) {
+    let mut p = sized(data);
+    p.extend_from_slice(&0u16.to_be_bytes());
+    assert_eq!(rc(&send(ST_SESSIONS, CC_NV_WRITE, &[index, index], &password(b"pw"), &p)), 0);
+}
+
+fn flush(session: u32) {
+    assert_eq!(rc(&send(ST_NO_SESSIONS, 0x165, &[], &[], &session.to_be_bytes())), 0);
+}
+
+/// The policy a trial session builds from `PolicyCommandCode`.
+fn command_policy(code: u32) -> Vec<u8> {
+    let trial = start_session(3);
+    assert_eq!(policy_command_code(trial, code), 0);
+    let policy = digest(trial);
+    flush(trial);
+    policy
+}
+
+fn a_policy_an_index_approves_can_be_taken_back() {
+    let index = 0x0150_0300;
+    let first_policy = command_policy(CC_NV_EXTEND);
+    let second_policy = command_policy(CC_NV_WRITE);
+
+    assert_eq!(define(RH_OWNER, index, AUTHWRITE | AUTHREAD, &[], 34, b"pw"), 0);
+    // A trial session takes the step with no check, an unwritten index
+    // included.
+    let trial = start_session(3);
+    assert_eq!(policy_authorize_nv(index, index, trial, b"pw"), 0);
+    flush(trial);
+
+    // A real session that reaches `code` first, then takes the step: what it
+    // answers, and the digest it ends with.
+    let attempt = |code: u32, secret: &[u8]| {
+        let session = start_session(1);
+        assert_eq!(policy_command_code(session, code), 0);
+        let answer = policy_authorize_nv(index, index, session, secret);
+        let ended = (answer == 0).then(|| digest(session));
+        flush(session);
+        (answer, ended)
+    };
+
+    assert_eq!(attempt(CC_NV_EXTEND, b"pw").0, RC_NV_UNINITIALIZED);
+
+    // What an object is made with: the index, as it is once written, from a
+    // trial session; its name covers the attribute that says so.
+    write_all(index, &approved(&first_policy));
+    let name = nv_name(index);
+    let trial = start_session(3);
+    assert_eq!(policy_authorize_nv(index, index, trial, b"pw"), 0);
+    let made_with = digest(trial);
+    flush(trial);
+    assert_eq!(made_with, sha256(&[&[0u8; 32], &CC_POLICY_AUTHORIZE_NV.to_be_bytes(), &name]));
+    assert_eq!(attempt(CC_NV_EXTEND, b"pw"), (0, Some(made_with.clone())), "the session now names the index, as the object does");
+    assert_eq!(attempt(CC_NV_WRITE, b"pw").0, RC_VALUE, "a policy the index does not hold");
+    assert_ne!(attempt(CC_NV_EXTEND, b"wrong").0, 0, "without the authorization to read it");
+
+    write_all(index, &approved(&second_policy));
+    assert_eq!(attempt(CC_NV_EXTEND, b"pw").0, RC_VALUE, "the old policy is taken back");
+    assert_eq!(attempt(CC_NV_WRITE, b"pw"), (0, Some(made_with)));
+
+    let mut sha1 = 0x0004u16.to_be_bytes().to_vec();
+    sha1.extend_from_slice(&second_policy);
+    write_all(index, &sha1);
+    assert_eq!(attempt(CC_NV_WRITE, b"pw").0, RC_HASH, "another hash algorithm");
+
+    let hmac = start_session(0);
+    assert_ne!(policy_authorize_nv(index, index, hmac, b"pw"), 0, "an HMAC session is not a policy session");
+    flush(hmac);
+    assert_eq!(rc(&send(ST_SESSIONS, CC_NV_UNDEFINE_SPACE, &[RH_OWNER, index], &password(&[]), &[])), 0);
+}
+
 #[test]
 fn nv_indices_as_the_tools_use_them() {
     a_policy_on_pcrs_fails_only_when_those_change();
+    a_policy_an_index_approves_can_be_taken_back();
     assert!(handles_listed().is_empty());
 
     // An extend index with its own authorization value.

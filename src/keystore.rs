@@ -28,7 +28,19 @@ pub const PCRS: usize = 24;
 /// which no caller of the mailbox or the TPM may extend.
 const DRTM_PCRS: core::ops::RangeInclusive<usize> = 17..=22;
 
-static mut PCR: [[u8; 32]; PCRS] = [[0; 32]; PCRS];
+/// What the registers hold at a restart of the TPM: zeros, and all ones in
+/// those of the dynamic root of trust, until a DRTM event sets them.
+const fn initial_pcrs() -> [[u8; 32]; PCRS] {
+    let mut pcrs = [[0; 32]; PCRS];
+    let mut pcr = 17;
+    while pcr <= 22 {
+        pcrs[pcr] = [0xff; 32];
+        pcr += 1;
+    }
+    pcrs
+}
+
+static mut PCR: [[u8; 32]; PCRS] = initial_pcrs();
 static mut COUNT: u32 = 0;
 static mut CHANGES: [u32; PCRS] = [0; PCRS];
 static mut BOOT_SECRET: [u8; 32] = [0; 32];

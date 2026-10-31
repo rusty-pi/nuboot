@@ -112,12 +112,15 @@ fn hex(system_table: *mut SystemTable, bytes: &[u8]) {
     }
 }
 
-/// Print the event log `EFI_TCG2_PROTOCOL.GetEventLog` gives, whole.
-fn log_events(system_table: *mut SystemTable, protocol: *mut c_void) {
+/// Print the event log `EFI_TCG2_PROTOCOL.GetEventLog` gives, whole, as
+/// `name`.
+fn log_events(system_table: *mut SystemTable, protocol: *mut c_void, name: &str) {
     let get: extern "efiapi" fn(*mut c_void, u32, *mut u64, *mut u64, *mut u8) -> Status =
         unsafe { core::mem::transmute(*(protocol as *const usize).add(1)) };
     let (mut location, mut last, mut truncated) = (0u64, 0u64, 0u8);
-    say(system_table, "tpm2 test: eventlog ");
+    say(system_table, "tpm2 test: ");
+    say(system_table, name);
+    say(system_table, " ");
     if get(protocol, 2, &mut location, &mut last, &mut truncated).is_error() {
         say(system_table, "failed\r\n");
         return;
@@ -127,6 +130,41 @@ fn log_events(system_table: *mut SystemTable, protocol: *mut c_void) {
     let size = u32::from_le_bytes(unsafe { *((tail - 4) as *const [u8; 4]) }) as usize;
     let end = tail + size;
     hex(system_table, unsafe { core::slice::from_raw_parts(location as *const u8, end - location as usize) });
+    say(system_table, "\r\n");
+}
+
+const FINAL_EVENTS: Guid = Guid::from_fields(0x1e2ed096, 0x30e2, 0x4254, 0xbd, 0x89, &[0x86, 0x3b, 0xbe, 0xf8, 0x23, 0x25]);
+
+/// Log an event after the log was asked for, and print what the final events
+/// table the OS reads holds.
+fn final_events(system_table: *mut SystemTable, protocol: *mut c_void) {
+    type HashLogExtend = extern "efiapi" fn(*mut c_void, u64, u64, u64, *mut u8) -> Status;
+    let hash_log_extend: HashLogExtend = unsafe { core::mem::transmute(*(protocol as *const usize).add(2)) };
+    let data = *b"final";
+    let mut event = [0u8; 18 + 5];
+    let size = event.len() as u32;
+    event[..4].copy_from_slice(&size.to_le_bytes());
+    event[4..8].copy_from_slice(&14u32.to_le_bytes());
+    event[8..10].copy_from_slice(&1u16.to_le_bytes());
+    event[10..14].copy_from_slice(&9u32.to_le_bytes());
+    event[14..18].copy_from_slice(&0xdu32.to_le_bytes());
+    event[18..].copy_from_slice(&data);
+    let status = hash_log_extend(protocol, 0, data.as_ptr() as u64, data.len() as u64, event.as_mut_ptr());
+    say(system_table, if status.is_error() { "tpm2 test: final-event failed\r\n" } else { "tpm2 test: final-event logged\r\n" });
+    let tables = unsafe { core::slice::from_raw_parts((*system_table).configuration_table, (*system_table).number_of_table_entries) };
+    let Some(table) = tables.iter().find(|t| t.vendor_guid.as_bytes() == FINAL_EVENTS.as_bytes()) else {
+        say(system_table, "tpm2 test: final-events none\r\n");
+        return;
+    };
+    let base = table.vendor_table as *const u8;
+    let count = u64::from_le_bytes(unsafe { *(base.add(8) as *const [u8; 8]) });
+    let mut end = 16;
+    for _ in 0..count {
+        let size = u32::from_le_bytes(unsafe { *(base.add(end + 4 + 4 + 4 + 2 + 32) as *const [u8; 4]) }) as usize;
+        end += 4 + 4 + 4 + 2 + 32 + 4 + size;
+    }
+    say(system_table, "tpm2 test: final-events ");
+    hex(system_table, unsafe { core::slice::from_raw_parts(base, end) });
     say(system_table, "\r\n");
 }
 
@@ -162,7 +200,7 @@ pub extern "efiapi" fn efi_main(_image: Handle, system_table: *mut SystemTable) 
     run("pcr-read-all", Command::new(0x8001, 0x17e).u32(1).u16(0xb).put(&[3, 0xff, 0xff, 0xff]).done());
     run("pcr-read-mid", Command::new(0x8001, 0x17e).u32(1).u16(0xb).put(&[3, 0, 0xff, 0]).done());
     run("pcr-read-high", Command::new(0x8001, 0x17e).u32(1).u16(0xb).put(&[3, 0, 0, 0xff]).done());
-    log_events(system_table, protocol);
+    log_events(system_table, protocol, "eventlog");
     run("getcap-properties", Command::new(0x8001, 0x17a).u32(6).u32(0x100).u32(8).done());
     run("getcap-algs", Command::new(0x8001, 0x17a).u32(0).u32(0).u32(16).done());
     run("getcap-pcrs", Command::new(0x8001, 0x17a).u32(5).u32(0).u32(1).done());
@@ -344,6 +382,8 @@ pub extern "efiapi" fn efi_main(_image: Handle, system_table: *mut SystemTable) 
     run("flush-item", Command::new(0x8001, 0x165).u32(item).done());
     run("flush-primary", Command::new(0x8001, 0x165).u32(primary).done());
     run("flush-again", Command::new(0x8001, 0x165).u32(primary).done());
+    final_events(system_table, protocol);
+    log_events(system_table, protocol, "eventlog-after");
     say(system_table, "tpm2 test: done\r\n");
     Status::SUCCESS
 }

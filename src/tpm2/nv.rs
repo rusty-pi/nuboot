@@ -365,6 +365,27 @@ pub fn extend(handles: [u32; 2], params: &mut In, a: &mut Authorization) -> Resu
     Ok(())
 }
 
+/// The policy digest an index holds for `TPM2_PolicyAuthorizeNV`, a `TPMT_HA`
+/// at the start of it, when `auth` may read the index.
+pub fn approved_policy(auth: u32, handle: u32, a: &Authorization) -> Result<[u8; 32], u32> {
+    const RC_INSUFFICIENT: u32 = 0x09a;
+    let index = index_of(handle).ok_or(RC_HANDLE | RC_2)?;
+    allowed(auth, index, a, false)?;
+    if index.attributes & WRITTEN == 0 {
+        return Err(RC_NV_UNINITIALIZED);
+    }
+    if index.size < 2 {
+        return Err(RC_INSUFFICIENT);
+    }
+    if u16::from_be_bytes([index.data[0], index.data[1]]) != ALG_SHA256 {
+        return Err(super::RC_HASH);
+    }
+    if index.size < 2 + 32 {
+        return Err(RC_INSUFFICIENT);
+    }
+    Ok(index.data[2..34].try_into().unwrap())
+}
+
 /// `TPM2_NV_Increment`: a counter.
 pub fn increment(handles: [u32; 2], a: &mut Authorization) -> Result<(), u32> {
     let index = index_of(handles[1]).ok_or(RC_HANDLE | RC_2)?;

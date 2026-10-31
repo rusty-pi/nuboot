@@ -193,10 +193,10 @@ pub fn init() {
     if !TEST_DB.is_empty() {
         warn!("secboot", "test build: its own test key is in db, not for a real board");
     }
+    crate::tcg2::measure_variable("SecureBoot", &var::GLOBAL, &[1]);
     for (name, guid) in [("PK", var::GLOBAL), ("KEK", var::GLOBAL), ("db", var::SECURITY_DB), ("dbx", var::SECURITY_DB)] {
         crate::tcg2::measure_variable(name, &guid, &var::bytes(name, &guid).unwrap_or_default());
     }
-    crate::tcg2::measure_variable("SecureBoot", &var::GLOBAL, &[1]);
     info!("secboot", "Secure Boot enforced"; db = TRUSTED.get().len(), dbx = REVOKED.get().len(), owner_db = owned());
 }
 
