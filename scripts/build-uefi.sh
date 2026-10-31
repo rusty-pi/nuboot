@@ -27,7 +27,7 @@
 #                     the same crate: send the TPM on the VPU a series of
 #                     commands
 #   out/runtime-variables.efi, out/crypto.efi, out/persist.efi,
-#   out/store-compact.efi, out/runtime-shutdown.efi
+#   out/store-compact.efi, out/runtime-shutdown.efi, out/firmware-setup.efi
 #                     uefi/test-apps/runtime: exit boot services and use the
 #                     variable services the OS is left with, fill the flash
 #                     store with them, and shut down
@@ -267,6 +267,7 @@ rt="$here/uefi/test-apps/runtime"
 sign "$rt/target/aarch64-unknown-uefi/release/variables.efi" "$out/runtime-variables.efi"
 sign "$rt/target/aarch64-unknown-uefi/release/crypto.efi" "$out/crypto.efi"
 sign "$rt/target/aarch64-unknown-uefi/release/persist.efi" "$out/persist.efi"
+sign "$rt/target/aarch64-unknown-uefi/release/setup.efi" "$out/firmware-setup.efi"
 sign "$rt/target/aarch64-unknown-uefi/release/compact.efi" "$out/store-compact.efi"
 sign "$rt/target/aarch64-unknown-uefi/release/shutdown.efi" "$out/runtime-shutdown.efi"
 

@@ -43,6 +43,7 @@ mod rtusb;
 mod rtvar;
 mod sd;
 mod secure;
+mod setup;
 #[path = "../../src/sha256.rs"]
 #[allow(dead_code)]
 mod sha256;
@@ -81,7 +82,7 @@ const HIGH_RAM: (u64, u64) = (0x1_0000_0000, 0x2_0000_0000);
 pub const DMA_ARENA: (u64, u64) = (0x20_0000, 0x40_0000);
 
 /// The commit this was built from, as the VPU firmware reports its own.
-const COMMIT: &str = match option_env!("FIRMWARE_COMMIT") {
+pub const COMMIT: &str = match option_env!("FIRMWARE_COMMIT") {
     Some(c) => c,
     None => "0000000",
 };
@@ -153,7 +154,7 @@ fn firmware_handle() -> efi::Handle {
     proto::install(core::ptr::null_mut(), &loaded_image::PROTOCOL_GUID, li as *mut _ as *mut c_void).unwrap()
 }
 
-const REMOVABLE_PATH: &str = "\\EFI\\BOOT\\BOOTAA64.EFI";
+pub const REMOVABLE_PATH: &str = "\\EFI\\BOOT\\BOOTAA64.EFI";
 
 /// Boot the removable-media path of each file system in turn, in the order
 /// the drivers found them: the SD card, then USB.
@@ -210,6 +211,7 @@ extern "C" fn pi4_main(tree_addr: u64) -> ! {
     tcg2::measure_handoff_tables(&[acpi::ACPI_20_TABLE_GUID, smbios::SMBIOS3_TABLE_GUID]);
     tcg2::separators();
     capsule::scan();
+    setup::show_if_asked(&tree);
     boot(parent);
     error!("boot", "nothing to boot, the boot watchdog will reset the board"; looked_for = REMOVABLE_PATH);
     util::halt()

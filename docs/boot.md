@@ -223,6 +223,7 @@ pimu boot --scenario scenarios/capsule-eeprom-failed.yaml   # an EEPROM update t
 pimu boot --scenario scenarios/runtime-variables.yaml  # variables through the runtime services
 pimu boot --scenario scenarios/persist.yaml     # what the OS writes through them outlasts a reset
 pimu boot --scenario scenarios/persist-usb.yaml  # the same with a USB drive as the boot medium
+pimu boot --scenario scenarios/firmware-setup.yaml  # OsIndications asks for the firmware's screen at the next boot
 pimu boot --scenario scenarios/shutdown.yaml    # a shutdown through them ends in the bootloader's halt
 pimu boot --scenario scenarios/store-compact.yaml  # the store has room again at the next boot
 pimu boot --scenario scenarios/crypto.yaml      # the firmware cryptography service, locked from the OS

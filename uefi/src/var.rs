@@ -78,6 +78,15 @@ pub fn keep(name: &str, guid: efi::Guid, data: &[u8]) -> efi::Status {
     write_plain(&name, guid, NV | BS, data, None)
 }
 
+/// A write the firmware makes to a variable the OS can also write, such as
+/// `OsIndications`: the attributes are those the variable already has.
+pub fn update(name: &str, guid: efi::Guid, data: &[u8]) -> efi::Status {
+    let name: Vec<u16> = name.encode_utf16().collect();
+    let Some(i) = find(&name, &guid) else { return efi::Status::NOT_FOUND };
+    let attributes = VARS.get()[i].attributes;
+    write_plain(&name, guid, attributes, data, None)
+}
+
 /// Drop what [`keep`] kept.
 pub fn forget(name: &str, guid: efi::Guid) -> efi::Status {
     let name: Vec<u16> = name.encode_utf16().collect();

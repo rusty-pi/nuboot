@@ -38,11 +38,21 @@ fn midr() -> u64 {
     midr
 }
 
+/// The board's revision code, from the VPU firmware's property in the tree.
+pub fn revision(tree: &fdt::Fdt) -> Option<u32> {
+    tree.bytes::<4>(ROOT, REVISION).map(u32::from_be_bytes)
+}
+
+/// The board's name: from its revision code, else the tree's `model`.
+pub fn model(tree: &fdt::Fdt) -> alloc::vec::Vec<u8> {
+    revision(tree).and_then(tables::product_name).map_or_else(|| text(tree, b"model"), |name| name.to_vec())
+}
+
 /// Offer the tables, for the memory the board has: a power of two in MiB, as
 /// the chips are, from what the memory map holds.
 pub fn init(tree: &fdt::Fdt) {
-    let revision = tree.bytes::<4>(ROOT, REVISION).map(u32::from_be_bytes);
-    let model = revision.and_then(tables::product_name).map_or_else(|| text(tree, b"model"), |name| name.to_vec());
+    let revision = revision(tree);
+    let model = model(tree);
     let serial = text(tree, b"serial-number");
     let board = tables::Board {
         model: &model,

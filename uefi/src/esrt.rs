@@ -46,6 +46,9 @@ pub const VERSION: u32 = match u32::from_str_radix(env!("FIRMWARE_TIME"), 10) {
     Err(_) => 0,
 };
 
+/// `EFI_OS_INDICATIONS_BOOT_TO_FW_UI`: the OS asks for the firmware's own
+/// screen at the next boot.
+pub const BOOT_TO_FW_UI: u64 = 1;
 /// `EFI_OS_INDICATIONS_FILE_CAPSULE_DELIVERY_SUPPORTED`.
 const FILE_CAPSULE_DELIVERY: u64 = 4;
 
@@ -126,6 +129,6 @@ pub fn init() {
     };
     *TABLE.get() = at;
     tables::install_table(ESRT_GUID, at as *mut c_void);
-    var::fixed("OsIndicationsSupported", var::GLOBAL, var::BS | var::RT, FILE_CAPSULE_DELIVERY.to_le_bytes().to_vec());
+    var::fixed("OsIndicationsSupported", var::GLOBAL, var::BS | var::RT, (BOOT_TO_FW_UI | FILE_CAPSULE_DELIVERY).to_le_bytes().to_vec());
     var::seed("OsIndications", var::GLOBAL, var::NV | var::BS | var::RT, vec![0; 8]);
 }

@@ -162,6 +162,7 @@ jobs:
             out/runtime-variables.efi
             out/crypto.efi
             out/persist.efi
+            out/firmware-setup.efi
             out/store-compact.efi
             out/runtime-shutdown.efi
             out/linux-test.efi

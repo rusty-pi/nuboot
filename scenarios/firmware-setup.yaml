@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "firmware-setup"
+description: "A board with its device private key fused (a test key, not a board's): an EFI application asks for the firmware's screen with OsIndications and resets. At the next boot the firmware shows the screen on the serial console, takes the request back and goes on to boot; the application finds the bit cleared and the other indications as it left them."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  otp_row:
+    - "56=0xc0de2001"
+    - "57=0xc0de3112"
+    - "58=0xc0de4223"
+    - "59=0xc0de5334"
+    - "60=0xc0de6445"
+    - "61=0xc0de7556"
+    - "62=0xc0de8667"
+    - "63=0xc0de9778"
+  sd:
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/firmware-setup.efi"
+  until: "setup test: done"
+  wall_secs: 3000
+
+milestones:
+  - why: "The firmware offers boot to firmware setup beside capsule delivery."
+    line: "runtime test: OsIndicationsSupported offers boot to firmware setup ok"
+  - why: "The request is stored for the next boot."
+    line: "runtime test: the request is written ok"
+  - why: "The firmware shows its screen at the boot after."
+    line: "Firmware setup"
+  - why: "The screen names the firmware."
+    line: "Firmware      nuboot"
+  - why: "The firmware took the request back, so the boot after is as usual."
+    line: "runtime test: the firmware took the request back ok"
+  - why: "It cleared only its own bit."
+    line: "runtime test: and left the other indications alone ok"
