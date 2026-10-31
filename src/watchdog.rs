@@ -297,6 +297,16 @@ pub fn clear_power_off_request() {
     mmio::write(PM_RSTS, PASSWD | mmio::read(PM_RSTS) & !RSTS_HALT);
 }
 
+/// Take the boot partition out of `PM_RSTS` and say which it was: the six bits of
+/// the number are on bits 0, 2, .. 10. The bootloader has acted on it already,
+/// and it is asked for once: a reset that follows, a watchdog's after a boot
+/// that hangs, boots the default again.
+pub fn take_partition_request() -> u32 {
+    let rsts = mmio::read(PM_RSTS);
+    mmio::write(PM_RSTS, PASSWD | rsts & !RSTS_HALT);
+    (0..6).fold(0, |n, bit| n | (rsts >> (2 * bit) & 1) << bit)
+}
+
 /// Whether the next boot is asked to be a tryboot.
 pub fn tryboot_requested() -> bool {
     mmio::read(PM_RSTS) & RSTS_TRYBOOT != 0

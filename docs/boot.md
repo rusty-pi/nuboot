@@ -176,6 +176,11 @@ power off coming and takes it instead of resetting.
 - With no PHY or no link to wake from, the firmware arms the watchdog again with
   `PM_RSTS` as the OS left it, and the stock bootloader halts as it always has.
 
+The boot partition the OS asked for with `reboot N` is taken out of `PM_RSTS`
+when the firmware starts: the bootloader has acted on it, and a watchdog reset
+after a boot that hangs goes to the default partition. An EEPROM section such as
+`[partition=62]` therefore applies to one boot, as `tryboot` does.
+
 In stand-by the board draws about 2.4 W at the wall on a Raspberry Pi 4B
 `d03115`, against about 1.8 W in the stock bootloader's halt and 3.1 to 3.4 W
 with Raspberry Pi OS idle. The stock halt comes before the bootloader starts the
