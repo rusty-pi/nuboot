@@ -190,7 +190,7 @@ jobs:
             out/uki.efi
             out/grubaa64.efi
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   # The ACPI tables on the host: their links and checksums, and the ACPICA
   # tools' disassembly and recompilation of the DSDT; and the SMBIOS tables,
