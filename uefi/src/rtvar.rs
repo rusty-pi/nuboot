@@ -55,6 +55,8 @@ const RESPONSE: u32 = 0x8000_0000;
 const TAG_STORE_SEAL: u32 = 0x0003_00a9;
 const TAG_STORE_PREPARE_CARD: u32 = 0x0003_00aa;
 const TAG_STORE_PREPARE_USB: u32 = 0x0003_00ac;
+/// What the flush came to, for the VPU's log.
+const TAG_STORE_REPORT: u32 = 0x0003_00ad;
 /// The most the VPU takes of a variable.
 const PERSIST_MAX: usize = 16 * 1024;
 const PERSIST_NAME_MAX: usize = 512;
@@ -494,6 +496,7 @@ fn write_key(name: &[u16], guid: &efi::Guid, attributes: u32, bytes: &[u8], appe
 pub fn flush_store() {
     let p = PENDING.get();
     if !p.armed || p.len == 0 {
+        report(FLUSH_NOTHING | (p.armed as u32) << 8);
         return;
     }
     value()[..4].fill(0);
@@ -502,11 +505,31 @@ pub fn flush_store() {
         Kind::Usb => TAG_STORE_PREPARE_USB,
     };
     if post(tag, 4) != Some(0) {
+        report(FLUSH_NOT_PREPARED);
         return;
     }
     let end = (p.skip + p.len).next_multiple_of(p.block);
     QUEUE.get().0[p.skip + p.len..end].fill(0xff);
+    *OUTCOME.get() = FLUSH_NOTHING;
     crate::rtmode::on_stack(write_pending);
+    report(*OUTCOME.get());
+}
+
+/// What the flush came to, as the VPU logs it: the code in the low byte, and
+/// above it what the code needs to say more.
+const FLUSH_NOTHING: u32 = 0;
+pub const FLUSH_WRITTEN: u32 = 1;
+const FLUSH_NOT_PREPARED: u32 = 2;
+pub const FLUSH_NO_DRIVE: u32 = 3;
+pub const FLUSH_WRITE_FAILED: u32 = 4;
+
+static OUTCOME: Global<u32> = Global::new(FLUSH_NOTHING);
+
+/// Tell the VPU what the flush came to. The ARM has no log of its own once the
+/// OS owns the board.
+fn report(code: u32) {
+    value()[..4].copy_from_slice(&code.to_le_bytes());
+    let _ = post(TAG_STORE_REPORT, 4);
 }
 
 /// The queue, written to the disk on a stack of the firmware's own.
@@ -514,17 +537,22 @@ extern "C" fn write_pending() {
     let p = PENDING.get();
     let end = (p.skip + p.len).next_multiple_of(p.block);
     let queue = &QUEUE.get().0[..end];
-    match p.kind {
-        Kind::Sd => {
-            if let Some(mut card) = crate::sd::Runtime::open() {
-                card.write(p.lba, queue);
+    *OUTCOME.get() = match p.kind {
+        Kind::Sd => match crate::sd::Runtime::open() {
+            Some(mut card) => {
+                if card.write(p.lba, queue) {
+                    FLUSH_WRITTEN
+                } else {
+                    FLUSH_WRITE_FAILED
+                }
             }
-        }
+            None => FLUSH_NO_DRIVE,
+        },
         Kind::Usb => {
             let job = crate::rtusb::Job { block: p.block, lba: p.lba, skip: p.skip, bank_lba: p.bank_lba, expect: p.expect };
-            crate::rtusb::write(&job, queue);
+            crate::rtusb::write(&job, queue)
         }
-    }
+    };
 }
 
 pub extern "efiapi" fn get_variable(

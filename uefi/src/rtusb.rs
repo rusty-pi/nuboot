@@ -8,6 +8,8 @@
 
 use alloc::vec;
 
+use crate::rtvar::{FLUSH_NO_DRIVE, FLUSH_WRITE_FAILED, FLUSH_WRITTEN};
+
 /// Where the records go and how the drive is known.
 pub struct Job {
     pub block: usize,
@@ -20,12 +22,15 @@ pub struct Job {
 }
 
 /// Write `queue`, whole blocks from `job.lba`, to the drive that holds the
-/// store. Nothing can be reported: the OS is going away.
-pub fn write(job: &Job, queue: &[u8]) {
+/// store. How it went, for the flush to report: a code from [`crate::rtvar`] and
+/// the number of drives found above it.
+pub fn write(job: &Job, queue: &[u8]) -> u32 {
     crate::rtmode::enter();
     crate::xhci::forget_boot_state();
     crate::xhci::init();
+    let (mut offered, mut outcome) = (0u32, FLUSH_NO_DRIVE);
     for found in crate::rtmode::offered().iter_mut() {
+        offered += 1;
         let disk = &mut found.disk;
         if disk.block_size() as usize != job.block {
             continue;
@@ -40,8 +45,9 @@ pub fn write(job: &Job, queue: &[u8]) {
         if !known {
             continue;
         }
-        let _ = disk.write(job.lba, queue);
+        outcome = if disk.write(job.lba, queue).is_ok() { FLUSH_WRITTEN } else { FLUSH_WRITE_FAILED };
         break;
     }
     crate::rtmode::leave();
+    outcome | offered.min(255) << 8
 }

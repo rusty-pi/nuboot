@@ -396,7 +396,9 @@ does not answer.
   the restart fwupd asks for.
 - At `ResetSystem` the firmware brings the disk back as the boot had it, on a
   stack of its own, and writes the records after the end of the log in the
-  active bank. Nothing is logged: the OS's context has no console.
+  active bank. The OS's context has no console: the ARM tells the VPU how it
+  went and the VPU logs it (`the OS's variable changes are on the disk`, or
+  `variable changes lost at ResetSystem` with a code).
   - An SD card: the VPU switches it off and on, signalling at 3.3 V, and gives
     its host back to the ARM as it was when the ARM started, whatever the OS
     made of them. The firmware starts the card again.

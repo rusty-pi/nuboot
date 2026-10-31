@@ -315,6 +315,9 @@ impl Xhci {
         write32(ir + 0x10, erst as u32);
         write32(ir + 0x14, (erst >> 32) as u32);
 
+        // The rings were zeroed through the CPU's cache: put that in memory before
+        // the controller starts writing events there.
+        dma::sync();
         write32(op + USBCMD, CMD_RS);
         if !wait_for(100_000, || read32(op + USBSTS) & STS_HCH == 0) {
             return Err(Error::Timeout);

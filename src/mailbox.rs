@@ -97,6 +97,10 @@ const TAG_STORE_PREPARE_CARD: u32 = 0x0003_00aa;
 /// and give it its firmware again, as at boot, whatever the OS made of them.
 /// The answer is a status word: 0, or 5 when the controller did not come back.
 const TAG_STORE_PREPARE_USB: u32 = 0x0003_00ac;
+/// What the ARM's flush of the variable store at `ResetSystem` came to: a
+/// code in the low byte, and above it what the code needs to say more. The ARM
+/// has no log of its own once the OS owns the board, so the VPU writes this one.
+const TAG_STORE_REPORT: u32 = 0x0003_00ad;
 
 /// Event `n` of what the VPU measured before the ARM started, for the log
 /// UEFI keeps: the index in, then the PCR, the event type, the digest, the
@@ -235,7 +239,7 @@ fn respond(bus: u32, runtime: bool) {
             set(1, CODE_ERROR);
             return;
         }
-        if runtime != matches!(tag, TAG_STORE_SEAL | TAG_STORE_PREPARE_CARD | TAG_STORE_PREPARE_USB) {
+        if runtime != matches!(tag, TAG_STORE_SEAL | TAG_STORE_PREPARE_CARD | TAG_STORE_PREPARE_USB | TAG_STORE_REPORT) {
             i = value + room / 4;
             continue;
         }
@@ -253,8 +257,25 @@ fn respond(bus: u32, runtime: bool) {
                 set(value, status);
                 set(i + 2, RESPONSE | 36);
             }
+            TAG_STORE_REPORT if room >= 4 => {
+                let report = word(value);
+                let (code, drives) = (report & 0xff, report >> 8);
+                match code {
+                    1 => info!("store", "the OS's variable changes are on the disk"; drives_seen = drives),
+                    0 => debug!("store", "no variable changes for the disk at ResetSystem"),
+                    _ => warn!("store", "variable changes lost at ResetSystem"; code = code, drives_seen = drives),
+                }
+                crate::console::drain();
+                set(i + 2, RESPONSE | 4);
+            }
             TAG_STORE_PREPARE_USB if room >= 4 => {
-                set(value, if usb::recover() { 0 } else { 5 });
+                let recovered = usb::recover();
+                if recovered {
+                    info!("usb", "VL805 handed to the ARM for the variable store");
+                } else {
+                    error!("usb", "VL805 did not come back for the variable store");
+                }
+                set(value, if recovered { 0 } else { 5 });
                 set(i + 2, RESPONSE | 4);
             }
             TAG_STORE_PREPARE_CARD if room >= 4 => {
