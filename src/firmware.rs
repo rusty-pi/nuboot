@@ -96,6 +96,7 @@ fn firmware_main() -> ! {
         info!("watchdog", "the partition the bootloader was asked for is spent, a reset boots the default"; partition = partition);
     }
     nuboot::cm::start_scb_clock();
+    nuboot::genet::start_clocks();
 
     let board = Board::read();
     match thermal::start() {

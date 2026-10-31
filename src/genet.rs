@@ -203,6 +203,14 @@ pub fn disarm() {
     mmio::write(UMAC_CMD, mmio::read(UMAC_CMD) & !CMD_RX_EN);
 }
 
+/// Start what the MAC needs to answer the ARM, for a boot that did not come
+/// off the network: the stock bootloader starts the Ethernet's clocks only for
+/// a network boot, and Linux's `bcmgenet` takes an SError reading the MAC
+/// without them.
+pub fn start_clocks() {
+    clocks();
+}
+
 /// Nothing in the MAC answers until the Ethernet's two clock generators run,
 /// the SD mux's Ethernet bit is set and the MDIO pins are on the bus: a
 /// register access into a MAC without them stalls the VPU.
