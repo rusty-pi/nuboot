@@ -7,9 +7,12 @@ boot:
   boot_order: "0x1"
   board_rev: "d03114"
   sd:
-    files:
-      start4.elf: "../out/start4-test.elf"
-      EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
   until: "hello test: done"
   wall_secs: 900
 

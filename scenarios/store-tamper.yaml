@@ -1,9 +1,9 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "store-tamper"
-description: "A board with its device private key fused (a test key, not a board's) whose flash store was written from outside: only the records that are sealed and in sequence come back, a damaged one is stepped over, and what the OS had the VPU seal is read only for a variable of its own."
+description: "A board with its device private key fused (a test key, not a board's) whose store on the card was written from outside: only the records that are sealed and in sequence come back, a damaged one is stepped over, and what the OS had the VPU seal is read only for a variable of its own."
 
 boot:
-  eeprom: "../out/pieeprom-tamper.bin"
+  eeprom: "../out/stock-pieeprom.bin"
   boot_order: "0x1"
   otp_row:
     - "56=0xc0de2001"
@@ -15,9 +15,16 @@ boot:
     - "62=0xc0de8667"
     - "63=0xc0de9778"
   sd:
-    files:
-      start4.elf: "../out/start4-test.elf"
-      EFI/BOOT/BOOTAA64.EFI: "../out/store-tamper.efi"
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/store-tamper.efi"
+      - type: 0ca9cdc0-6c28-49a6-a041-eeec6123df3a
+        start: 512K
+        size: 512K
+        data: "../out/store-tamper.bin"
   until: "tamper test: done"
   wall_secs: 900
 

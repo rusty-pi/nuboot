@@ -6,7 +6,7 @@
 //! with the primary core going on to decompress the UEFI payload. The
 //! address of the tree goes in the image's word at [`IMAGE_TREE_WORD`].
 
-use crate::{board, cm, fdt, handover, mmio, otp, timer, tpm_crb, wdat};
+use crate::{board, cm, expander, fdt, handover, mmio, otp, timer, tpm_crb, wdat};
 
 /// The ARM control block, and the bit that lets the cores out of reset.
 const ARMCTRL: u32 = 0x7e00_b000;
@@ -204,6 +204,15 @@ fn hand_card_to_arm() {
     mmio::write(EMMC2_REG_154, 1);
     let reg = mmio::read(EMMC2_REG_100);
     mmio::write(EMMC2_REG_100, reg & !(1 << 30) | 1 << 31);
+}
+
+/// Give the ARM the SD card as it was when the ARM started, after the OS has
+/// used it: its supply cycled, and the host reset and routed as at the start.
+/// Whether the supply could be switched.
+pub fn prepare_card() -> bool {
+    let cycled = expander::power_cycle_card();
+    hand_card_to_arm();
+    cycled
 }
 
 /// What the stock firmware writes before it lets the cores go: two words of

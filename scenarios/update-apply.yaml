@@ -15,10 +15,13 @@ boot:
     - "62=0xc0de8667"
     - "63=0xc0de9778"
   sd:
-    files:
-      start4.elf: "../out/start4-test.elf"
-      EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-takeover.efi"
-      EFI/UpdateCapsule/next.cap: "../out/capsule-update.cap"
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-takeover.efi"
+          EFI/UpdateCapsule/next.cap: "../out/capsule-update.cap"
   until: "measuring the firmware that started this one"
   wall_secs: 1800
 

@@ -15,9 +15,12 @@ boot:
     - "62=0xc0de8667"
     - "63=0xc0de9778"
   sd:
-    files:
-      start4.elf: "../out/start4-test.elf"
-      EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-hang.efi"
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/watchdog-hang.efi"
   until: "watchdog test: the board reset and booted again"
   wall_secs: 900
 
@@ -32,5 +35,5 @@ milestones:
     line: "UEFI set the boot watchdog  asked_s=1 span_s=1"
   - why: "The span ran out with the boot still in UEFI, and the timer stopped beating the dog."
     line: "the boot did not finish in time, letting the board reset"
-  - why: "The board reset and the application ran again: what it left in the flash store was still there."
+  - why: "The board reset and the application ran again: what it left in the variable store was still there."
     line: "watchdog test: the board reset and booted again"

@@ -91,6 +91,10 @@ fn firmware_main() -> ! {
     announce();
     chain_update();
     take_over_watchdog();
+    let partition = watchdog::take_partition_request();
+    if partition != 0 {
+        info!("watchdog", "the partition the bootloader was asked for is spent, a reset boots the default"; partition = partition);
+    }
     nuboot::cm::start_scb_clock();
 
     let board = Board::read();

@@ -18,11 +18,14 @@ boot:
     - "62=0xc0de8667"
     - "63=0xc0de9778"
   sd:
-    files:
-      boot.img: "../out/boot-owner.img"
-      boot.sig: "../out/boot-owner.sig"
-      EFI/BOOT/BOOTAA64.EFI: "../out/hello-owner.efi"
-      EFI/UpdateCapsule/next.cap: "../out/capsule-update.cap"
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          boot.img: "../out/boot-owner.img"
+          boot.sig: "../out/boot-owner.sig"
+          EFI/BOOT/BOOTAA64.EFI: "../out/hello-owner.efi"
+          EFI/UpdateCapsule/next.cap: "../out/capsule-update.cap"
   until: "running as an update"
   wall_secs: 1800
 

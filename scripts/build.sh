@@ -47,8 +47,9 @@ toolchain/bin/vc4-elf-size "out/start4$suffix.elf"
 # The same firmware linked for the update slot, as the flat binary that
 # scripts/mkbundle.py signs.
 toolchain/bin/vc4-elf-objcopy -O binary target/vc4-none-elf/release/start4-update "out/start4-update$suffix.bin"
-# The test build's extras: the tamper scenario's EEPROM image, a variable store
-# with damage in it, and start4-test.elf as the signed boot.img of a board with
+# The test build's extras: variable stores for the scenarios that start from
+# what an earlier boot left (one with damage in it for the tamper scenario),
+# and start4-test.elf as the signed boot.img of a board with
 # signed boot, once with a key the EEPROM trusts (out/boot-test-pubkey.bin) and
 # once with one it does not; and with the owner's db in it (owner-db.der, the
 # CA scripts/build-uefi.sh --test-apps makes), and with a file in its place that
@@ -58,17 +59,17 @@ if [ -n "$suffix" ]; then
   for name in boot boot-stranger; do
     [ -f "out/test-keys/$name.key" ] || openssl genrsa -out "out/test-keys/$name.key" 2048 2>/dev/null
   done
-  scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-tamper.bin
-  scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-pending.bin --update pending 2147483000
-  scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-proven.bin --update proven 2147483000
-  # An EEPROM update: the image the capsule carries as the update, the EEPROM
-  # before it with the update under way, the store it was staged with, and the
-  # EEPROM after it, stamped and with an empty store.
+  scripts/mkstore.py out/store-tamper.bin
+  scripts/mkstore.py out/store-pending.bin --update pending 2147483000
+  scripts/mkstore.py out/store-proven.bin --update proven 2147483000
+  # An EEPROM update: the image the capsule carries as the update, the store
+  # with the update under way, and the EEPROM after the bootloader made it,
+  # stamped.
   scripts/mkbootimg.py out/test-keys/boot.key out/start4-test.elf out --prefix boot-eeprom --eeprom out/stock-pieeprom.bin:1790000001
   scripts/mkcapsule.py out/test-keys/db.key out/test-keys/db.crt 1790000001 out/capsule-eeprom.cap --class eeprom \
     --boot-img out/boot-eeprom.img --boot-sig out/boot-eeprom.sig
-  scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-eeprom-pending.bin --update pending 1790000001 --eeprom --backup out/store-eeprom.bak
-  scripts/mkstore.py out/stock-pieeprom.bin out/pieeprom-stamped.bin --stamp 1790000001 --empty
+  scripts/mkstore.py out/store-eeprom-pending.bin --update pending 1790000001 --eeprom
+  scripts/stampeeprom.py out/stock-pieeprom.bin out/pieeprom-stamped.bin 1790000001
   scripts/mkbootimg.py out/test-keys/boot.key out/start4-test.elf out --prefix boot-test --pubkey out/boot-test-pubkey.bin
   scripts/mkbootimg.py out/test-keys/boot-stranger.key out/start4-test.elf out --prefix boot-stranger
   echo 'not a certificate' >out/test-keys/owner-junk.der

@@ -8,9 +8,12 @@ boot:
   bootconf:
     - "BOOT_UART=1"
   sd:
-    files:
-      start4.elf: "../out/start4-test.elf"
-      EFI/BOOT/BOOTAA64.EFI: "../out/runtime-shutdown.efi"
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/runtime-shutdown.efi"
   until: "Halt: wake"
   wall_secs: 300
 

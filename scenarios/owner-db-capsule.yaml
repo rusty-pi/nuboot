@@ -9,13 +9,16 @@ boot:
   bootconf:
     - "SIGNED_BOOT=1"
   sd:
-    files:
-      boot.img: "../out/boot-owner.img"
-      boot.sig: "../out/boot-owner.sig"
-      EFI/BOOT/BOOTAA64.EFI: "../out/hello-owner.efi"
-      EFI/UpdateCapsule/owner.cap: "../out/capsule-owner.cap"
-      EFI/UpdateCapsule/leaf.cap: "../out/capsule-owner-leaf.cap"
-      EFI/UpdateCapsule/builder.cap: "../out/capsule-new.cap"
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          boot.img: "../out/boot-owner.img"
+          boot.sig: "../out/boot-owner.sig"
+          EFI/BOOT/BOOTAA64.EFI: "../out/hello-owner.efi"
+          EFI/UpdateCapsule/owner.cap: "../out/capsule-owner.cap"
+          EFI/UpdateCapsule/leaf.cap: "../out/capsule-owner-leaf.cap"
+          EFI/UpdateCapsule/builder.cap: "../out/capsule-new.cap"
   until: "hello test: done"
   wall_secs: 900
 

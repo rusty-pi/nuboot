@@ -86,9 +86,14 @@ pub fn sdram_mib() -> u32 {
     mmio::read(ADDR + SDRAM_GBIT) * 128
 }
 
+/// The medium code as the bootloader wrote it.
+pub fn boot_device_code() -> u32 {
+    mmio::read(ADDR + BOOT_DEVICE)
+}
+
 /// The medium the bootloader loaded this firmware from.
 pub fn boot_device() -> BootDevice {
-    match mmio::read(ADDR + BOOT_DEVICE) {
+    match boot_device_code() {
         0 => BootDevice::Sd,
         1 => BootDevice::Network,
         2 => BootDevice::Usb,

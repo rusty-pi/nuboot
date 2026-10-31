@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "capsule-stage"
-description: "A board with signed boot and its device private key fused (a test key, not a board's) finds a capsule for a later firmware build on the card. It writes the capsule's boot.img and boot.sig as tryboot.img and tryboot.sig, reads them back, removes the capsule, records the update in the flash store and resets as a tryboot."
+description: "A board with signed boot and its device private key fused (a test key, not a board's) finds a capsule for a later firmware build on the card. It writes the capsule's boot.img and boot.sig as tryboot.img and tryboot.sig, reads them back, removes the capsule, records the update in the variable store and resets as a tryboot."
 
 boot:
   eeprom: "../out/stock-pieeprom.bin"
@@ -18,11 +18,14 @@ boot:
     - "62=0xc0de8667"
     - "63=0xc0de9778"
   sd:
-    files:
-      boot.img: "../out/boot-test.img"
-      boot.sig: "../out/boot-test.sig"
-      EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
-      EFI/UpdateCapsule/next.cap: "../out/capsule-apply.cap"
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          boot.img: "../out/boot-test.img"
+          boot.sig: "../out/boot-test.sig"
+          EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+          EFI/UpdateCapsule/next.cap: "../out/capsule-apply.cap"
   until: "update staged, restarting as a tryboot  version=2147483000"
   wall_secs: 1800
 

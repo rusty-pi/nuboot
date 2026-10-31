@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "store-compact"
-description: "A board with its device private key fused (a test key, not a board's): an EFI application exits boot services and writes through the runtime services one variable, a signed update of db and then another variable over and over, until most of the flash store's bank holds what the writes replaced, and resets. At the next boot UEFI finds the bank more than half full and starts the other with what the variables still need; the application finds all of it as it was, writes as much again, which does not fit in a bank that was not made room in, and resets. At the third boot the bank the second started over still holds the variables and the certificate in db."
+description: "A board with its device private key fused (a test key, not a board's): an EFI application exits boot services and writes through the runtime services one variable, a signed update of db and then another variable over and over, and resets, which appends the writes to the store on the card. Two more boots write as much again, which leaves the bank more than half full. At the fourth boot UEFI starts the other bank with what the variables still need; the application finds all of it as it was, writes as much again and resets. At the fifth boot the bank the fourth started still holds the variables and the certificate in db."
 
 boot:
   eeprom: "../out/stock-pieeprom.bin"
@@ -15,30 +15,33 @@ boot:
     - "62=0xc0de8667"
     - "63=0xc0de9778"
   sd:
-    files:
-      start4.elf: "../out/start4-test.elf"
-      EFI/BOOT/BOOTAA64.EFI: "../out/store-compact.efi"
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/store-compact.efi"
   until: "compact test: done"
   wall_secs: 3000
 
 milestones:
   - why: "A signed update of db is taken at runtime, and goes to the store with the other writes."
     line: "runtime test: a signed update of db is accepted ok"
-  - why: "The first boot's writes after ExitBootServices are all taken: the bank fills with them."
+  - why: "The first boot's writes after ExitBootServices are all taken."
     line: "runtime test: another is written again and again, filling the bank ok"
-  - why: "UEFI finds the bank more than half full at the next boot and starts the other with what the variables still need."
-    line: "bank more than half full, the other started with what is still needed"
-  - why: "The variable written once is as it was."
-    line: "runtime test: the variable written once is still there ok"
-  - why: "The variable written over and over holds its last value."
+  - why: "The variables are as written after the reset that appended them to the store."
     line: "runtime test: the other holds what was written last ok"
   - why: "The signed update of db is still applied."
     line: "runtime test: db still holds the certificate the signed update added ok"
-  - why: "The bank has room for as many writes as filled the one before: without the compaction, the third of them would find it full."
-    line: "runtime test: as much again is written ok"
-  - why: "The bank the second boot started over holds the variable written once."
+  - why: "UEFI finds the bank more than half full at the fourth boot and starts the other with what the variables still need."
+    line: "bank more than half full, the other started with what is still needed"
+  - why: "The bank the fourth boot started holds the variable written once."
     line: "runtime test: the variable written once is there after the store started over ok"
-  - why: "It holds the last write of the other variable, the second boot's."
+  - why: "It holds the last write of the other variable, the third boot's."
     line: "runtime test: the other holds what was written last after the store started over ok"
   - why: "It holds the update of db, which the compaction kept with the records it was made from."
     line: "runtime test: db holds the certificate after the store started over ok"
+  - why: "The fifth boot finds what the fourth wrote after the compaction."
+    line: "runtime test: the other holds the last write at the end ok"
+  - why: "And still the variable written once and the certificate."
+    line: "runtime test: db holds the certificate at the end ok"

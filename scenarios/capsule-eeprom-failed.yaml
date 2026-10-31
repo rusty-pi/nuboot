@@ -1,9 +1,9 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "capsule-eeprom-failed"
-description: "The boot after an EEPROM update the bootloader did not make (it did not accept the update, say): the record says it was pending and the flash is older than the capsule said, so the firmware drops the staged pair and tells the OS it failed."
+description: "The boot after an EEPROM update the bootloader did not make (it did not accept the update, say): the record says it was pending and the EEPROM is older than the capsule said, so the firmware drops the staged pair and tells the OS it failed."
 
 boot:
-  eeprom: "../out/pieeprom-eeprom-pending.bin"
+  eeprom: "../out/stock-pieeprom.bin"
   eeprom_pubkey: "../out/boot-test-pubkey.bin"
   boot_order: "0x1"
   bootconf:
@@ -18,12 +18,19 @@ boot:
     - "62=0xc0de8667"
     - "63=0xc0de9778"
   sd:
-    files:
-      boot.img: "../out/boot-test.img"
-      boot.sig: "../out/boot-test.sig"
-      tryboot.img: "../out/boot-eeprom.img"
-      tryboot.sig: "../out/boot-eeprom.sig"
-      EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          boot.img: "../out/boot-test.img"
+          boot.sig: "../out/boot-test.sig"
+          tryboot.img: "../out/boot-eeprom.img"
+          tryboot.sig: "../out/boot-eeprom.sig"
+          EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+      - type: 0ca9cdc0-6c28-49a6-a041-eeec6123df3a
+        start: 512K
+        size: 512K
+        data: "../out/store-eeprom-pending.bin"
   until: "hello test: done"
   wall_secs: 1800
 

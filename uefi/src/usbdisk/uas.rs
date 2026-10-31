@@ -3,8 +3,9 @@
 //! The command goes to the command pipe as a 32-byte command IU. The device
 //! answers on the status pipe, stream 1, with a read or write ready IU when
 //! it wants to move data and with a sense IU at the end; the data moves on the
-//! data pipe, stream 1. A write's data is queued when the write ready IU
-//! arrives, a read's with the command.
+//! data pipe, stream 1. The data of a read or a write is queued with the
+//! command: a drive that is not yet holding the data buffer does not answer
+//! a write with a write ready IU at all.
 
 use super::{BUFFER, Pipes, TRANSFER_US, UsbDisk};
 use crate::util::Hex;
@@ -47,6 +48,10 @@ impl UsbDisk {
             data = Some(x.queue_stream(slot, pipes.data_in.0, self.buf, len, pipes.data_in.1));
             x.doorbell(slot, pipes.data_in.0, TAG as u32);
         }
+        if len > 0 && out {
+            data = Some(x.queue_stream(slot, pipes.data_out.0, self.buf, len, pipes.data_out.1));
+            x.doorbell(slot, pipes.data_out.0, TAG as u32);
+        }
         x.doorbell(slot, pipes.status.0, TAG as u32);
         let command = x.queue(slot, pipes.command.0, command_at, 32, pipes.command.1);
         x.doorbell(slot, pipes.command.0, 0);
@@ -68,10 +73,6 @@ impl UsbDisk {
                 match bytes[0] {
                     IU_SENSE => sense = Some(bytes[6]),
                     IU_READ_READY | IU_WRITE_READY => {
-                        if bytes[0] == IU_WRITE_READY && out && len > 0 && data.is_none() {
-                            data = Some(x.queue_stream(slot, pipes.data_out.0, self.buf, len, pipes.data_out.1));
-                            x.doorbell(slot, pipes.data_out.0, TAG as u32);
-                        }
                         status = x.queue_stream(slot, pipes.status.0, status_at, STATUS_BYTES, pipes.status.1);
                         x.doorbell(slot, pipes.status.0, TAG as u32);
                     }

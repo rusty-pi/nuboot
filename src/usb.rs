@@ -8,6 +8,31 @@ use crate::{eeprom, error, info, measure, pcie, vl805, warn};
 const VL805_VENDOR: u32 = 0x1106;
 const VL805_DEVICE: u32 = 0x3483;
 
+/// Put the link and the controller back as `bring_up` left them, after an OS
+/// has had them: the endpoint reset and given its firmware from the copies kept
+/// at boot, its registers in the outbound window again. Whether the controller
+/// is there to use.
+pub fn recover() -> bool {
+    pcie::reset();
+    if !pcie::init() {
+        return false;
+    }
+    let mut endpoint = None;
+    pcie::scan(|bus, vendor, device| {
+        if vendor == VL805_VENDOR && device == VL805_DEVICE {
+            endpoint = Some(bus);
+        }
+    });
+    let Some(bus) = endpoint else { return false };
+    vl805::set_endpoint_bus(bus);
+    pcie::assign_bar0(bus);
+    if !vl805::load_kept(bus) {
+        return false;
+    }
+    pcie::Function::on_bus(bus).set_command(pcie::COMMAND_ENABLE);
+    true
+}
+
 /// Read the VL805's two images out of the EEPROM to where they stay: the MCU
 /// fetches its image from memory whenever the chip is reset. Their lengths.
 fn load_images() -> Option<(usize, usize)> {

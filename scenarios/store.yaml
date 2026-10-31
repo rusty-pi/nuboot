@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
 name: "store"
-description: "A board with its device private key fused (a test key, not a board's): an EFI application enrols a certificate in db with an update signed by a KEK key; after a reset the flash store brings it back and an image only that certificate signs boots."
+description: "A board with its device private key fused (a test key, not a board's): an EFI application enrols a certificate in db with an update signed by a KEK key; after a reset the variable store on the card brings it back and an image only that certificate signs boots."
 
 boot:
   eeprom: "../out/stock-pieeprom.bin"
@@ -15,12 +15,15 @@ boot:
     - "62=0xc0de8667"
     - "63=0xc0de9778"
   sd:
-    files:
-      start4.elf: "../out/start4-test.elf"
-      EFI/BOOT/BOOTAA64.EFI: "../out/store-enroll.efi"
-      enrolled.efi: "../out/store-enrolled.efi"
-      db-x.auth: "../out/db-x.auth"
-      db-bad.auth: "../out/db-bad.auth"
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/store-enroll.efi"
+          enrolled.efi: "../out/store-enrolled.efi"
+          db-x.auth: "../out/db-x.auth"
+          db-bad.auth: "../out/db-bad.auth"
   until: "store test: done"
   wall_secs: 900
 
@@ -29,10 +32,10 @@ milestones:
     line: "store test: enrolled image refused"
   - why: "An update signed by a key that is neither PK nor in KEK is refused."
     line: "store test: update signed by a stranger refused"
-  - why: "An update signed by a KEK key is accepted and written to the flash store."
+  - why: "An update signed by a KEK key is accepted and written to the variable store."
     line: "store test: update accepted, resetting"
   - why: "After the reset the store holds the update and replays it."
-    line: "flash store loaded"
+    line: "variable store loaded"
   - why: "The image only the enrolled certificate signs verifies against db."
     line: "store test: enrolled image loaded"
   - why: "A non-volatile variable set before the reset is sealed with the device key and comes back."

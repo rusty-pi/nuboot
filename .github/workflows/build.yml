@@ -127,18 +127,13 @@ jobs:
           name: firmware
           path: |
             out/stock-pieeprom.bin
-            out/pieeprom-tamper.bin
-            out/pieeprom-pending.bin
-            out/pieeprom-proven.bin
+            out/pieeprom-stamped.bin
             out/boot-next.img
             out/boot-next.sig
             out/capsule-apply.cap
             out/capsule-eeprom.cap
             out/boot-eeprom.img
             out/boot-eeprom.sig
-            out/pieeprom-eeprom-pending.bin
-            out/pieeprom-stamped.bin
-            out/store-eeprom.bak
             out/store-tamper.efi
             out/start4.elf
             out/start4-test.elf
@@ -195,7 +190,7 @@ jobs:
             out/uki.efi
             out/grubaa64.efi
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   # The ACPI tables on the host: their links and checksums, and the ACPICA
   # tools' disassembly and recompilation of the DSDT; and the SMBIOS tables,
@@ -215,6 +210,19 @@ jobs:
           sudo apt-get install -y --no-install-recommends acpica-tools dmidecode
       - name: Test
         run: scripts/test-acpi.sh
+
+  # The variable store and the listing of its window in a disk's partition
+  # table, on disk images; sfdisk reads the tables that are written.
+  store:
+    runs-on: ${{ vars.RUNNER_BOOT || 'ubuntu-24.04' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          toolchain: stable
+      - name: Test
+        run: scripts/test-store.sh
 
   # The TPM's code on the host: its crypto against reference vectors, and the
   # whole TPM driven by tpm2-tools and systemd-cryptenroll over the

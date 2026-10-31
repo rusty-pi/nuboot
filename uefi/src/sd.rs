@@ -12,6 +12,8 @@ use crate::util::{read32, wait_for, write32};
 use crate::{debug, info, warn};
 
 const BASE: u64 = 0xFE34_0000;
+/// The register page the runtime services map to write the card.
+pub const EMMC2_PAGE: u64 = BASE;
 const BLKSIZECNT: u64 = BASE + 0x04;
 const ARG1: u64 = BASE + 0x08;
 const CMDTM: u64 = BASE + 0x0C;
@@ -311,6 +313,28 @@ impl Disk for Sd {
 
     fn blocks(&self) -> u64 {
         self.blocks
+    }
+}
+
+/// The card at `ResetSystem`: the VPU has given the card and its host back as
+/// they were at the start, and this firmware starts them again. It runs in the
+/// OS's context, so it logs nothing.
+pub struct Runtime(Sd);
+
+impl Runtime {
+    pub fn open() -> Option<Runtime> {
+        Sd::init().ok().map(Runtime)
+    }
+
+    /// Write whole blocks from `lba`, and read them back.
+    pub fn write(&mut self, lba: u64, buf: &[u8]) -> bool {
+        let mut back = [0u8; BLOCK];
+        buf.chunks(MAX_RUN * BLOCK).enumerate().all(|(i, run)| {
+            let at = lba + (i * MAX_RUN) as u64;
+            self.0.write_run(at, run).is_ok()
+                && self.0.read_run(at + (run.len() / BLOCK) as u64 - 1, &mut back).is_ok()
+                && back == run[run.len() - BLOCK..]
+        })
     }
 }
 

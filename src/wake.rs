@@ -64,16 +64,21 @@ pub fn serve_shutdown() {
 ///
 /// Nothing here may take longer than the 150 us the OS gives the dog between
 /// its two writes, so the loop reads two registers and the clock and nothing
-/// else.
+/// else. A request for the runtime services is answered, which takes longer, and
+/// the watch starts over: the OS's writes come after the runtime services have
+/// written the variable store.
 fn power_off_comes() -> bool {
-    let start = timer::now();
+    let mut start = timer::now();
     while timer::now().wrapping_sub(start) < WATCH_US {
         if watchdog::power_off_requested() {
             watchdog::quiesce();
             return true;
         }
         if mailbox::request_pending() {
-            return false;
+            if !mailbox::serve_for_shutdown() {
+                return false;
+            }
+            start = timer::now();
         }
     }
     false

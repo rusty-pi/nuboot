@@ -6,9 +6,12 @@ boot:
   eeprom: "../out/stock-pieeprom.bin"
   boot_order: "0x1"
   sd:
-    files:
-      start4.elf: "../out/start4-test.elf"
-      EFI/BOOT/BOOTAA64.EFI: "../out/gpio-tags.efi"
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/gpio-tags.efi"
   until: "gpio test: done"
   wall_secs: 600
 

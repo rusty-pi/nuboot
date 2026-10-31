@@ -350,7 +350,21 @@ fn nv_indices_as_the_tools_use_them() {
     auth.extend(sized(&[]));
     let response = send(ST_SESSIONS, CC_NV_EXTEND, &[hindex, hindex], &auth, &sized(&[9; 32]));
     assert_eq!(response_hmac(&response), Vec::<u8>::new(), "an unkeyed policy session has no response HMAC");
-    for index in [pindex, hindex] {
+    // The same session, from a client that sends an HMAC keyed with nothing
+    // (tpm2-tss before 4.1.4): the response answers with one.
+    let old_client = start_session(1);
+    assert_eq!(policy_command_code(old_client, CC_NV_EXTEND), 0);
+    assert_eq!(policy_or(old_client, &[&init_policy, &written_policy]), 0);
+    assert_eq!(rc(&send(ST_SESSIONS, CC_NV_UNDEFINE_SPACE, &[RH_OWNER, hindex], &password(&[]), &[])), 0);
+    let oindex = hindex;
+    assert_eq!(define(RH_OWNER, oindex, CLEAR_STCLEAR | POLICYWRITE | OWNERREAD | AUTHREAD | NT_EXTEND, &write_policy, 32, &[]), 0);
+    let mut auth = old_client.to_be_bytes().to_vec();
+    auth.extend(sized(&[1; 16]));
+    auth.push(1);
+    auth.extend(sized(&[7; 32]));
+    let response = send(ST_SESSIONS, CC_NV_EXTEND, &[oindex, oindex], &auth, &sized(&[9; 32]));
+    assert_eq!(response_hmac(&response).len(), 32, "an HMAC from the client is answered with one");
+    for index in [pindex, oindex] {
         assert_eq!(rc(&send(ST_SESSIONS, CC_NV_UNDEFINE_SPACE, &[RH_OWNER, index], &password(&[]), &[])), 0);
     }
 

@@ -67,19 +67,19 @@ fn flush(at: usize, len: usize) {
 fn raw_delete(var: &str, guid: &Guid) -> u32 {
     const MAIL1_WRITE: usize = 0xfe00_b8a0;
     const MAIL1_STATUS: usize = 0xfe00_b8b8;
-    const TAG_PERSIST: u32 = 0x0003_00a7;
+    const TAG_SEAL: u32 = 0x0003_00a9;
     let m = unsafe { MESSAGE };
     if m.is_null() {
         return u32::MAX;
     }
     let name_bytes = var.len() * 2;
-    let value_words = 8 + name_bytes.next_multiple_of(4) / 4;
+    let value_words = 10 + name_bytes.next_multiple_of(4) / 4;
     unsafe {
         for i in 0..64 {
             core::ptr::write_volatile(m.add(i), 0);
         }
         core::ptr::write_volatile(m, (4 * (value_words + 6)) as u32);
-        core::ptr::write_volatile(m.add(2), TAG_PERSIST);
+        core::ptr::write_volatile(m.add(2), TAG_SEAL);
         core::ptr::write_volatile(m.add(3), (4 * value_words) as u32);
         core::ptr::write_volatile(m.add(4), 4 * value_words as u32);
         let v = m.add(5);
@@ -90,8 +90,9 @@ fn raw_delete(var: &str, guid: &Guid) -> u32 {
         for (i, chunk) in guid.as_bytes().chunks(4).enumerate() {
             core::ptr::write_volatile(v.add(4 + i), u32::from_le_bytes(chunk.try_into().unwrap()));
         }
+        core::ptr::write_volatile(v.add(8), 1 << 20);
         for (i, b) in var.bytes().enumerate() {
-            let word = v.add(8 + i / 2);
+            let word = v.add(10 + i / 2);
             let shift = 16 * (i % 2);
             core::ptr::write_volatile(word, core::ptr::read_volatile(word) | (b as u32) << shift);
         }
@@ -138,15 +139,10 @@ fn post_in_firmware_memory() -> bool {
     unsafe { core::ptr::read_volatile(code) == before }
 }
 
-fn reset() -> ! {
-    const PM_RSTC: usize = 0xfe10_001c;
-    const PM_WDOG: usize = 0xfe10_0024;
-    const PASSWORD: u32 = 0x5a00_0000;
-    unsafe {
-        core::ptr::write_volatile(PM_WDOG as *mut u32, PASSWORD | 10);
-        let rstc = core::ptr::read_volatile(PM_RSTC as *const u32);
-        core::ptr::write_volatile(PM_RSTC as *mut u32, PASSWORD | (rstc & !0x30) | 0x20);
-    }
+/// Reset through the runtime services, which append what was written since
+/// boot to the store before the board goes.
+fn reset(rt: *mut RuntimeServices) -> ! {
+    unsafe { ((*rt).reset_system)(efi::RESET_COLD, Status::SUCCESS, 0, core::ptr::null_mut()) };
     runtime_efi::hang()
 }
 
@@ -181,7 +177,7 @@ pub extern "efiapi" fn efi_main(image: Handle, system_table: *mut SystemTable) -
         check("a hidden variable is created over", set(rt, "RtHidden", &OURS, NV_BS_RT, &[1]) == Status::SUCCESS);
         check("and deleted", set(rt, "RtHidden", &OURS, 0, &[]) == Status::SUCCESS);
         say("persist test: resetting\r\n");
-        reset()
+        reset(rt)
     }
 
     say("persist test: second boot\r\n");

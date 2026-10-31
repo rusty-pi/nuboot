@@ -178,8 +178,7 @@ sequenceDiagram
 A boot from `tryboot.img` that fails before `ExitBootServices` is followed by
 one from `boot.img`, which is boot 3 with the update not proven.
 
-An update of the EEPROM bootloader stages the same way, with the variable
-store saved around the EEPROM write, which erases it:
+An update of the EEPROM bootloader stages the same way and ends differently:
 
 ```mermaid
 sequenceDiagram
@@ -190,7 +189,6 @@ sequenceDiagram
     Note over FW: Boot 1, running from boot.img
     FW->>FW: check capsule, record update as pending
     FW->>ESP: write tryboot.img and tryboot.sig, remove capsule
-    FW->>ESP: copy variable store to STORE.BAK, read it back
     FW->>BL: reset with tryboot request
 
     Note over BL: Boot 2, running from tryboot.img
@@ -198,15 +196,14 @@ sequenceDiagram
     BL->>BL: write pieeprom.upd if pieeprom.sig is later than its own
     BL->>BL: stamp update time into the last 8 bytes of the flash
 
-    Note over FW: Next start, empty store
-    FW->>ESP: read STORE.BAK back into the store, restart
+    Note over FW: Next start
     FW->>FW: flash as new as the capsule says?
     alt yes
         FW->>FW: report success in ESRT
     else no
         FW->>FW: report failure in ESRT
     end
-    FW->>ESP: remove tryboot pair and STORE.BAK
+    FW->>ESP: remove tryboot pair
 ```
 
 ## Keys

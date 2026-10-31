@@ -6,15 +6,18 @@ boot:
   eeprom: "../out/stock-pieeprom.bin"
   boot_order: "0x1"
   sd:
-    files:
-      start4.elf: "../out/start4-test.elf"
-      EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
-      EFI/UpdateCapsule/new.cap: "../out/capsule-new.cap"
-      EFI/UpdateCapsule/old.cap: "../out/capsule-old.cap"
-      EFI/UpdateCapsule/corrupt.cap: "../out/capsule-corrupt.cap"
-      EFI/UpdateCapsule/stranger.cap: "../out/capsule-stranger.cap"
-      EFI/UpdateCapsule/junk.cap: "../out/capsule-junk.cap"
-      EFI/UpdateCapsule/relabeled.cap: "../out/capsule-relabeled.cap"
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+          EFI/UpdateCapsule/new.cap: "../out/capsule-new.cap"
+          EFI/UpdateCapsule/old.cap: "../out/capsule-old.cap"
+          EFI/UpdateCapsule/corrupt.cap: "../out/capsule-corrupt.cap"
+          EFI/UpdateCapsule/stranger.cap: "../out/capsule-stranger.cap"
+          EFI/UpdateCapsule/junk.cap: "../out/capsule-junk.cap"
+          EFI/UpdateCapsule/relabeled.cap: "../out/capsule-relabeled.cap"
   until: "hello test: done"
   wall_secs: 900
 
@@ -22,7 +25,7 @@ milestones:
   - why: "A capsule signed by the test key, newer than the firmware, passes."
     line: "capsule verified  path=\\EFI\\UpdateCapsule\\new.cap"
   - why: "Without a device key to seal the record of an update in, nothing is staged."
-    line: "no device key or flash store to record the update in"
+    line: "no device key or variable store to record the update in"
   - why: "An older version is refused."
     line: "reason=\"version is not newer than the running one's\""
   - why: "A byte changed after the signing breaks the signature."

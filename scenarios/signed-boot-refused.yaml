@@ -10,9 +10,12 @@ boot:
     - "SIGNED_BOOT=1"
     - "BOOT_UART=1"
   sd:
-    files:
-      boot.img: "../out/boot-stranger.img"
-      boot.sig: "../out/boot-stranger.sig"
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          boot.img: "../out/boot-stranger.img"
+          boot.sig: "../out/boot-stranger.sig"
   until: "Bad signature boot.img"
   wall_secs: 600
 

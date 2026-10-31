@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "capsule-eeprom-updated"
+description: "The boot after the bootloader updated the EEPROM: the flash holds the update's time, and the variable store on the card, which the update leaves alone, holds the record that the update was pending. The firmware finds the EEPROM as new as the capsule said, tells the OS it succeeded and removes the staged pair."
+
+boot:
+  eeprom: "../out/pieeprom-stamped.bin"
+  eeprom_pubkey: "../out/boot-test-pubkey.bin"
+  boot_order: "0x1"
+  bootconf:
+    - "SIGNED_BOOT=1"
+  otp_row:
+    - "56=0xc0de2001"
+    - "57=0xc0de3112"
+    - "58=0xc0de4223"
+    - "59=0xc0de5334"
+    - "60=0xc0de6445"
+    - "61=0xc0de7556"
+    - "62=0xc0de8667"
+    - "63=0xc0de9778"
+  sd:
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          boot.img: "../out/boot-test.img"
+          boot.sig: "../out/boot-test.sig"
+          tryboot.img: "../out/boot-eeprom.img"
+          tryboot.sig: "../out/boot-eeprom.sig"
+          EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+      - type: 0ca9cdc0-6c28-49a6-a041-eeec6123df3a
+        start: 512K
+        size: 512K
+        data: "../out/store-eeprom-pending.bin"
+  until: "EEPROM updated  version=1790000001"
+  wall_secs: 1800
+
+milestones:
+  - why: "The record says an update of the EEPROM was pending, and the flash is as new as the capsule said."
+    line: "EEPROM updated  version=1790000001"

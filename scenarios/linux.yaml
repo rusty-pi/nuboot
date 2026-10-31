@@ -17,11 +17,14 @@ boot:
     - "62=0xc0de8667"
     - "63=0xc0de9778"
   sd:
-    files:
-      start4.elf: "../out/start4-test.elf"
-      EFI/BOOT/BOOTAA64.EFI: "../out/systemd-bootaa64.efi"
-      EFI/Linux/linux-test.efi: "../out/linux-test.efi"
-      loader/loader.conf: { inline: "timeout 0\nconsole-mode keep\n" }
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/systemd-bootaa64.efi"
+          EFI/Linux/linux-test.efi: "../out/linux-test.efi"
+          loader/loader.conf: { inline: "timeout 0\nconsole-mode keep\n" }
   magic_packet_after: "waiting for a magic packet"
   until: 'waking the board  reason="magic packet"'
   wall_secs: 3000
@@ -103,7 +106,7 @@ milestones:
     line: "linux test: watchdog Broadcom BCM2835 Watchdog timer"
   - why: "The OS resets the board, and the variable it wrote is there at the next boot: the VPU sealed and kept the write."
     line: "linux test: variable survived the reset 07000000010203"
-  - why: "The OS deletes the variable it wrote, which is what keeps the run repeatable on a board whose flash holds the variable store."
+  - why: "The OS deletes the variable it wrote, which is what keeps the run repeatable on a board whose card holds the variable store."
     line: "linux test: variable removed"
   - why: "The kernel powers off through the firmware: the properties table offers ResetSystem, so the kernel has a power-off handler, which it has not without."
     line: "reboot: Power down"

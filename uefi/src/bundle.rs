@@ -22,7 +22,7 @@
 //! dropping the counter; a bundle with no tries left is removed, and the next
 //! newest is staged instead. A transient failure costs a try, not the update.
 //!
-//! The flash store keeps what media must not decide: the version of the newest
+//! The variable store keeps what media must not decide: the version of the newest
 //! bundle that has reached the OS, below which nothing is staged.
 
 use alloc::string::String;
@@ -277,7 +277,7 @@ pub fn install(capsule_fs: efi::Handle, directory: &[u16], name: &[u16], bundle:
         esrt::attempted(&esrt::UPDATE_CLASS, version, esrt::UNSUCCESSFUL);
     };
     if !var::keeps() {
-        return failed("no device key or flash store to record the update in", efi::Status::UNSUPPORTED);
+        return failed("no device key or variable store to record the update in", efi::Status::UNSUPPORTED);
     }
     let Some(fs) = boot_volume() else {
         return failed("no file system with a boot file to keep the update on", efi::Status::NOT_FOUND);

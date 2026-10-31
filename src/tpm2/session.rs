@@ -481,10 +481,13 @@ pub fn authorize(
                 return Err(session_error(RC_AUTH_FAIL, i));
             }
         }
-        // A policy session whose key and authorization value are both empty,
-        // or that was asked for a password, has no response HMAC: the client
-        // takes a zero-length one for that and refuses any other.
-        let no_response_hmac = session.kind == KIND_POLICY && (session.password || (!session.auth_value && session.key_len == 0));
+        // A policy session that was asked for a password has no response HMAC.
+        // Nor has one whose key and authorization value are both empty, when the
+        // command's HMAC was empty too: the response answers the command as the
+        // reference TPM does. A client that sent an HMAC keyed with nothing
+        // (tpm2-tss before 4.1.4) takes one back, and a client that sent none
+        // (4.1.4 and later) refuses any but a zero-length one.
+        let no_response_hmac = session.kind == KIND_POLICY && (session.password || (!session.auth_value && session.key_len == 0 && s.hmac.is_empty()));
         a.used[i].keyed = !no_response_hmac;
         a.used[i].key = key;
         a.used[i].key_len = key_len;

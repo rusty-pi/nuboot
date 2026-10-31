@@ -19,3 +19,27 @@ pub fn alloc(size: usize, align: usize) -> Option<u64> {
     unsafe { core::ptr::write_bytes(at as *mut u8, 0, size) };
     Some(at)
 }
+
+/// Start handing the arena out again from its first byte, for the runtime
+/// services, which bring the controllers up from scratch.
+pub fn reset() {
+    *NEXT.get() = DMA_ARENA.0;
+}
+
+/// Make what the CPU wrote visible to a device and what a device wrote visible
+/// to the CPU. The firmware maps the arena non-cacheable, and the runtime
+/// services run in an OS's mapping of it, which is cacheable: they clean and
+/// invalidate what has been handed out, before a device is told to run and
+/// before its answers are read.
+pub fn sync() {
+    if !crate::rtmode::active() {
+        return;
+    }
+    let end = *NEXT.get();
+    let mut line = DMA_ARENA.0 & !63;
+    while line < end {
+        unsafe { core::arch::asm!("dc civac, {}", in(reg) line) };
+        line += 64;
+    }
+    unsafe { core::arch::asm!("dsb sy") };
+}
