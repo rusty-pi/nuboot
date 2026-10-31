@@ -57,6 +57,10 @@ const TAG_STORE_PREPARE_CARD: u32 = 0x0003_00aa;
 const TAG_STORE_PREPARE_USB: u32 = 0x0003_00ac;
 /// What the flush came to, for the VPU's log.
 const TAG_STORE_REPORT: u32 = 0x0003_00ad;
+const TAG_NV_EXPORT: u32 = 0x0003_00ae;
+/// The room an NV index's record needs in a message: a status, a length and
+/// the record.
+const NV_ROOM: usize = 8 + crate::mailbox::NV_RECORD_MAX.next_multiple_of(4);
 /// The most the VPU takes of a variable.
 const PERSIST_MAX: usize = 16 * 1024;
 const PERSIST_NAME_MAX: usize = 512;
@@ -495,6 +499,9 @@ fn write_key(name: &[u16], guid: &efi::Guid, attributes: u32, bytes: &[u8], appe
 /// with the reset, which nothing can report.
 pub fn flush_store() {
     let p = PENDING.get();
+    if p.armed {
+        queue_nv_changes();
+    }
     if !p.armed || p.len == 0 {
         report(FLUSH_NOTHING | (p.armed as u32) << 8);
         return;
@@ -513,6 +520,30 @@ pub fn flush_store() {
     *OUTCOME.get() = FLUSH_NOTHING;
     crate::rtmode::on_stack(write_pending);
     report(*OUTCOME.get());
+}
+
+/// Ask the VPU for the changes the OS made to the TPM's NV indices, and queue
+/// each as a record of the store. What does not fit, or what the VPU does not
+/// answer for, is lost with the reset.
+fn queue_nv_changes() {
+    for _ in 0..crate::nvstore::FLUSH_MAX {
+        value()[..8].fill(0);
+        if post(TAG_NV_EXPORT, NV_ROOM) != Some(0) {
+            return;
+        }
+        let length = u32::from_le_bytes([value()[4], value()[5], value()[6], value()[7]]) as usize;
+        if length > crate::mailbox::NV_RECORD_MAX {
+            return;
+        }
+        let mut record = [0u8; crate::mailbox::NV_RECORD_MAX];
+        record[..length].copy_from_slice(&value()[8..8 + length]);
+        let record = &record[..length];
+        let Some((handle, kind)) = crate::nvstore::describe(record) else { return };
+        let name = crate::nvstore::name(handle);
+        if !queue_record(kind, 0, &crate::nvstore::GUID, &crate::nvstore::time(record), &name, record, &[]) {
+            return;
+        }
+    }
 }
 
 /// What the flush came to, as the VPU logs it: the code in the low byte, and

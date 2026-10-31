@@ -1,5 +1,7 @@
 //! NV indices: ordinary, counter, bit field and extend. They live in RAM, like
-//! the PCRs, and are gone when the TPM starts again.
+//! the PCRs; what makes them last is that the firmware asks for each change
+//! sealed ([`export`]) and keeps it on the boot disk, and puts it back at the
+//! next boot ([`import`]).
 //!
 //! An index is authorized by its own authorization value or its policy, or by
 //! the owner or the platform hierarchy, as its attributes say. Locks
@@ -8,7 +10,7 @@
 
 use super::session::Authorization;
 use super::{In, RC_ATTRIBUTES, RC_COMMAND_SIZE, RC_HANDLE, RC_NV_DEFINED, RC_NV_SPACE, RC_P, RC_SIZE, RC_VALUE, RC_1, RC_2};
-use crate::{keystore, sha256};
+use crate::{aes, keystore, rng, sha256};
 
 pub const CC_NV_UNDEFINE_SPACE: u32 = 0x122;
 pub const CC_NV_DEFINE_SPACE: u32 = 0x12a;
@@ -71,6 +73,8 @@ pub struct Index {
     pub auth_len: usize,
     pub size: usize,
     pub data: [u8; DATA_MAX],
+    /// Changed since it was last exported or imported.
+    pub dirty: bool,
 }
 
 const EMPTY: Index = Index {
@@ -83,6 +87,7 @@ const EMPTY: Index = Index {
     auth_len: 0,
     size: 0,
     data: [0; DATA_MAX],
+    dirty: false,
 };
 
 static mut INDICES: [Index; SLOTS] = [EMPTY; SLOTS];
@@ -254,6 +259,8 @@ pub fn define_space(handles: [u32; 2], params: &mut In, _a: &mut Authorization) 
     slot.auth[..auth.len()].copy_from_slice(auth);
     slot.auth_len = auth.len();
     slot.size = size;
+    slot.dirty = true;
+    forget_removal(handle);
     Ok(())
 }
 
@@ -269,7 +276,9 @@ pub fn undefine_space(handles: [u32; 2]) -> Result<(), u32> {
     }
     keystore::zero(&mut index.data);
     keystore::zero(&mut index.auth);
+    let handle = index.handle;
     *index = EMPTY;
+    note_removal(handle);
     Ok(())
 }
 
@@ -310,6 +319,7 @@ pub fn read(handles: [u32; 2], params: &mut In, a: &mut Authorization) -> Result
 
 fn written(index: &mut Index) {
     index.attributes |= WRITTEN;
+    index.dirty = true;
 }
 
 /// `TPM2_NV_Write`: an ordinary index.
@@ -382,5 +392,209 @@ pub fn set_bits(handles: [u32; 2], params: &mut In, a: &mut Authorization) -> Re
     let value = u64::from_be_bytes(index.data[..8].try_into().unwrap()) | bits;
     index.data[..8].copy_from_slice(&value.to_be_bytes());
     written(index);
+    Ok(())
+}
+
+// The indices outlast a boot as records on the boot disk. Only the VPU can
+// make or open one: a record is the index's state encrypted and authenticated
+// under keys from the device key, so the disk, which the OS owns, can drop or
+// replace records but not forge or read them.
+
+const RECORD_LABEL: &[u8] = b"nuboot NV index record v1";
+const ENCRYPTION_LABEL: &[u8] = b"nv index encryption";
+const INTEGRITY_LABEL: &[u8] = b"nv index integrity";
+const BODY_FIXED: usize = 4 + 1 + 32 + 1 + 32 + 2;
+const RECORD_HEAD: usize = 8 + 4 + 16 + 2;
+const MAC: usize = 32;
+/// The most a record holds.
+pub const RECORD_MAX: usize = RECORD_HEAD + BODY_FIXED + DATA_MAX + MAC;
+/// What a stored index may have set: what a definition may, and whether it was
+/// written.
+const STORED: u32 = ACCEPTED | WRITTEN;
+
+/// The handles undefined since the last export, oldest first, so that the
+/// disk forgets them as well. When it is full, the oldest is lost.
+static mut REMOVED: [u32; 2 * SLOTS] = [0; 2 * SLOTS];
+/// The number of the last record exported or imported: what stops an older
+/// record being put back after a newer one.
+static mut LAST_SEQ: u64 = 0;
+
+fn removed() -> &'static mut [u32; 2 * SLOTS] {
+    unsafe { &mut *(&raw mut REMOVED) }
+}
+
+fn note_removal(handle: u32) {
+    if !keystore::device_key_fused() {
+        return;
+    }
+    let list = removed();
+    if list.contains(&handle) {
+        return;
+    }
+    match list.iter_mut().find(|h| **h == 0) {
+        Some(free) => *free = handle,
+        None => {
+            list.copy_within(1.., 0);
+            list[list.len() - 1] = handle;
+        }
+    }
+}
+
+fn forget_removal(handle: u32) {
+    for h in removed().iter_mut().filter(|h| **h == handle) {
+        *h = 0;
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ExportError {
+    Nothing,
+    NoDeviceKey,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum ImportError {
+    NoDeviceKey,
+    Malformed,
+    Stale,
+    Busy,
+    NoSpace,
+}
+
+fn keys() -> (aes::Aes128, [u8; 32]) {
+    let mut encryption = keystore::tpm_secret(ENCRYPTION_LABEL, true);
+    let mac = keystore::tpm_secret(INTEGRITY_LABEL, true);
+    let key = aes::Aes128::new(encryption[..16].try_into().unwrap());
+    keystore::zero(&mut encryption);
+    (key, mac)
+}
+
+fn mac_of(key: &[u8; 32], head_and_body: &[u8]) -> [u8; 32] {
+    let mut message = [0u8; RECORD_LABEL.len() + RECORD_MAX];
+    message[..RECORD_LABEL.len()].copy_from_slice(RECORD_LABEL);
+    message[RECORD_LABEL.len()..RECORD_LABEL.len() + head_and_body.len()].copy_from_slice(head_and_body);
+    sha256::hmac(key, &message[..RECORD_LABEL.len() + head_and_body.len()])
+}
+
+/// The next change to an index, as a record for the disk: the number, the
+/// handle, the IV, the length of the body, the body (the index's state,
+/// encrypted; none for an index that was undefined) and the MAC. The change is
+/// then the disk's to keep.
+pub fn export(out: &mut [u8; RECORD_MAX]) -> Result<usize, ExportError> {
+    if !keystore::device_key_fused() {
+        return Err(ExportError::NoDeviceKey);
+    }
+    let (handle, body_len) = match table().iter_mut().find(|i| i.used && i.dirty) {
+        Some(index) => (index.handle, BODY_FIXED + index.size),
+        None => match removed().iter().copied().find(|h| *h != 0) {
+            Some(handle) => (handle, 0),
+            None => return Err(ExportError::Nothing),
+        },
+    };
+    let mut iv = [0u8; 16];
+    if !rng::fill(&mut iv) {
+        return Err(ExportError::NoDeviceKey);
+    }
+    let seq = unsafe { LAST_SEQ }.checked_add(1).ok_or(ExportError::NoDeviceKey)?;
+    out[..8].copy_from_slice(&seq.to_le_bytes());
+    out[8..12].copy_from_slice(&handle.to_le_bytes());
+    out[12..28].copy_from_slice(&iv);
+    out[28..30].copy_from_slice(&(body_len as u16).to_le_bytes());
+    let (cipher, mac_key) = keys();
+    if body_len != 0 {
+        let index = index_of(handle).unwrap();
+        let body = &mut out[RECORD_HEAD..RECORD_HEAD + body_len];
+        body[..4].copy_from_slice(&index.attributes.to_le_bytes());
+        body[4] = index.policy_len as u8;
+        body[5..37].copy_from_slice(&index.policy);
+        body[37] = index.auth_len as u8;
+        body[38..70].copy_from_slice(&index.auth);
+        body[70..72].copy_from_slice(&(index.size as u16).to_le_bytes());
+        body[72..].copy_from_slice(&index.data[..index.size]);
+        cipher.cfb_encrypt(&iv, body);
+        index.dirty = false;
+    } else {
+        forget_removal(handle);
+    }
+    let end = RECORD_HEAD + body_len;
+    let mac = mac_of(&mac_key, &out[..end]);
+    out[end..end + MAC].copy_from_slice(&mac);
+    unsafe { LAST_SEQ = seq };
+    Ok(end + MAC)
+}
+
+/// Put back what a record from the disk holds, if this firmware made it and
+/// nothing newer has been taken. An index that clears at a restart
+/// (`TPMA_NV_CLEAR_STCLEAR`) comes back empty, as the boot is one.
+pub fn import(record: &[u8]) -> Result<(), ImportError> {
+    if !keystore::device_key_fused() {
+        return Err(ImportError::NoDeviceKey);
+    }
+    if record.len() < RECORD_HEAD + MAC || record.len() > RECORD_MAX {
+        return Err(ImportError::Malformed);
+    }
+    let body_len = u16::from_le_bytes(record[28..30].try_into().unwrap()) as usize;
+    let valid_body = body_len == 0 || (BODY_FIXED..=BODY_FIXED + DATA_MAX).contains(&body_len);
+    if !valid_body || record.len() != RECORD_HEAD + body_len + MAC {
+        return Err(ImportError::Malformed);
+    }
+    let (signed, mac) = record.split_at(RECORD_HEAD + body_len);
+    let (cipher, mac_key) = keys();
+    let expected = mac_of(&mac_key, signed);
+    if expected.iter().zip(mac).fold(0, |different, (a, b)| different | (a ^ b)) != 0 {
+        return Err(ImportError::Malformed);
+    }
+    let seq = u64::from_le_bytes(record[..8].try_into().unwrap());
+    let handle = u32::from_le_bytes(record[8..12].try_into().unwrap());
+    if seq <= unsafe { LAST_SEQ } {
+        return Err(ImportError::Stale);
+    }
+    if handle >> 24 != 0x01 {
+        return Err(ImportError::Malformed);
+    }
+    let existing = table().iter().position(|i| i.used && i.handle == handle);
+    if existing.is_some_and(|n| table()[n].dirty) {
+        return Err(ImportError::Busy);
+    }
+    if body_len == 0 {
+        if let Some(n) = existing {
+            table()[n] = EMPTY;
+        }
+        unsafe { LAST_SEQ = seq };
+        return Ok(());
+    }
+    let slot = match existing.or_else(|| table().iter().position(|i| !i.used)) {
+        Some(n) => n,
+        None => return Err(ImportError::NoSpace),
+    };
+    let iv: [u8; 16] = record[12..28].try_into().unwrap();
+    let mut body = [0u8; BODY_FIXED + DATA_MAX];
+    let body = &mut body[..body_len];
+    body.copy_from_slice(&record[RECORD_HEAD..RECORD_HEAD + body_len]);
+    cipher.cfb_decrypt(&iv, body);
+    let attributes = u32::from_le_bytes(body[..4].try_into().unwrap());
+    let (policy_len, auth_len) = (body[4] as usize, body[37] as usize);
+    let size = u16::from_le_bytes(body[70..72].try_into().unwrap()) as usize;
+    if attributes & !STORED != 0 || policy_len > 32 || auth_len > 32 || size > DATA_MAX || BODY_FIXED + size != body_len {
+        keystore::zero(body);
+        return Err(ImportError::Malformed);
+    }
+    let mut index = EMPTY;
+    index.used = true;
+    index.handle = handle;
+    index.attributes = attributes;
+    index.policy = body[5..37].try_into().unwrap();
+    index.policy_len = policy_len;
+    index.auth = body[38..70].try_into().unwrap();
+    index.auth_len = auth_len;
+    index.size = size;
+    index.data[..size].copy_from_slice(&body[72..]);
+    keystore::zero(body);
+    if attributes & CLEAR_STCLEAR != 0 {
+        keystore::zero(&mut index.data);
+        index.attributes &= !WRITTEN;
+    }
+    table()[slot] = index;
+    unsafe { LAST_SEQ = seq };
     Ok(())
 }

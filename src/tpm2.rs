@@ -21,6 +21,7 @@ use crate::{rng, sha256, stc};
 mod context;
 #[path = "tpm2/nv.rs"]
 mod nv;
+pub use nv::{ExportError as NvExportError, ImportError as NvImportError, RECORD_MAX as NV_RECORD_MAX, export as nv_export, import as nv_import};
 #[path = "tpm2/object.rs"]
 mod object;
 #[path = "tpm2/session.rs"]

@@ -1,0 +1,41 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "nv-persist"
+description: "A board with its device private key fused (a test key, not a board's): an EFI application defines three NV indices of the TPM and writes them, exits boot services, writes one again and undefines another through the TPM, then resets. UEFI keeps the indices in the variable store on the card when boot services end, and the runtime services keep the changes the OS made, as records the VPU sealed, when the application resets. After the reset the indices are as the OS left them, with their authorization values."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  otp_row:
+    - "56=0xc0de2001"
+    - "57=0xc0de3112"
+    - "58=0xc0de4223"
+    - "59=0xc0de5334"
+    - "60=0xc0de6445"
+    - "61=0xc0de7556"
+    - "62=0xc0de8667"
+    - "63=0xc0de9778"
+  sd:
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/nv-persist.efi"
+  until: "nv persist test: done"
+  wall_secs: 3000
+
+milestones:
+  - why: "UEFI put the indices the first boot defined in the store, as boot services ended."
+    line: "index changes kept in the store"
+  - why: "The change the OS made after ExitBootServices reached the TPM."
+    line: "runtime test: an index is written after ExitBootServices ok"
+  - why: "The VPU handed the OS's changes to the runtime services, which appended them to the store at the reset."
+    line: "the OS's variable changes are on the disk"
+  - why: "The next boot put the indices back: the one written before ExitBootServices."
+    line: "runtime test: an index written before ExitBootServices is back ok"
+  - why: "The one the OS wrote after it has the later write."
+    line: "runtime test: an index written after it is back with the later write ok"
+  - why: "The one the OS undefined stays undefined."
+    line: "runtime test: an index undefined after it is gone ok"
+  - why: "The authorization value was kept with the index."
+    line: "runtime test: an index is read with its authorization value ok"

@@ -102,6 +102,18 @@ const TAG_STORE_PREPARE_USB: u32 = 0x0003_00ac;
 /// has no log of its own once the OS owns the board, so the VPU writes this one.
 const TAG_STORE_REPORT: u32 = 0x0003_00ad;
 
+/// The next change to an NV index of the TPM, as a record for the variable
+/// store ([`tpm2::nv_export`]): a status word (0: a record follows, 1: no
+/// change, 2: no device key is fused), its length, and its bytes. Both the
+/// runtime services, which keep the record until `ResetSystem`, and UEFI ask.
+const TAG_NV_EXPORT: u32 = 0x0003_00ae;
+/// Put an NV index back from a record of the variable store
+/// ([`tpm2::nv_import`]): the length of the record, and its bytes. The answer
+/// is a status word: 0, 1 for a record that is not the VPU's, 2 for one older
+/// than another taken, 3 for one the TPM has no room or no place for, 4 when
+/// the board has been handed to the OS, and 5 when no device key is fused.
+const TAG_NV_IMPORT: u32 = 0x0003_00af;
+
 /// Event `n` of what the VPU measured before the ARM started, for the log
 /// UEFI keeps: the index in, then the PCR, the event type, the digest, the
 /// length of the data and the data.
@@ -239,7 +251,7 @@ fn respond(bus: u32, runtime: bool) {
             set(1, CODE_ERROR);
             return;
         }
-        if runtime != matches!(tag, TAG_STORE_SEAL | TAG_STORE_PREPARE_CARD | TAG_STORE_PREPARE_USB | TAG_STORE_REPORT) {
+        if runtime != matches!(tag, TAG_STORE_SEAL | TAG_STORE_PREPARE_CARD | TAG_STORE_PREPARE_USB | TAG_STORE_REPORT) && tag != TAG_NV_EXPORT {
             i = value + room / 4;
             continue;
         }
@@ -256,6 +268,44 @@ fn respond(bus: u32, runtime: bool) {
                 };
                 set(value, status);
                 set(i + 2, RESPONSE | 36);
+            }
+            TAG_NV_EXPORT if room as usize >= 8 + tpm2::NV_RECORD_MAX.next_multiple_of(4) => {
+                let record = nv_record();
+                let (status, length) = match tpm2::nv_export(record) {
+                    Ok(length) => (0, length),
+                    Err(tpm2::NvExportError::Nothing) => (1, 0),
+                    Err(tpm2::NvExportError::NoDeviceKey) => (2, 0),
+                };
+                set(value, status);
+                set(value + 1, length as u32);
+                for (n, bytes) in record[..length].chunks(4).enumerate() {
+                    let mut w = [0u8; 4];
+                    w[..bytes.len()].copy_from_slice(bytes);
+                    set(value + 2 + n as u32, u32::from_le_bytes(w));
+                }
+                set(i + 2, RESPONSE | room);
+            }
+            TAG_NV_IMPORT if !runtime && room >= 4 => {
+                let length = word(value) as usize;
+                let status = if length > tpm2::NV_RECORD_MAX || 4 + length.next_multiple_of(4) > room as usize {
+                    1
+                } else if crypto::status(crypto::DEVICE_KEY).map_or(true, |s| s & crypto::HMAC_LOCKED != 0) {
+                    4
+                } else {
+                    let record = nv_record();
+                    for (n, byte) in record[..length].iter_mut().enumerate() {
+                        *byte = (word(value + 1 + n as u32 / 4) >> (8 * (n % 4))) as u8;
+                    }
+                    match tpm2::nv_import(&record[..length]) {
+                        Ok(()) => 0,
+                        Err(tpm2::NvImportError::Malformed) => 1,
+                        Err(tpm2::NvImportError::Stale) => 2,
+                        Err(tpm2::NvImportError::Busy | tpm2::NvImportError::NoSpace) => 3,
+                        Err(tpm2::NvImportError::NoDeviceKey) => 5,
+                    }
+                };
+                set(value, status);
+                set(i + 2, RESPONSE | 4);
             }
             TAG_STORE_REPORT if room >= 4 => {
                 let report = word(value);
@@ -506,6 +556,12 @@ fn respond(bus: u32, runtime: bool) {
         i = value + room / 4;
     }
     set(1, RESPONSE);
+}
+
+/// Room for an NV index's record on its way to or from the TPM.
+fn nv_record() -> &'static mut [u8; tpm2::NV_RECORD_MAX] {
+    static mut RECORD: [u8; tpm2::NV_RECORD_MAX] = [0; tpm2::NV_RECORD_MAX];
+    unsafe { &mut *(&raw mut RECORD) }
 }
 
 /// Room for the message of an HMAC request.

@@ -338,6 +338,13 @@ applications.
   firmware never hands the key to the ARM. A record whose seal does not match, or
   whose counter is not above the one before it, is ignored. A variable is at
   most 16 KiB.
+- The TPM's NV indices ([tpm2.md](tpm2.md#nv-indices)) are stored as one record
+  per change, filed under a GUID of their own and named `NV` and the handle in
+  hex, whose value is the record the VPU made of the index (or of its removal).
+  UEFI gives them back to the VPU in the order of the log and keeps the newest
+  of each index for the next bank; it cannot read them. A record the VPU did
+  not make, or that is older than one it took, is ignored and goes with what the
+  boot refused. The OS's variable services neither write nor read them.
 - A record is intact when its framing and SHA-256 are. One that is not, such as
   a write a power loss cut short, is stepped over to the next intact one, and
   the store moves to the other bank without it at that boot.
@@ -395,6 +402,9 @@ does not answer.
   UEFI checks it against `PK` and the `KEK`s at the next boot like every stored
   write. The table keeps the old value until then; the update takes effect at
   the restart fwupd asks for.
+- At `ResetSystem` the runtime services also ask the VPU for the changes the OS
+  made to the TPM's NV indices, and queue each as a record with the writes of
+  variables; they are lost in the same ways.
 - At `ResetSystem` the firmware brings the disk back as the boot had it, on a
   stack of its own, and writes the records after the end of the log in the
   active bank. The OS's context has no console: the ARM tells the VPU how it
