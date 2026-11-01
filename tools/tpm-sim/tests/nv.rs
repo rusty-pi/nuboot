@@ -24,6 +24,8 @@ const CC_POLICY_OR: u32 = 0x171;
 const CC_POLICY_COMMAND_CODE: u32 = 0x16c;
 const CC_POLICY_NV_WRITTEN: u32 = 0x18f;
 const CC_POLICY_AUTHORIZE_NV: u32 = 0x192;
+const CC_POLICY_SIGNED: u32 = 0x160;
+const CC_LOAD_EXTERNAL: u32 = 0x167;
 const CC_POLICY_GET_DIGEST: u32 = 0x189;
 const CC_POLICY_RESTART: u32 = 0x180;
 const CC_GET_CAPABILITY: u32 = 0x17a;
@@ -300,8 +302,115 @@ fn a_policy_an_index_approves_can_be_taken_back() {
     assert_eq!(rc(&send(ST_SESSIONS, CC_NV_UNDEFINE_SPACE, &[RH_OWNER, index], &password(&[]), &[])), 0);
 }
 
+fn hmac_key_public(unique: &[u8]) -> Vec<u8> {
+    let mut p = 0x0008u16.to_be_bytes().to_vec();
+    p.extend_from_slice(&0x000bu16.to_be_bytes());
+    p.extend_from_slice(&0x0004_0000u32.to_be_bytes());
+    p.extend(sized(&[]));
+    p.extend_from_slice(&0x0005u16.to_be_bytes());
+    p.extend_from_slice(&0x000bu16.to_be_bytes());
+    p.extend(sized(unique));
+    p
+}
+
+fn hmac_key_sensitive(seed: &[u8], key: &[u8]) -> Vec<u8> {
+    let mut s = 0x0008u16.to_be_bytes().to_vec();
+    s.extend(sized(&[]));
+    s.extend(sized(seed));
+    s.extend(sized(key));
+    s
+}
+
+/// What `tpm2_hmac_key_from_pin` of systemd sends: the PIN as an HMAC-SHA256 key.
+fn load_hmac_key(hierarchy: u32, seed: &[u8], key: &[u8], unique: &[u8]) -> Result<(u32, Vec<u8>), u32> {
+    let mut p = sized(&hmac_key_sensitive(seed, key));
+    p.extend(sized(&hmac_key_public(unique)));
+    p.extend_from_slice(&hierarchy.to_be_bytes());
+    let response = send(ST_NO_SESSIONS, CC_LOAD_EXTERNAL, &[], &[], &p);
+    match rc(&response) {
+        0 => Ok((u32::from_be_bytes(response[10..14].try_into().unwrap()), response[16..50].to_vec())),
+        code => Err(code),
+    }
+}
+
+fn start_session_with_nonce(kind: u8) -> (u32, Vec<u8>) {
+    let mut p = sized(&[7; 16]);
+    p.extend(sized(&[]));
+    p.push(kind);
+    p.extend_from_slice(&0x0010u16.to_be_bytes());
+    p.extend_from_slice(&0x000bu16.to_be_bytes());
+    let response = send(ST_NO_SESSIONS, CC_START_AUTH_SESSION, &[RH_NULL, RH_NULL], &[], &p);
+    assert_eq!(rc(&response), 0, "start session");
+    let size = u16::from_be_bytes(response[14..16].try_into().unwrap()) as usize;
+    (u32::from_be_bytes(response[10..14].try_into().unwrap()), response[16..16 + size].to_vec())
+}
+
+fn policy_signed(key: u32, session: u32, nonce: &[u8], reference: &[u8], signature: &[u8]) -> u32 {
+    let mut p = sized(nonce);
+    p.extend(sized(&[]));
+    p.extend(sized(reference));
+    p.extend_from_slice(&0u32.to_be_bytes());
+    p.extend_from_slice(&0x0005u16.to_be_bytes());
+    p.extend_from_slice(&0x000bu16.to_be_bytes());
+    p.extend_from_slice(signature);
+    rc(&send(ST_NO_SESSIONS, CC_POLICY_SIGNED, &[key, session], &[], &p))
+}
+
+/// The signature systemd makes: an HMAC, with the key, of a digest of the
+/// session's nonce, the expiry, the command hash and the reference.
+fn signed_by(key: &[u8], nonce: &[u8], reference: &[u8]) -> Vec<u8> {
+    let digest = sha256(&[nonce, &0u32.to_be_bytes(), &[], reference]);
+    tpm_sim::sha256::hmac(key, &digest).to_vec()
+}
+
+fn an_hmac_key_signs_a_policy() {
+    let pin = b"correct horse";
+    let seed = [0u8; 32];
+    let unique = sha256(&[&seed, pin]);
+
+    // What the TPM refuses to load.
+    assert_eq!(load_hmac_key(RH_OWNER, &seed, pin, &unique).unwrap_err(), 0x85 | 0x40 | 0x300, "only under the null hierarchy");
+    assert_eq!(load_hmac_key(RH_NULL, &seed, pin, &sha256(&[b"another"])).unwrap_err(), 0xa5 | 0x40 | 0x100, "a secret part the public part does not name");
+    assert_eq!(load_hmac_key(RH_NULL, &seed, pin, &unique[..31]).unwrap_err(), 0x95 | 0x40 | 0x200, "a unique field of the wrong size");
+
+    let (key, name) = load_hmac_key(RH_NULL, &seed, pin, &unique).unwrap();
+    let (other, _) = load_hmac_key(RH_NULL, &seed, b"another pin", &sha256(&[&seed, b"another pin"])).unwrap();
+
+    // The policy an object is made with: PolicySigned from a trial session.
+    let (trial, _) = start_session_with_nonce(3);
+    assert_eq!(policy_signed(key, trial, &[], &[], &[0; 32]), 0, "a trial session takes the step with no check");
+    let made_with = digest(trial);
+    flush(trial);
+    let step = sha256(&[&[0u8; 32], &CC_POLICY_SIGNED.to_be_bytes(), &name]);
+    assert_eq!(made_with, sha256(&[&step, &[]]));
+
+    // A session that holds the key signs its nonce.
+    let (session, nonce) = start_session_with_nonce(1);
+    let signature = signed_by(pin, &nonce, &[]);
+    assert_eq!(policy_signed(key, session, &nonce, &[], &signature), 0);
+    assert_eq!(digest(session), made_with, "the session names the key, as the object does");
+    let mut forged = signature.clone();
+    forged[0] ^= 1;
+    assert_eq!(policy_signed(key, session, &nonce, &[], &forged), 0x9b | 0x40 | 0x500, "a signature that is not the key's");
+    assert_eq!(policy_signed(other, session, &nonce, &[], &signature), 0x9b | 0x40 | 0x500, "another key");
+    assert_eq!(policy_signed(key, session, &[9; 32], &[], &signed_by(pin, &[9; 32], &[])), 0x84 | 0x40 | 0x100, "a nonce that is not the session's");
+    assert_eq!(policy_signed(key, session, &nonce, b"ref", &signature), 0x9b | 0x40 | 0x500, "a reference the signature did not cover");
+
+    // The use of it: the policy guards an index, and the PIN opens it.
+    let index = 0x01d1_0330;
+    assert_eq!(define(RH_OWNER, index, POLICYWRITE | OWNERREAD | NT_EXTEND, &made_with, 32, &[]), 0);
+    assert_eq!(extend(index, index, &policy_auth(session), &[1; 32]), 0, "the session that was signed for writes");
+    let (unsigned, _) = start_session_with_nonce(1);
+    assert_eq!(extend(index, index, &policy_auth(unsigned), &[2; 32]), 0x09d | 0x800 | 0x100, "a session nobody signed for does not");
+    let _ = send(ST_NO_SESSIONS, 0x165, &[], &[], &unsigned.to_be_bytes());
+    assert_eq!(rc(&send(ST_SESSIONS, CC_NV_UNDEFINE_SPACE, &[RH_OWNER, index], &password(&[]), &[])), 0);
+    flush(key);
+    flush(other);
+}
+
 #[test]
 fn nv_indices_as_the_tools_use_them() {
+    an_hmac_key_signs_a_policy();
     a_policy_on_pcrs_fails_only_when_those_change();
     a_policy_an_index_approves_can_be_taken_back();
     assert!(handles_listed().is_empty());
