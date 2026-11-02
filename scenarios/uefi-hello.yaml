@@ -32,5 +32,7 @@ milestones:
     line: "image verified  signer=\"nuboot test key\""
   - why: "The application sees Secure Boot on."
     line: "hello test: Secure Boot is on"
+  - why: "The system table's firmware revision is 0, as a build that is no release has it."
+    line: "hello test: firmware revision 0x00000000"
   - why: "The application ran its checks and finished."
     line: "hello test: done"

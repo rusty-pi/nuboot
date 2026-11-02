@@ -27,6 +27,15 @@ fn main() {
         });
     println!("cargo:rustc-env=FIRMWARE_TIME={time}");
 
+    // The system table's FirmwareRevision, which `bootctl` shows as
+    // `major.minor` of its two halves: the release's X.Y, and 0 for a build
+    // that is no release.
+    let revision = release.as_deref().map_or(0, |r| {
+        let packed = pack_release(r);
+        (packed >> 24) << 16 | (packed >> 16 & 0xff)
+    });
+    println!("cargo:rustc-env=FIRMWARE_REVISION={revision}");
+
     // keys/dbx-aarch64.txt as the 32-byte hashes one after the other.
     println!("cargo:rerun-if-changed=keys");
     let text = std::fs::read_to_string(format!("{dir}/keys/dbx-aarch64.txt")).unwrap();

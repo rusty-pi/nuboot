@@ -88,6 +88,14 @@ pub const COMMIT: &str = match option_env!("FIRMWARE_COMMIT") {
     None => "0000000",
 };
 
+/// The system table's `FirmwareRevision`: the release's major number in the
+/// upper half and its minor number in the lower, 0 for a build that is no
+/// release. `bootctl` shows it as `nuboot <major>.<minor>`.
+pub const REVISION: u32 = match u32::from_str_radix(env!("FIRMWARE_REVISION"), 10) {
+    Ok(revision) => revision,
+    Err(_) => 0,
+};
+
 fn memory_map(tree: &fdt::Fdt, tree_addr: u64) {
     let map = mem::map();
     let (mut ac, mut sc) = (2, 1);
