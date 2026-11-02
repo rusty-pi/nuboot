@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "capsule-stage-usb"
+description: "A board with an SD card that holds a boot.img of its own and a USB drive that the bootloader started the firmware from, with a capsule for a later build on the drive. The firmware writes tryboot.img and tryboot.sig on the drive it came from, not on the card, which comes first among the file systems."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  eeprom_pubkey: "../out/boot-test-pubkey.bin"
+  boot_order: "0x14"
+  bootconf:
+    - "SIGNED_BOOT=1"
+  otp_row:
+    - "56=0xc0de2001"
+    - "57=0xc0de3112"
+    - "58=0xc0de4223"
+    - "59=0xc0de5334"
+    - "60=0xc0de6445"
+    - "61=0xc0de7556"
+    - "62=0xc0de8667"
+    - "63=0xc0de9778"
+  sd:
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          boot.img: "../out/stock-pieeprom.bin"
+          EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+  usb:
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          boot.img: "../out/boot-test.img"
+          boot.sig: "../out/boot-test.sig"
+          EFI/BOOT/BOOTAA64.EFI: "../out/hello.efi"
+          EFI/UpdateCapsule/next.cap: "../out/capsule-apply.cap"
+  until: "kind=firmware disk=usb"
+  wall_secs: 600
+
+milestones:
+  - why: "The capsule is for a later build and signed by the test key."
+    line: "capsule verified"
+  - why: "The pair is on the USB drive, which the firmware came from, and not on the card."
+    line: "kind=firmware disk=usb"

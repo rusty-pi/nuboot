@@ -206,12 +206,18 @@ fn set_result(kind: Kind, version: u32, status: u32) {
     esrt::attempted(kind.class(), version, status);
 }
 
-/// The file system with the bootloader's `boot.img` on it.
+/// The file system with the bootloader's `boot.img` on it. With a `boot.img`
+/// on more than one disk, the one that is the length of the image the
+/// bootloader started the firmware from, the disk the firmware came from.
 fn boot_fs() -> Option<efi::Handle> {
     let boot = wide("boot.img");
-    proto::with(Some(&simple_file_system::PROTOCOL_GUID)).into_iter().find(|&fs| {
-        fat::list_files(fs, &[]).is_ok_and(|names| names.iter().any(|n| eq_ignore_case(n, &boot)))
-    })
+    let all = proto::with(Some(&simple_file_system::PROTOCOL_GUID));
+    let started = crate::mailbox::boot_medium().filter(|medium| medium.code == 5).and_then(|medium| medium.ramdisk_len);
+    started
+        .and_then(|len| all.iter().copied().find(|&fs| fat::file_size(fs, &boot) == Some(len)))
+        .or_else(|| {
+            all.iter().copied().find(|&fs| fat::list_files(fs, &[]).is_ok_and(|names| names.iter().any(|n| eq_ignore_case(n, &boot))))
+        })
 }
 
 fn staged(fs: efi::Handle) -> bool {
@@ -385,7 +391,7 @@ fn stage(capsule_fs: efi::Handle, directory: &[u16], name: &[u16], capsule: &Cap
         return failed("what was written does not read back", efi::Status::DEVICE_ERROR);
     }
     let _ = fat::remove_file(capsule_fs, directory, name);
-    info!("capsule", "update staged, restarting as a tryboot"; version = capsule.version, kind = capsule.kind.name());
+    info!("capsule", "update staged, restarting as a tryboot"; version = capsule.version, kind = capsule.kind.name(), disk = crate::diskstore::name_of(fs));
     crate::watchdog::request_tryboot();
     crate::watchdog::reset(false);
 }

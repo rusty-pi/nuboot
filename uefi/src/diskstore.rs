@@ -7,6 +7,7 @@ use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
 
+use r_efi::efi;
 use r_efi::protocols::{device_path, simple_file_system};
 
 use crate::block::{self, Disk, Volume};
@@ -54,6 +55,13 @@ fn holds(disk: &block::Found, name: &str, len: Option<u64>) -> bool {
         let Some(dp) = proto::get(fs, &device_path::PROTOCOL_GUID) else { return false };
         devpath::bytes(dp as *const u8).starts_with(prefix) && fat::file_size(fs, &wide).is_some_and(|size| len.is_none_or(|l| l == size))
     })
+}
+
+/// The name of the disk the file system `fs` is on.
+pub fn name_of(fs: efi::Handle) -> &'static str {
+    let Some(dp) = proto::get(fs, &device_path::PROTOCOL_GUID) else { return "unknown" };
+    let path = devpath::bytes(dp as *const u8);
+    block::found().iter().find(|d| path.starts_with(&d.whole.path[..d.whole.path.len() - 4])).map_or("unknown", |d| d.name)
 }
 
 /// Keep the store on the disk the firmware came from, the one that holds

@@ -486,10 +486,12 @@ and the variable store is on a disk, so that the update can be recorded. The upd
 takes three boots:
 
 1. The firmware that finds the capsule writes `tryboot.img` and `tryboot.sig`
-   next to `boot.img` and `boot.sig` on the file system that has them, reads
-   them back, removes the capsule, records the update as pending in a signed
-   variable the OS cannot see, and resets with the bootloader's tryboot request
-   set (bit 1 of `PM_RSTS`).
+   next to `boot.img` and `boot.sig` on the file system that has them (with
+   a `boot.img` on the card and on a USB drive, the one the size of the image
+   the bootloader started the firmware from), reads them back, removes the
+   capsule, records the update as pending in a signed variable the OS cannot
+   see, and resets with the bootloader's tryboot request set (bit 1 of
+   `PM_RSTS`).
 2. The bootloader checks `tryboot.sig` against the EEPROM's key and starts the
    new firmware out of `tryboot.img`. That firmware finds the record, reports
    success in the ESRT, and records the update as proven when it reaches
