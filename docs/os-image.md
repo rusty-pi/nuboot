@@ -41,9 +41,12 @@ interrupt controller and timers, the SBSA UART console, the SD host, the network
 interface, the USB controller, the random number generator, the temperature
 sensor (as the thermal zone `acpitz`) and the watchdog, which the kernel's
 generic `wdat_wdt` driver takes through the WDAT table
-([boot.md](boot.md#boot-watchdog)). Reset and power off need no driver: the kernel calls the
-firmware's `ResetSystem`, with the tables or the device tree. The USB controller is a platform xHCI device, which the kernel's
-generic driver (`CONFIG_USB_XHCI_PLATFORM`) takes; `lspci` does not list it.
+([boot.md](boot.md#boot-watchdog)).
+
+Reset and power off need no driver: the kernel calls the firmware's
+`ResetSystem`, with the tables or the device tree. The USB controller is a
+platform xHCI device, which the kernel's generic driver
+(`CONFIG_USB_XHCI_PLATFORM`) takes; `lspci` does not list it.
 
 An OS on the tables has no device tree to read the board's model and serial
 number from: the SMBIOS tables the firmware offers give them
@@ -105,7 +108,9 @@ and `mok_certificate`), and the kernel has to trust that certificate: enrol it
 as a MOK, sign with a key the image's kernel already trusts, or, when the image
 boots without shim, so that there is no MOK, put the certificate in `db`
 ([uefi.md](uefi.md#updating-the-keys)): the kernel takes the certificates of
-`db` into its platform keyring and loads a module signed by one of them.
+`db` into its platform keyring and loads a module signed by one of them. With an
+`owner-db.der`, `db` takes no writes: sign with a certificate that chains to the
+owner's CA ([uefi.md](uefi.md#the-owners-db)).
 
 `scenarios/linux.yaml` boots Debian's 6.12 arm64 kernel under Secure Boot with
 the module built by `scripts/build-linux-test.sh` and signed with a key in `db`:
@@ -140,7 +145,7 @@ after a reboot and a firmware update on a board that has the key fused
 
 ## What works
 
-The TPM answers what `docs/tpm2.md` lists: PCR reads, extends and events,
+The TPM answers what [tpm2.md](tpm2.md#what-it-implements) lists: PCR reads, extends and events,
 `TPM2_GetCapability`, `TPM2_GetRandom`, `TPM2_Hash`, and ECC primary keys with
 secrets sealed under them and unsealed against a PCR policy. So `tpm2_pcrread`,
 `tpm2_pcrextend`, `tpm2_getcap`, `tpm2_getrandom`, `tpm2_eventlog`,

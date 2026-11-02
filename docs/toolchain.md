@@ -8,12 +8,12 @@ libgccjit built from a VC4 port of GCC:
 rustc ── rustc_codegen_gcc ── libgccjit (GCC 17 + VC4 backend) ── vc4-elf-as/ld
 ```
 
-- **GCC**: [rusty-pi/gcc-vc4](https://github.com/rusty-pi/gcc-vc4) (`vc4-rust`),
+- **GCC**: [rusty-pi/gcc-vc4](https://github.com/rusty-pi/gcc-vc4) (branch `vc4-rust`),
   the GCC 6 VC4 backend from [itszor/gcc-vc4](https://github.com/itszor/gcc-vc4)
   (`vc4-gcc6`) forward ported to the `rust-lang/gcc` commit rustc_codegen_gcc
   pins (`libgccjit.version`).
 - **binutils**: [rusty-pi/binutils-vc4](https://github.com/rusty-pi/binutils-vc4)
-  (`vc4-2.46.1`), poizan42's fork with the `elf32-vc4.c` hook signatures fixed
+  (branch `vc4-2.46.1`), poizan42's fork with the `elf32-vc4.c` hook signatures fixed
   for bfd 2.46.
 - **Target**: `vc4-none-elf.json`. rustc has no VC4 `arch` and panics on an
   unknown one for `extern "C"`, so the spec says `csky` (a plain 32-bit
@@ -29,8 +29,15 @@ Toolchain (binutils, GCC with libgccjit and libgcc, rustc_codegen_gcc), into
 scripts/build-toolchain.sh
 ```
 
+It uses `~/src/binutils-vc4`, `~/src/gcc-vc4` and `~/src/rustc_codegen_gcc`,
+cloning the pinned tag or commit for any that is missing, over SSH
+(`CLONE_BASE=https://github.com/` for HTTPS), and builds in `~/src/vc4-build`.
+`VC4_PREFIX`, `BINUTILS_SRC`, `GCC_SRC`, `CG_GCC_DIR`, `BUILD_DIR` and `JOBS`
+change those.
+
 On Ubuntu 26.04, binutils and GCC can come prebuilt instead, as packages
-that install into `/opt/vc4`. Then only rustc_codegen_gcc is built here:
+that install into `/opt/vc4` (the script needs `sudo` and checks their SHA-256).
+Then only rustc_codegen_gcc is built here:
 
 ```bash
 scripts/install-toolchain.sh

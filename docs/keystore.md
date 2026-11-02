@@ -1,38 +1,42 @@
 # Measured boot and the device key
 
 The firmware keeps the device private key (OTP rows 56-63) in the VPU. The
-TPM's seeds, UEFI's variable seals and the firmware cryptography service's
-signatures and HMACs are computed from it, and the key itself is never
-answered.
+TPM's seeds, the records that keep its NV indices on the boot disk, UEFI's
+variable seals and the firmware cryptography service's signatures and HMACs are
+computed from it, and the key itself is never answered.
 
 ## The PCRs
 
 The PCRs are the TPM's ([tpm2.md](tpm2.md)): 24 SHA-256 registers on the VPU,
 extended by UEFI as it boots and by shim, GRUB, systemd-boot and the Linux EFI
-stub through `EFI_TCG2_PROTOCOL`, and by the OS through the TPM commands.
+stub through `EFI_TCG2_PROTOCOL`, and by the OS through the TPM commands or
+mailbox tag `0x000300a1`. PCRs 17-22 start at all ones and cannot be extended;
+the rest start at zero.
 
 ## The firmware cryptography service
 
 The VPU answers the mailbox tags Raspberry Pi's `rpi-fw-crypto` speaks
-(`0x0003008e` to `0x00030095`, `0x0003009c`), for key id 1, the device private
-key in OTP rows 56-63, read as a P-256 private key, most significant byte
-first: an ECDSA signature of a SHA-256 hash (in DER), an HMAC-SHA256 with the
-key's 32 raw bytes, and the public key (`SubjectPublicKeyInfo`). The key itself
-is never answered, nor is a key generated or its usage set.
+(`0x0003008e` to `0x00030095`, `0x00038090`, `0x0003009c`, `0x0003809c`), for
+key id 1, the device private key in OTP rows 56-63, read as a P-256 private key,
+most significant byte first: an ECDSA signature of a SHA-256 hash (in DER), an
+HMAC-SHA256 of up to 2048 bytes with the key's 32 raw bytes, and the public key
+(`SubjectPublicKeyInfo`). The key itself is never answered, nor is a key
+generated or its usage set.
 
 The P-256 arithmetic takes the same steps for every secret scalar, so the
 time of a signature or a key agreement says nothing of the key or of the
 per-signature secret. The AES the TPM uses for its blobs and for parameter
-encryption looks its S-box up by secret bytes, and is not yet as careful.
+encryption looks its S-box up by secret bytes, so its timing depends on them.
 
 A key's status says what it may no longer be asked, and a lock holds until the
 next boot. Reading, generating and setting the usage are locked from the start.
-UEFI seals the records of its variable store with the key's HMAC ([uefi.md](uefi.md#the-variable-store)),
-and locks signing and HMAC at `ExitBootServices`, because an OS that could HMAC
-any message could seal a record. The VPU's own tag for the runtime services
-seals for the OS in a domain UEFI takes only for the OS's own variables
-([uefi.md](uefi.md#variables-the-os-writes)). A board without a fused private key answers
-`KEY_NOT_SET`, and its variables stay in memory.
+UEFI seals the records of its variable store with the key's HMAC
+([uefi.md](uefi.md#the-variable-store)), and locks signing and HMAC at
+`ExitBootServices`, because an OS that could HMAC any message could seal a
+record. The VPU's own tag for the runtime services seals for the OS in a domain
+UEFI takes only for the OS's own variables
+([uefi.md](uefi.md#variables-the-os-writes)). A board without a fused private
+key answers `KEY_NOT_SET`, and its variables stay in memory.
 
 ## The device key and the ARM
 
@@ -72,6 +76,3 @@ itself, not only what the VPU computes with it.
 - A computation with the device key leaves intermediate values in registers,
   on the stack or in the cache while it runs; the firmware overwrites what it
   can reach afterwards.
-- Events logged after a loader asked for the log are also in the final events
-  table, which the OS reads from a configuration table, and not only in the log
-  that loader got ([tpm2.md](tpm2.md#what-is-measured)).

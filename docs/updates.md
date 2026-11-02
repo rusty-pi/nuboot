@@ -9,7 +9,7 @@ and fwupd's `uefi-capsule` plugin lists them as devices:
 | the firmware, for a board whose owner signs each image | `7d1c0a4e-5b83-4f2a-9c61-e2084a3d95b7` | `start4.elf`, in a signed `boot.img` | the owner's key |
 | the EEPROM bootloader | `3f8a0c5e-91d2-4b7a-a6c3-5d1e08f2b947` | `pieeprom.upd` and `pieeprom.sig`, in a signed `boot.img` | the owner's key |
 
-A capsule's own signature is `db`'s in all three; with an `owner-db.der` in the signed `boot.img` ([uefi.md](uefi.md#the-owners-db)) it is the owner's certificate's for the first two and the builder's `db` key's for the bundle.
+A capsule is signed by a certificate in `db`. With an `owner-db.der` in the signed `boot.img` ([uefi.md](uefi.md#the-owners-db)), `db` holds the owner's certificate alone: the capsules for the firmware and the EEPROM bootloader are signed by it, and a bundle's capsule by the builder's `db` key.
 
 ```bash
 fwupdmgr get-devices
@@ -18,9 +18,9 @@ fwupdmgr install nuboot-1791753810.cab
 
 fwupd puts the capsule in `\EFI\UpdateCapsule` on the EFI system partition and
 sets `OsIndications`; the firmware checks it, and applies it over the next
-reboots as [uefi.md](uefi.md#firmware-capsules) describes. The root of the
-signature is `db`: a capsule's signer has to be a certificate there whose owner is not
-Microsoft.
+reboots as [uefi.md](uefi.md#firmware-capsules) describes. The capsule's signer
+has to chain to a certificate in `db` whose owner is not Microsoft. The board
+needs a device key and a variable store on a disk, to record the update in.
 
 ## Updates the owner does not sign
 
@@ -47,9 +47,10 @@ the bootloader never sees it.
    `ExitBootServices` it blesses the bundle, by dropping the counter from its
    name, and removes the older bundles.
 4. At every later power-up the loader runs first, and its UEFI stages the newest
-   `.upd` again, so the update runs from the second start of each boot. The
-file system UEFI boots from is the first, the SD card then a USB drive, that has
-`\EFI\BOOT\BOOTAA64.EFI`; no other volume is read for bundles.
+   `.upd` again, so the update runs from the second start of each boot.
+
+The file system UEFI boots from is the first, the SD card then a USB drive, that
+has `\EFI\BOOT\BOOTAA64.EFI`; no other volume is read for bundles.
 
 The counter works as boot assessment does in systemd
 (<https://systemd.io/AUTOMATIC_BOOT_ASSESSMENT/>). A new bundle has three
@@ -111,7 +112,9 @@ scripts/mkcab.py out/firmware.cap out/nuboot-$version.cab $version
 ```
 
 `customer-private.pem` is the key whose public half the EEPROM holds
-([boot.md](boot.md#signed-boot)). An update of the EEPROM bootloader is made
+([boot.md](boot.md#signed-boot)). A board that trusts an `owner-db.der`
+([uefi.md](uefi.md#the-owners-db)) keeps trusting it only if the new `boot.img`
+carries it too: add `--add owner.der:owner-db.der` to `mkbootimg.py`. An update of the EEPROM bootloader is made
 the same way with `--class eeprom` for `mkcapsule.py` and `mkcab.py`, a
 `boot.img` that carries the new image (`mkbootimg.py --eeprom pieeprom.bin:TIME`,
 with the configuration and the public key already in `pieeprom.bin`) and `TIME`
@@ -211,4 +214,5 @@ sequenceDiagram
 fwupd also updates `KEK`, `db` and `dbx` from the OS, with its `uefi-kek`,
 `uefi-db` and `uefi-dbx` plugins, which write the variables through the runtime
 services. The firmware accepts the writes that a `PK` or `KEK` key signed and
-keeps them ([uefi.md](uefi.md#updating-the-keys)). `PK` is built in.
+keeps them ([uefi.md](uefi.md#updating-the-keys)). `PK` is built in, and with an
+`owner-db.der` `db` takes no writes.

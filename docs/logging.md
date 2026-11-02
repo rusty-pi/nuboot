@@ -23,18 +23,22 @@ in columns:
 
 The time is right-aligned in eleven columns, the level takes five and the
 target eight. Two spaces separate the message from the first field. A value
-that is empty or holds a space, `"` or `=` is quoted, with `"` and `\`
-escaped, so a line always splits back into its fields:
+that is empty or holds a space, a control character, `"` or `=` is quoted, with
+`"` and `\` escaped and control characters written as `\n` or `\xNN`, so a
+line always splits back into its fields. Control characters in a message are
+written as `\xNN`, so a file or variable name cannot send a terminal an escape
+sequence:
 
 ```text
-   2.764642 INFO  boot     nuboot 1a2b3c4  board="Raspberry Pi 4 Model B" revision=d03115
+   2.764642 INFO  boot     nuboot 1a2b3c4  board="Raspberry Pi 4 Model B" revision=d03115 pcb=1.5 version=1793000000 release=none
 ```
 
 Built with `--features color`, the level is coloured and the time and the
 field names are dimmed with ANSI escapes.
 
-Records at `INFO` and above are logged. A panic, and a thread that runs off
-its stack, end with an `ERROR` record and stop the VPU:
+Records at `INFO` and above are logged; `DEBUG` and `TRACE` records are not.
+The runtime services log nothing while an OS runs. A panic and a thread that
+runs off its stack end with an `ERROR` record on the console and stop the VPU:
 
 ```text
   12.004113 ERROR panic    index out of bounds: the len is 4 but the index is 4  at=src/firmware.rs:120
@@ -57,4 +61,7 @@ A record is written whole: a thread that logs while another thread is
 mid-line waits for it. An interrupt handler must not log.
 
 Every record goes to the console and to each sink attached with
-`log::attach`.
+`log::attach`, at most four.
+
+`tools/log-check` builds the renderer for the host; `scripts/test-tpm.sh` runs
+its tests of the quoting and escaping.

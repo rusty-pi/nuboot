@@ -8,7 +8,7 @@ the TPM in one of two ways, by what it describes the board with:
 - through the ACPI tables, as a TPM 2.0 device with a command response buffer
   ([below](#the-command-response-buffer)), which the kernel's own driver takes;
 - over the property mailbox: tag `0x000300a3`, with the command in the tag's
-  value and its length in the length word, and the response coming back the
+  value (its own header says how long it is) and the response coming back the
   same way, which the module in `tools/tpm-vpu` uses
   ([os-image.md](os-image.md)).
 
@@ -31,14 +31,14 @@ this order:
 | 0 | `EV_S_CRTM_VERSION` | `nuboot` and the commit, in UTF-16 |
 | 0 | `EV_EFI_PLATFORM_FIRMWARE_BLOB2` | the UEFI image, and the device tree it starts the ARM with |
 | 1 | `EV_PLATFORM_CONFIG_FLAGS` | `board.revision`, `board.ext_revision`, `board.serial`, `board.mac_rows`, `otp.bootmode` and `sdram.mib`, one event each, as `name=value` |
-| 1 | `EV_PLATFORM_CONFIG_FLAGS` | `eeprom.bootconf=`, the SHA-256 of `bootconf.txt` in the EEPROM as it is stored, or `none` |
 | 0 | `EV_EFI_PLATFORM_FIRMWARE_BLOB2` | the EEPROM's bootloader (`eeprom-bootcode`), as the SHA-256 of the `bootcode.bin` section as the flash stores it, and where in the flash it is |
+| 1 | `EV_PLATFORM_CONFIG_FLAGS` | `eeprom.bootconf=`, the SHA-256 of `bootconf.txt` in the EEPROM as it is stored, or `none` |
 | 0 | `EV_EFI_PLATFORM_FIRMWARE_BLOB2` | the VL805's hub and MCU images (`vl805-hub`, `vl805-mcu`), when the VPU loads them into the chip, which the 4B revisions without a flash of their own for it need |
 | 7 | `EV_EFI_ACTION` | `owner-db sha256=` and the SHA-256 of the `owner-db.der` in the `boot.img` the firmware started out of, or `owner-db invalid` for one it could not use ([uefi.md](uefi.md#the-owners-db)); only when the `boot.img` has one |
 | 7 | `EV_EFI_VARIABLE_DRIVER_CONFIG` | the Secure Boot configuration: `SecureBoot`, `PK`, `KEK`, `db` and `dbx` |
 | 1 | `EV_EFI_HANDOFF_TABLES2` | the pointers to the ACPI and SMBIOS tables handed to the OS |
 | 0-7 | `EV_SEPARATOR` | one in each PCR, once the configuration is measured |
-| 5 | `EV_EFI_GPT_EVENT` | the GPT of the disk the boot option is on, when it has one, with the entry of the variable store's window if the firmware listed it ([uefi.md](uefi.md#the-variable-store)) |
+| 5 | `EV_EFI_GPT_EVENT` | the GPT header and the entries in use of the disk the boot option is on, when it has a GPT; the entry of the variable store's window is among them ([uefi.md](uefi.md#the-variable-store)) |
 | 4 | `EV_EFI_ACTION` | `Calling EFI Application from Boot Option`, ahead of the boot option's image |
 | 4 | `EV_EFI_BOOT_SERVICES_APPLICATION` | each image UEFI loads |
 | 7 | `EV_EFI_VARIABLE_AUTHORITY` | the `db` certificate that verified each image |
@@ -66,24 +66,24 @@ locality 0 but 17-22, and PCRs 16 and 23 can be reset.
 | command | |
 |---|---|
 | `TPM2_Startup`, `Shutdown`, `SelfTest`, `IncrementalSelfTest`, `GetTestResult`, `StirRandom` | accepted; the NV indices are kept as they change ([below](#nv-indices)), so there is nothing to save |
-| `TPM2_GetCapability` | algorithms, handles, commands, PCRs, ECC curves and the TPM properties; the other capabilities are empty lists |
+| `TPM2_GetCapability` | algorithms, handles, commands, PCRs, ECC curves and the TPM properties; the audit and PP command lists, PCR properties, authorization policies and the vendor range are empty; any other capability gets `TPM_RC_VALUE` |
 | `TPM2_GetRandom` | from the SoC's RNG200, up to 32 bytes |
 | `TPM2_PCR_Read`, `PCR_Extend`, `PCR_Event`, `PCR_Reset` | with a password session with an empty password; no other session. `PCR_Read` answers with the first eight registers of a selection and says which it read, and a caller asks again for the rest |
 | `TPM2_Hash` | SHA-256, with the null, owner, endorsement or platform hierarchy for the ticket |
 | `TPM2_ReadClock`, `TestParms` | |
-| `TPM2_CreatePrimary` | an ECC P-256 storage key under the owner, endorsement, platform or null hierarchy |
+| `TPM2_CreatePrimary` | an ECC P-256 key, a storage key or one that signs, under the owner, endorsement, platform or null hierarchy |
 | `TPM2_Create`, `Load`, `ReadPublic`, `Unseal` | sealed data and ECDSA signing keys under a primary storage key |
-| `TPM2_LoadExternal` | a public key, ECC P-256 or RSA of 2048, 3072 or 4096 bits (exponent 65537), under the owner, endorsement, platform or null hierarchy; no private part |
+| `TPM2_LoadExternal` | a public key, ECC P-256 or RSA of 2048, 3072 or 4096 bits (exponent 65537), under the owner, endorsement, platform or null hierarchy; or, under the null hierarchy only, an HMAC-SHA256 key with its secret part, which `PolicySigned` uses |
 | `TPM2_Sign`, `Quote`, `VerifySignature` | ECDSA over P-256 and SHA-256, with a key that signs; a restricted key (an attestation key) signs only what the TPM attested or a digest that `Hash` ticketed; `VerifySignature` also checks RSASSA (PKCS#1 v1.5) with SHA-256 by a loaded RSA public key of 2048, 3072 or 4096 bits |
 | `TPM2_ContextSave`, `ContextLoad`, `FlushContext` | objects and sessions |
 | `TPM2_EvictControl` | a primary key made persistent at a handle in the owner's or the platform's range, two at most, and removed again; they last until the TPM restarts, and a tool that finds none makes the primary again |
 | `TPM2_StartAuthSession` | HMAC, policy and trial sessions, unsalted or salted to a primary key with ECDH, bound to nothing or to an object, with AES-128-CFB for parameter encryption or none |
 | `TPM2_NV_DefineSpace`, `NV_UndefineSpace`, `NV_ReadPublic`, `NV_Read`, `NV_Write`, `NV_Extend`, `NV_Increment`, `NV_SetBits` | ordinary, counter, bit field and extend indices under the owner's or the platform's authorization, with the index's own authorization value or policy as its attributes say; eight indices of up to 256 bytes, kept in the variable store ([below](#nv-indices)) |
-| `TPM2_PolicyPCR`, `PolicyOR`, `PolicyAuthValue`, `PolicyPassword`, `PolicySecret`, `PolicyAuthorize`, `PolicyAuthorizeNV`, `PolicyCommandCode`, `PolicyNvWritten`, `PolicyGetDigest`, `PolicyRestart` | `PolicyAuthorizeNV` takes the policy from the first 34 bytes of an index, a SHA-256 `TPMT_HA`, as `systemd-pcrlock` stores its policy |
+| `TPM2_PolicyPCR`, `PolicyOR`, `PolicyAuthValue`, `PolicyPassword`, `PolicySecret`, `PolicySigned`, `PolicyAuthorize`, `PolicyAuthorizeNV`, `PolicyCommandCode`, `PolicyNvWritten`, `PolicyGetDigest`, `PolicyRestart` | `PolicySigned` takes an HMAC-SHA256 over the nonce and reference by a key loaded with its secret part, and no expiry or command hash; `PolicyAuthorizeNV` takes the policy from the first 34 bytes of an index, a SHA-256 `TPMT_HA`, as `systemd-pcrlock` stores its policy |
 
-Anything else gets `TPM_RC_COMMAND_CODE`. There are no RSA keys of the TPM's own
-(an RSA public key can be loaded to verify with) and no
-`HierarchyChangeAuth`: the hierarchies' authorization values are empty.
+Anything else gets `TPM_RC_COMMAND_CODE`. The TPM makes no RSA keys (an RSA
+public key can be loaded to verify with), and there is no `HierarchyChangeAuth`:
+the hierarchies' authorization values are empty.
 
 An endorsement key (`tpm2_createek`, the TCG template with a `PolicySecret` on
 the endorsement hierarchy) is a primary like any other, so its public key is the
@@ -93,9 +93,9 @@ makes an attestation key under it. `tpm2_quote` signs the PCRs with that key and
 
 A policy that a key authorizes works as `systemd-measure` and
 `systemd-cryptenroll --tpm2-public-key` use it: the policy of the sealed object
-names an RSA key of 2048, 3072 or 4096 bits, and the unsealing session proves a PCR policy that the
-key signed (`VerifySignature` on the loaded public key, then `PolicyAuthorize`
-with its ticket).
+names an RSA key of 2048, 3072 or 4096 bits, and the unsealing session proves a
+PCR policy that the key signed (`VerifySignature` on the loaded public key,
+then `PolicyAuthorize` with its ticket).
 
 ## NV indices
 
@@ -108,11 +108,11 @@ authorization its attributes name: the index's own authorization value
 `OWNERREAD`, `PPWRITE`, `PPREAD`). The name of an index covers its attributes,
 `TPMA_NV_WRITTEN` included, so it changes with the first write.
 
-Locks (`WRITELOCKED`,
-`READLOCKED`, `WRITEDEFINE`, `GLOBALLOCK` and the `*_STCLEAR` ones), the PIN
-types and `POLICY_DELETE` are not offered, and a definition that asks for one
-fails with `TPM_RC_ATTRIBUTES`. Eight indices fit, each of at most 256 bytes
-(8 for a counter or bit field, 32 for an extend index); `TPM2_GetCapability`
+Locks (`WRITELOCKED`, `READLOCKED`, `WRITEDEFINE`, `GLOBALLOCK` and the
+`*_STCLEAR` ones), the PIN types and `POLICY_DELETE` are not offered, and a
+definition that asks for one fails with `TPM_RC_ATTRIBUTES`. Eight indices
+fit, each of at most 256 bytes (8 for a counter or bit field, 32 for an extend
+index); `TPM2_GetCapability`
 lists them under `0x01000000` and the TPM properties say how many there are and
 how large.
 
@@ -141,9 +141,9 @@ tool that finds one missing defines it again.
 
 ## Keys
 
-A hierarchy's seed is the board's device private key hashed with the hierarchy's
-name (`keystore::tpm_secret`), so on a board with the key fused the primary
-keys are the same at every boot and after every firmware update, and a secret
+A hierarchy's seed is derived from the board's device private key and the
+hierarchy's name (`keystore::tpm_secret`), so on a board with the key fused
+the primary keys are the same at every boot and after every firmware update, and a secret
 sealed under one unseals later. The seeds are derived when a command needs them
 and the stack they touched is overwritten before the command returns; the TPM
 holds no seed. The null hierarchy, and every hierarchy on a board with no
@@ -162,8 +162,11 @@ the kernel's resource manager (`/dev/tpmrm0`) is what to use: it saves and
 loads around each command, with `ContextSave`, `ContextLoad` and
 `FlushContext`.
 
-Saved contexts are encrypted under keys that last for the boot, so they
-load again until the TPM restarts.
+A context holds one object or session, at most 1024 bytes before it is
+encrypted (an object with an RSA-4096 public key is the largest). Saving a
+session frees its slot; saving an object leaves it loaded until it is flushed.
+Saved contexts are encrypted under keys that last for the boot, so they load
+again until the TPM restarts and not on another board.
 
 The primary keys and the sealed blobs are the same kind of secret as the OTP
 key they derive from: nothing here stops a payload that can read the VPU's
@@ -210,10 +213,14 @@ the scenario checks that systemd-boot and the stub measured into PCRs 5 and
 `scripts/check-tpm2.py` checks the first: that the event log replays to the
 PCRs, with the board's identity and the EEPROM's configuration in PCR 1, a
 separator in each of PCRs 0 to 7, the handoff tables and the call to the boot
-option, the properties, that the PCRs read back
-are what SHA-256 makes of what was extended, the update counter, the error
-codes of the commands the TPM refuses, and what the key, the sealed data and the
-sessions answer and refuse.
+option, the properties, that the PCRs read back are what SHA-256 makes of what
+was extended, the update counter, the error codes of the commands the TPM
+refuses, and what the key, the sealed data and the sessions answer and refuse.
+
+`scenarios/nv-persist.yaml` boots an EFI application on a board with a test
+device key fused: it defines and writes NV indices before and after
+`ExitBootServices`, undefines one and resets, and the next boot checks that the
+indices are as the OS left them.
 
 `scenarios/linux-acpi.yaml` boots Debian's arm64 kernel with `acpi=on` and no
 module of this firmware's: `tpm_crb` registers `/dev/tpm0`, and the PCRs and the
@@ -224,10 +231,12 @@ code on the host.
 `scripts/test-tpm.sh` builds the TPM's code for the host (`tools/tpm-sim`) and
 runs two things. Its unit tests compare P-256 (public keys, ECDH, ECDSA),
 AES-CFB, `KDFa` and `KDFe` with vectors from Python's `cryptography`
-(`tools/tpm-sim/gen-vectors.py`), and run the command response buffer's code.
-With `tpm2-tools` installed it also serves
-the TPM over the TPM simulator's socket protocol and drives it with the real
-tools (`tools/tpm-sim/tpm2-tools-test.sh`): the primary key, sealing and
+(`tools/tpm-sim/gen-vectors.py`), and run the command response buffer's code,
+malformed commands, saved and loaded contexts, RSA public keys of 2048, 3072
+and 4096 bits, NV indices with a policy that `PolicyNvWritten` is part of, and
+NV indices exported on one boot and imported on the next. With `tpm2-tools`
+installed it also serves the TPM over the TPM simulator's socket protocol and
+drives it with the real tools (`tools/tpm-sim/tpm2-tools-test.sh`): the primary key, sealing and
 unsealing, a PCR policy built by a trial session and refused once a PCR has
 changed, a salted HMAC session that also encrypts the secret on its way in, a
 signing key whose signature OpenSSL accepts, an endorsement key, an

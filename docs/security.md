@@ -8,10 +8,9 @@ it. It is for someone who has to decide whether to trust a board running it.
 The BCM2711 has no memory separation. The VPU, which runs `start4.elf` and
 reads the device private key, and the ARM cores share the SDRAM, and nothing
 stands between them: no IOMMU, no TrustZone-style carve-out, no firewall on the
-VPU's memory. Code that can read and write memory on the ARM
-side can read and write the VPU's code, stacks and the TPM's PCRs by their bus
-addresses, and so can any bus master (a DMA engine, the VL805) that is given a
-bad address. The VPU is not a vault.
+VPU's memory. Code that can read and write memory on the ARM side can read and
+write the VPU's code, stacks and the TPM's PCRs by their bus addresses, and so
+can any bus master (a DMA engine, the VL805) that is given a bad address. The VPU is not a vault.
 
 So the firmware does not try to hide the VPU from the ARM. It rests on four
 things instead, which every mechanism below serves:
@@ -37,7 +36,7 @@ code on the ARM that is not held back by lockdown, owns the board
 | attacker | can do | wants |
 |---|---|---|
 | **media**: controls the SD card or USB drive | any bytes there: partition tables, FAT, EFI files, a capsule in `\EFI\UpdateCapsule`, a malformed PE or PKCS #7 | to run unsigned code in UEFI, to corrupt UEFI's memory before it has checked anything, to plant an update |
-| **device**: a hostile USB device or hub | descriptors, lengths and timing on the VL805's ports | the same, through the xHCI and mass-storage drivers |
+| **device**: a hostile USB device or hub | descriptors, lengths and timing on the VL805's ports | the same, through the xHCI driver and the bulk-only and UAS mass-storage drivers |
 | **OS**: root, or any user of `/dev/tpm*` or `efivarfs`, on an OS that booted under Secure Boot and is locked down (no `/dev/mem`, no unsigned modules) | TPM commands, the runtime variable services, the mailbox the kernel's drivers use | VPU code execution, the device key or the TPM's seeds, forged or rolled-back stored state, a boot that skips Secure Boot |
 | **LAN** | an Ethernet frame while the board is off | anything beyond booting the board |
 | **old signed code**: a shim, GRUB or kernel that is signed and not in `dbx` | whatever its bugs give it | to be booted in place of the current one |
@@ -54,7 +53,7 @@ above).
 | the EEPROM bootloader, with the owner's public key | the owner | `start4.elf` comes out of a `boot.img` whose `boot.sig` the owner's key made |
 | `start4.elf` | the firmware's builder | everything below |
 | the update keys, which `start4.elf` carries | the firmware's builder | which firmware replaces it at the next boot, with no signature by the owner |
-| `PK`, `KEK`, `db` | the firmware's builder | which images UEFI runs, and which updates it takes |
+| `PK`, `KEK`, `db` | the firmware's builder | which images UEFI runs, and which updates it takes. `db` holds the builder's key alone |
 | `owner-db.der` in `boot.img` | the owner | which images UEFI runs, in place of the builder's `db`, and which capsules it takes for the firmware and the EEPROM |
 
 **The guarantees need signed boot programmed in the OTP.** On a board without
@@ -115,7 +114,8 @@ the mailbox too.
   firmware does not read validity dates, `basicConstraints`, key usage or path
   lengths: the board has no clock, and `db` is short and signed in. A
   certificate in `db` can therefore issue others; whoever holds its key could
-  sign the image directly anyway.
+  sign the image directly anyway. The built-in `db` is the builder's key
+  alone: Microsoft's UEFI CAs are not in it, and a `db` write has to enrol them.
 - **The owner can replace `db`.** A `boot.img` the bootloader verified against
   the owner's key may hold `owner-db.der` ([uefi.md](uefi.md#the-owners-db)),
   and then `db` is that certificate alone, `db` takes no writes, and the
@@ -137,10 +137,12 @@ the mailbox too.
   includes it, and grows through signed updates. A list shipped with the
   firmware is a snapshot: it is as fresh as the build.
 - **Where it applies.** UEFI boots only `\EFI\BOOT\BOOTAA64.EFI`, from the SD
-  card first and then any USB drive. There is no boot menu, shell, setup screen
-  or variable that changes that. The serial console is the PL011 on GPIO 14 and
-  15; UEFI reads it only for the images it runs (GRUB's prompt is the one
-  interactive surface, and is shipped by whoever builds the OS image).
+  card first and then any USB drive. There is no boot menu, shell or variable
+  that changes that. The screen an OS asks for with `OsIndications` prints the
+  firmware's state on the serial console and has nothing to set. The serial
+  console is the PL011 on GPIO 14 and 15; UEFI reads it only for that screen's
+  key and for the images it runs (GRUB's prompt is the one interactive surface,
+  and is shipped by whoever builds the OS image).
 
 ## Updates
 
@@ -199,11 +201,11 @@ Three things hold the loader's side together:
   write the medium can reset or remove it, and can still only run what an update
   key signed.
 - **A bundle does not go backwards.** The variable store holds the version of the
-  newest bundle that has reached the OS, which is all of the update's state it
-  keeps, and a capsule or a kept bundle below it is refused. The store is sealed by the device key, so an attacker who can
-  only write the boot medium cannot forge a lower version. The store is on the
-  boot medium, though, so one who can write it can put back an older copy of the
-  window, which lowers the version with the rest ([below](#what-is-not-protected)).
+  newest bundle that has reached the OS, and a capsule or a kept bundle below it
+  is refused. Its records are sealed by the device key, so a lower version cannot
+  be forged. The store is on the boot medium, though, so one who can write the
+  disk can put back an older copy of the window, which lowers the version with
+  the rest ([below](#state-that-outlasts-a-boot)).
 
 The loader's own code is not updated this way. What reads the medium before the
 bundle is staged (the file system, the capsule scan) stays as the owner signed
@@ -225,18 +227,20 @@ privileged ARM code ([below](#what-is-not-protected)).
 
 - **No tag returns a fuse**, and the private-key tag answers refusal. The key
   reaches the ARM only if ARM code reads the OTP block itself.
-- **Uses of the key** are signing and HMAC-SHA256 for UEFI and the
-  TPM's hierarchy seeds, each derived on use from the key and a distinct label, then overwritten along with the stack they touched and the
-  cache lines that held them. Read, generate and set-usage are locked from the
+- **Uses of the key** are signing and HMAC-SHA256 for UEFI, the TPM's
+  hierarchy seeds and the keys of its NV records, each derived on use from the
+  key and a distinct label, then overwritten along with the stack they touched
+  and the cache lines that held them. Read, generate and set-usage are locked from the
   start of the VPU's run. **Signing and HMAC are locked at `ExitBootServices`**
   by UEFI, which re-reads the status and halts the board if the lock is not
   confirmed; locks are only ever added, and a lock lives in VPU memory, so only a
   SoC reset (after which UEFI runs again) clears it.
 - **Each use has its own label** in what the key HMACs. The store's seals for
   the firmware's writes and for the OS's cover different labels
-  (`variable store record v4` and `runtime variable record v2`) and the TPM's
-  seeds' message begins `nuboot TPM secret v1`, so an HMAC made for one use is
-  not valid for another.
+  (`variable store record v4` and `runtime variable record v2`), the TPM's
+  seeds' message begins `nuboot TPM secret v1` and its NV records' begins
+  `nuboot NV index record v1`, so an HMAC made for one use is not valid for
+  another.
 - **No secret is logged.** Logs carry PCR numbers, counts and the first four
   bytes of an extended digest.
 
@@ -251,12 +255,14 @@ sequence, and no firmware sets a lock on it. On a Raspberry Pi 4B d03115,
 and EL2 under this firmware and gets the constant from EL0; from EL2 it also reads
 row 30 as the revision code and finds rows 56 and 57 of the device key non-zero.
 A bare-metal program at EL2 under Raspberry Pi's `start4.elf` reads rows 17 and
-30 the same way ([keystore.md](keystore.md#the-device-key-and-the-arm)). ARM code that runs privileged, a
-loader before `ExitBootServices`, a kernel module on a kernel without lockdown,
-or a kernel exploit, reads the key itself. A stolen key is stolen for good: with
-it the TPM's seeds and the store's seals can be computed off the board. The locks at `ExitBootServices` and the mailbox's refusals bind what the
-OS can ask the VPU, not privileged ARM code that reads the block; what binds
-that is Secure Boot and lockdown, which refuse unsigned modules and `/dev/mem`.
+30 the same way ([keystore.md](keystore.md#the-device-key-and-the-arm)). ARM
+code that runs privileged (a loader before `ExitBootServices`, a kernel module
+on a kernel without lockdown, a kernel exploit) reads the key itself. A stolen
+key is stolen for good: with it the TPM's seeds, the NV records' keys and the
+store's seals can be computed off the board. The locks at `ExitBootServices`
+and the mailbox's refusals bind what the OS can ask the VPU, not privileged ARM
+code that reads the block; what binds that is Secure Boot and lockdown, which
+refuse unsigned modules and `/dev/mem`.
 
 Before `ExitBootServices`, any code that runs in UEFI can also ask the VPU for
 signatures and HMACs, and so compute the TPM's seeds. That code is every
@@ -265,29 +271,31 @@ runs before `ExitBootServices` is what the builder signed, and a distribution's
 shim runs only once the builder has signed it as well
 ([uefi.md](uefi.md#booting-a-distribution)). An owner who enrols Microsoft's
 UEFI CAs in `db` widens that to any shim, GRUB or other loader Microsoft has
-signed for anyone and `dbx` does not list: Microsoft signs each distribution's
-shim, a small first-stage loader that then checks GRUB and the kernel against
-the distribution's own keys, which this firmware never sees. Either way a PCR
-binding is no defence against a hostile loader that a `db` key verifies: bind
-what must outlast an OS to a policy that a key authorizes (PCR 11 signed by the
-image's builder) rather than to PCR 7 alone, which every image verified by the
-same `db` certificate reproduces.
+signed for anyone and `dbx` does not list. Either way a PCR binding is no
+defence against a hostile loader that a `db` key verifies: bind what must
+outlast an OS to a policy that a key authorizes (PCR 11 signed by the image's
+builder) rather than to PCR 7 alone, which every image verified by the same
+`db` certificate reproduces.
 
 ## State that outlasts a boot
 
-The variable store is a log in a window of the boot disk, in two banks. Writes of
-`KEK`, `db` and `dbx` are stored as the signed writes themselves and checked
-again at every boot against the keys as they stood when each was made; other
-non-volatile variables are sealed with the device key's HMAC over their
-attributes, name, value and a counter, which the VPU computes. A record whose
-seal fails, or whose counter does not rise, is ignored, as is one that is not
-intact; the store steps over it. The OS can write the disk, and cannot make a
-record: the VPU seals for the OS
-only in the runtime domain, and UEFI accepts such a record only for a variable
-that is absent or has exactly the attributes non-volatile, boot services and
-runtime, and never under the firmware's own class GUID. The VPU seals a write
-only with those attributes, a name of 1 to 256 UCS-2 units with no NUL, and at
-most 16 KiB.
+The variable store is a log in a window of the boot disk, in two banks
+([uefi.md](uefi.md#the-variable-store)). Writes of `KEK`, `db` and `dbx` are
+stored as the signed writes themselves and checked again at every boot against
+the keys as they stood when each was made; other non-volatile variables are
+sealed with the device key's HMAC over their attributes, name, value and a
+counter, which the VPU computes. The TPM's NV indices are stored as records
+the VPU makes, encrypted and authenticated under keys derived from the device
+key ([tpm2.md](tpm2.md#nv-indices)); the VPU takes back only a record it made
+and only one newer than the last it took. A record whose seal fails, or whose
+counter does not rise, is ignored, as is one that is not intact; the store
+steps over it. The OS can write the disk, and cannot make a record: the VPU
+seals for the OS only in the runtime domain, and UEFI accepts such a record
+only for a variable that is absent or has exactly the attributes non-volatile,
+boot services and runtime, and never under the firmware's own class GUID. The
+VPU seals a write only with those attributes, a name of 1 to 256 UCS-2 units
+with no NUL, and at most 16 KiB. The OS's variable services neither write nor
+read the NV records.
 
 The runtime variable services follow the same rule from the OS's side. After
 `ExitBootServices` the OS can create and change **only non-volatile** variables
@@ -299,18 +307,22 @@ services cannot check and so append for the next boot to check.
 
 What an attacker who can write the disk can do, and the firmware cannot
 prevent: **drop records**, which returns a variable to an older value (for
-`dbx`, to revoke less), **put back an older copy of the window**, which returns
-every variable to that time, and **erase both banks**, which returns the keys
-the firmware was built with. Nothing outside the disk counts how many records
-there should be. The keys are measured into PCR 7 and the MOK lists into PCR 14,
-so a TPM policy that includes them notices. The firmware never writes the
-EEPROM, whose sections are covered by the boot ROM's signature on a board with
-signed boot. A store bank is 256 KiB and a signed update is a few KiB.
+`dbx`, to revoke less; for an NV index, to its previous state, a counter
+included), **put back an older copy of the window**, which returns every
+variable and index to that time, and **erase both banks**, which returns the
+keys the firmware was built with and leaves no NV index. Nothing outside the
+disk counts how many records there should be. The keys are measured into PCR 7
+and the MOK lists into PCR 14, so a TPM policy that includes them notices;
+nothing measures the NV indices, so a policy that rests on an NV counter or an
+extend index does not. The firmware never writes the EEPROM (an EEPROM capsule
+has the bootloader write it). It changes the disk's partition table once, to
+list the window as a partition, when the GPT is intact and the window is blank;
+the GPT is measured into PCR 5.
 
 The OS's writes are kept in the runtime services' memory until `ResetSystem`.
-The OS owns the SD card until then, and the VPU takes it back only at that call,
-when it switches the card off and on; whatever the OS left in the card's state
-is gone with the power.
+The OS owns the SD card and the USB controller until then, and the VPU takes
+them back only at that call: it switches the card off and on, or resets the
+PCIe link and the VL805. Whatever the OS left in their state is gone.
 
 ## The OS's way in
 
@@ -320,8 +332,8 @@ What a locked-down OS reaches:
 |---|---|---|
 | TPM commands, over the ACPI command buffer or the mailbox tag | the TPM 2.0 subset in [tpm2.md](tpm2.md) | a parser over checked reads, every size field bounded; a command that would overrun a slot or a buffer gets `TPM_RC_SIZE`; a command is at most 2048 bytes and none runs long |
 | the property mailbox, channel 8 | the tags in [boot.md](boot.md#property-mailbox) | the request is copied once, from a buffer that must lie wholly below the VPU's memory, and parsed from the copy; no tag returns a fuse or the device key |
-| the GPIO expander, over the same tags | the SD card's power switch and signalling voltage select, two of the expander's eight pins | any other pin gets no answer; each request is one bounded I2C transaction; the expander is the board's own, the OS has no other way to it |
-| the mailbox, channel 7 | the runtime services' two store tags | the OS's own mailbox driver does not use it, and the channel-8 path ignores these tags |
+| the GPIO expander, over the same tags | the SD card's power switch and signalling voltage select, two of the expander's pins | any other pin gets no answer; each request is one bounded I2C transaction |
+| the mailbox, channel 7 | the runtime services' store tags: seal a write, prepare the card or the VL805 for the write, report its outcome, export a change to an NV index | the OS's own mailbox driver does not use it, and the channel-8 path ignores all of these but the export; a seal is made only in the runtime domain |
 | `GetVariable`, `GetNextVariableName`, `SetVariable`, `QueryVariableInfo`, `ResetSystem` | the runtime services | the rules above; every other runtime service returns `EFI_UNSUPPORTED` |
 | the TPM's command buffer page | one page the OS shares | the VPU takes the length from one read of the header, copies the command out and runs the copy; the buffer's place and size are the VPU's own |
 
@@ -329,8 +341,10 @@ The ARM is given memory below `0x3EC0_0000` and above 1 GiB. The VPU's own
 memory is not in the device tree, the EFI memory map or the reservations the OS
 sees; hardware does not enforce that (see the first section).
 
-What a command can change in the VPU is small: the PCRs (extend-only, but for 16 and 23, which can be reset), a handful
-of TPM objects and sessions, the lock flags, and the level of the SD card's power and signalling pins. A panic in the VPU
+What a command can change in the VPU is small: the PCRs (extend-only, but for
+16 and 23, which can be reset), a handful of TPM objects and sessions, the NV
+indices, the lock flags, and the level of the SD card's power and signalling
+pins. A panic in the VPU
 stops its service thread (the mailbox, the TPM and the watchdog's beats), so a
 TPM command that panics is a denial of service for everyone with `/dev/tpm0`;
 the parser answers an error for each shape of command that was found to
@@ -387,16 +401,21 @@ bounded.
 ## Building it
 
 - The VPU crate has no dependencies and the UEFI crate one; both lock files are
-  committed and the images are built with `--locked`, and build inputs are fetched with a SHA-256 checked in the same
-  step (the device tree, the stock EEPROM image, the test applications'
-  third-party binaries).
-- The platform key, the `KEK` and the `db` key are made by `scripts/genkeys.sh`
-  and kept out of the repository and out of CI, which gets the certificates only.
-  A build that is given some of the three certificates and not all refuses to
-  run, one that is given a PEM file or the same certificate twice refuses, and a
+  committed and the images are built with `--locked`, and build inputs are
+  fetched with a SHA-256 checked in the same step (the device tree, the stock
+  EEPROM image, the test applications' third-party binaries).
+- The platform key, the `KEK`, the `db` key and the update key are made by
+  `scripts/genkeys.sh` and kept out of the repository. CI builds get the three
+  certificates and the update key's public half from repository secrets. A
+  build that is given some of the three certificates and not all refuses to run,
+  one that is given a PEM file or the same certificate twice refuses, and a
   build that is not a test build refuses a certificate named `test key`. The
   build prints the SHA-256 of each. `genkeys.sh` never replaces a key whose
   certificate is there, and refuses a key with no certificate.
+- The release workflow signs the update capsule in CI, so the `db` private key
+  and the update private key are repository secrets too. They are written to
+  disk only for the signing step and removed when it ends. The `PK` and `KEK`
+  private keys are not in CI.
 - The test build's own certificate in `db` and `KEK` is compiled in only by
   `--test-keys`, which writes different files, and logs a warning at every
   boot.
@@ -406,13 +425,14 @@ bounded.
   `X<<24 | Y<<16 | Z`), else `FIRMWARE_TIME`, else the commit's time, which no
   release is above; a build outside a git checkout must set one, or its version
   is zero.
-- CI holds `contents: read`, pins its third-party actions by commit (pimu is
-  taken from its main branch), and uploads no private key. The VC4 compiler (`rusty-pi/gcc-vc4` and `binutils-vc4`) is
-  installed from the release tags `scripts/toolchain.env` pins, checked against
-  the SHA-256 recorded there; a self-hosted runner's preinstalled copy is used
-  only when its package versions name the pinned commits. The compiler is still
-  the weakest input of the build: a compromised one can put anything in the
-  VPU's code.
+- The build workflow holds `contents: read` and pins its third-party actions by
+  commit (pimu is taken from its main branch). The release workflow holds
+  `contents: write` and takes its actions by tag. The VC4 compiler
+  (`rusty-pi/gcc-vc4` and `binutils-vc4`) is installed from the release tags
+  `scripts/toolchain.env` pins, checked against the SHA-256 recorded there; a
+  self-hosted runner's preinstalled copy is used only when its package versions
+  name the pinned commits. The compiler is the weakest input of the
+  build: a compromised one can put anything in the VPU's code.
 
 ## What it takes to break it
 
@@ -423,12 +443,12 @@ programmed and an OS that keeps lockdown on:
 |---|---|---|
 | replace the firmware | write access to the boot medium **on a board without signed boot in the OTP** | the VPU, the device key's HMAC, everything |
 | replace the firmware with an older signed one | write access to the boot medium; the bootloader has no anti-rollback for `boot.img` | the old firmware's bugs |
-| run firmware of one's choice on every board whose loader carries an update key | the update private key and a `db` key to sign the capsule, or write access to the medium and a bundle the key signed | the VPU, the device key's HMAC, everything |
+| run firmware of one's choice on every board whose loader carries an update key | the update private key (a secret of the release workflow) and a `db` key to sign the capsule, or write access to the medium and a bundle the key signed | the VPU, the device key's HMAC, everything |
 | sign what UEFI runs | the `db` private key, or `KEK`, or `PK` (each can add a `db` entry), or any key already in `db`; for firmware, also the owner's boot key. With the owner's `db`: the key of the certificate in `owner-db.der` or one it issued, or the owner's boot key (which can change the file) | whatever it signs |
 | run a signed loader's bug | a signed shim, GRUB or kernel that is not in `dbx` and has a flaw (a bug in a loader before `ExitBootServices`, or a kernel with lockdown off) | code on the ARM, so the VPU and the key's HMAC |
 | take the VPU from a locked-down OS | a kernel exploit that gives arbitrary physical memory access; then the VPU's code or the mailbox's buffers are writable | the same |
 | take it from a bus master | a flaw in the VL805's firmware (loaded from the EEPROM) or a hostile PCIe device: the inbound window covers all RAM, the VPU's included | the same |
-| roll the store back | a way to write the boot disk: the OS's block driver, or the disk in another machine | an older `dbx`, no MOK list, no update record, a lower bundle floor; detectable in PCR 7 and PCR 14 |
+| roll the store back | a way to write the boot disk: the OS's block driver, or the disk in another machine | an older `dbx`, no MOK list, no update record, a lower bundle floor, an NV counter or extend index set back; the keys and the MOK lists show in PCR 7 and PCR 14, the NV indices do not |
 | unseal what a policy guards | the PCR values the policy names, or a key the policy names, and for a TPM password as many guesses as it takes: no lockout slows them | the secret |
 | learn the device key | privileged ARM code (a loader before `ExitBootServices`, a kernel module on a kernel without lockdown, a kernel exploit), or a probe on the board | the key, for good, and with it every TPM seed and seal of the board |
 | deny service | a USB stick, a hub, a medium, a TPM user with a command that panics (none known), or a magic packet | a reset loop, a stall, a wake |
@@ -439,7 +459,8 @@ Not defended, and not claimed:
   revocations and `dbx` are the mitigation, as on any machine.
 - Anything once code has arbitrary memory access on the ARM.
 - Rollback of the store, or of `boot.img`, by anyone who can write the media.
-  The store is on the boot disk, so the bundle floor in it goes back with it.
+  The store is on the boot disk, so the bundle floor and the TPM's NV indices in
+  it go back with it.
 - The VPU's own code is not measured as a hash when it is the loader the
   bootloader started: `EV_S_CRTM_VERSION` names the commit, and PCR 0 holds the
   hashes of the UEFI image and the device tree it starts. An update's VPU image
@@ -477,12 +498,13 @@ Not defended, and not claimed:
 The parts of this that the repository runs:
 
 - the scenarios in `scenarios/` boot the firmware under Raspberry Pi's
-  bootloader in pimu: Secure Boot's accepts and refusals, capsules (signed,
-  older, changed, by a stranger, relabelled, junk), update bundles (run, and
-  refused when no update key signed them), the variable store's
-  tampering and compaction, the runtime services' rules, the
-  device key's locks, the TPM's commands, the watchdog's spans, and Debian's
-  kernel under lockdown
+  bootloader in pimu: Secure Boot's accepts and refusals, the owner's `db`
+  (absent, invalid, junk, a stranger's, a capsule), capsules (signed, older,
+  changed, by a stranger, relabelled, junk), update bundles (run, and refused
+  when no update key signed them), the variable store's tampering and
+  compaction, the runtime services' rules, the TPM's NV indices across a
+  reset, the device key's locks, the TPM's commands, the watchdog's spans, and
+  Debian's kernel under lockdown
 - `scripts/test-tpm.sh` runs the TPM's code on the host against reference
   vectors, drives it with `tpm2-tools` and `systemd-cryptenroll`, runs commands
   that would overrun a slot or a buffer, and checks the log writes control

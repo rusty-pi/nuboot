@@ -7,13 +7,10 @@ Secure Boot always on. `start4.elf` carries it, as `pi4-uefi.bin`, and the
 board's device tree, and starts the ARM in them:
 
 1. It puts `pi4-uefi.bin` at ARM physical 0, where the cores come out of
-   reset, and the device tree at `0xF0_0000` with `/memory@0` filled in from
-   the board's SDRAM, a `vpu-tpm` node ([os-image.md](os-image.md)) and the
-   reserved page of the TPM's command response buffer ([tpm2.md](tpm2.md#the-command-response-buffer)),
-   and the Ethernet controller's `local-mac-address`: `02:` and five bytes of a hash of
-   the board's serial number, the same at every boot, and the board's `serial-number` and
-   revision code in the root. The ARM gets everything below `0x3EC0_0000`, where the
-   VPU firmware's own memory starts, and all the memory above 1 GiB.
+   reset, and the device tree at `0xF0_0000`, filled in with the board's
+   memory, TPM, Ethernet address and identity ([Device tree](#what-it-provides)).
+   The ARM gets everything below `0x3EC0_0000`, where the VPU firmware's own
+   memory starts, and all the memory above 1 GiB.
 2. `pi4-uefi.bin` (`uefi/stub/`) starts with an armstub: each core sets up
    the local timer, the generic timer, the GIC and EL3's controls, and drops
    to non-secure EL2. The secondary cores wait on the spin table at `0xd8`
@@ -23,16 +20,17 @@ board's device tree, and starts the ARM in them:
    and LZMA, to `0x100_0000` and enters it with `x0` holding the device tree.
 4. The payload sets up an identity map, builds the memory map from the
    device tree, finds the SD card and any USB drive, and boots
-   `\EFI\BOOT\BOOTAA64.EFI` off the first FAT partition that has one.
+   `\EFI\BOOT\BOOTAA64.EFI` off the first FAT partition that has one. With
+   none, the boot watchdog resets the board.
 
 The UEFI firmware logs through `src/log.rs` like the rest of the firmware,
 on the same console and the same system-timer clock, so its records carry on
 from `start4.elf`'s:
 
 ```text
-   0.559890 INFO  uefi     UEFI firmware started  commit=1a2b3c4 tree=0xf00000
+   0.559890 INFO  uefi     UEFI firmware started  commit=1a2b3c4 version=1792000000 tree=0xf00000
    0.567376 INFO  mem      memory map ready  ram_mib=8108 free_mib=8104 regions=10
-   0.574586 INFO  secboot  Secure Boot enforced  db=1 dbx=26
+   0.574586 INFO  secboot  Secure Boot enforced  db=1 dbx=26 owner_db=false
    0.961838 INFO  sd       card ready  mib=258 kind=SDHC/SDXC
    0.961845 INFO  disk     disk found  name=sd mib=258 partitions=1 path=VenHw/SD(0)
    1.661885 INFO  usb      USB ready  devices=1 registers=0x602000000
@@ -46,17 +44,18 @@ from `start4.elf`'s:
 |---|---|
 | Memory | An identity map: RAM below `0xFC00_0000` and from 4 to 8 GiB normal write-back, the 2 MiB at `0x20_0000` non-cacheable for DMA, the rest device. The memory map is `/memory` from the device tree, less `/memreserve/`, `/reserved-memory`, the armstub's page at 0, the tree and the firmware itself |
 | Boot services | Memory, pools, events and timers (polled; there are no interrupts), protocol handlers, `LoadImage`/`StartImage`/`Exit` for PE32+ AArch64 images, `ExitBootServices` |
-| Runtime services | `GetVariable`, `GetNextVariableName`, `SetVariable`, `QueryVariableInfo` and `ResetSystem` after `ExitBootServices`. The firmware image is typed as runtime services code and data, the variables are a 128 KiB table in it, and the mailbox's page and the power manager's are typed as memory-mapped I/O for the OS to map. The OS reads the variables the firmware holds with runtime access and creates or changes others, and the writes outlast a reset ([below](#variables-the-os-writes)). `PK` and the Secure Boot state refuse writes. `ResetSystem` writes the power manager's registers: every kind but a shutdown resets the board, and a shutdown resets it to the bootloader's halt. The `EFI_RT_PROPERTIES_TABLE` lists only these five, so `SetVirtualAddressMap` is not offered and the OS maps the runtime regions where they are. Every other runtime service returns `EFI_UNSUPPORTED` |
+| Runtime services | `GetVariable`, `GetNextVariableName`, `SetVariable`, `QueryVariableInfo` and `ResetSystem` after `ExitBootServices`; every other one returns `EFI_UNSUPPORTED`. The firmware image is typed as runtime services code and data, the variables are a 128 KiB table in it, the DMA arena is runtime data, and the pages of the mailbox, the power manager, the SD host and the VL805's windows are typed as memory-mapped I/O for the OS to map. The OS reads the variables the firmware holds and creates or changes others, and the writes outlast a reset ([below](#variables-the-os-writes)). `PK` and the Secure Boot state refuse writes. The `EFI_RT_PROPERTIES_TABLE` lists only these five, so `SetVirtualAddressMap` is not offered and the OS maps the runtime regions where they are |
+| `ResetSystem` | The power manager's watchdog (`PM_RSTC`/`PM_WDOG`): every kind but a shutdown resets the board, and a shutdown resets it with `PM_RSTS` partition 63 set, where the bootloader halts ([boot.md](boot.md#wake-on-lan)). The same after `ExitBootServices`, which is how Linux resets and powers off |
 | Console | `SimpleTextOutput` and `SimpleTextInput` on the PL011 at `0xFE20_1000`, with VT100 keys |
-| Storage | The SD card on EMMC2 (`0xFE34_0000`), and USB drives (bulk-only mass storage, and UAS on a SuperSpeed root port, [below](#usb-attached-scsi)) on the VL805's root ports or behind a hub. `BlockIo`, `DiskIo`, MBR and GPT partitions, and a read-only FAT12/16/32 `SimpleFileSystem` |
+| Storage | The SD card on EMMC2 (`0xFE34_0000`), and USB drives (bulk-only mass storage, and UAS on a SuperSpeed port, [below](#usb-attached-scsi)) on the VL805's root ports or behind a hub. `BlockIo`, `DiskIo`, MBR and GPT partitions, and a read-only FAT12/16/32 `SimpleFileSystem` |
 | USB | The VL805's xHCI behind the PCIe root complex, which `start4.elf` has brought up and given its firmware |
+| `EFI_TCG2_PROTOCOL` | The TPM on the VPU ([tpm2.md](tpm2.md)) |
 | `EFI_RNG_PROTOCOL` | RNG200's FIFO, raw |
-| `ResetSystem` | The power manager's watchdog (`PM_RSTC`/`PM_WDOG`), halt through `PM_RSTS`: partition 63, which the EEPROM bootloader halts at (and powers off at when its `POWER_OFF_ON_HALT` is set). The same after `ExitBootServices`, which is how Linux resets and powers off in both modes |
 | `SetWatchdogTimer`, `ExitBootServices` | UEFI beats the board's watchdog from the hypervisor timer's interrupt and hands it back to `start4.elf` at `ExitBootServices` ([boot.md](boot.md#boot-watchdog)) |
 | Firmware setup | `OsIndicationsSupported` offers `EFI_OS_INDICATIONS_BOOT_TO_FW_UI`, so `bootctl` shows Boot into FW as supported and `systemctl reboot --firmware-setup` works. At the next boot the firmware clears the bit and prints a screen on the serial console: the firmware's commit and version, the board, the memory, Secure Boot and whose `db` it holds, the medium the firmware was loaded from, and the boot option. There is nothing to set. A key, or 30 s without one, goes on with the boot |
 | Firmware revision | The system table's `FirmwareRevision` is the release's major number in its upper half and its minor number in its lower one (`0.3.1` is `0.03`, which `bootctl` shows as `nuboot 0.03`), and 0 for a build that is no release |
 | ESRT | Three resources in the `EFI_SYSTEM_RESOURCE_TABLE`: the firmware as an update bundle, the firmware as an image the owner signs, and the EEPROM bootloader, the first two with the commit's time as their version. `OsIndicationsSupported` offers file capsule delivery, and `OsIndications` takes the OS's write |
-| Device tree | Passed on to the OS as the `EFI_DTB_TABLE` configuration table. Besides the stock tree's content it has the memory, the network address, the TPM, and the board's identity: `serial-number` and `rusty-pi,board-revision` in the root. The wireless chip's SD host (`/soc/mmcnr`) and Bluetooth are disabled, and on BCM2711 C0 the SD host's bus (`/emmc2bus`) has its DMA window of the low 4 GiB, as the stock firmware gives it |
+| Device tree | Passed on to the OS as the `EFI_DTB_TABLE` configuration table. On top of the stock tree: `/memory@0` from the board's SDRAM; a `vpu-tpm` node ([os-image.md](os-image.md)) and the reserved pages of the TPM's command response buffer ([tpm2.md](tpm2.md#the-command-response-buffer)) and of the watchdog's registers; the Ethernet controller's `local-mac-address`, the address in the OTP's MAC rows, or on a board whose rows are blank a locally administered one from a hash of the serial number, the same at every boot; and the board's identity, `serial-number` and `rusty-pi,board-revision`, in the root. The wireless chip's SD host (`/soc/mmcnr`) and Bluetooth are disabled, and on BCM2711 C0 the SD host's bus (`/emmc2bus`) has its DMA window of the low 4 GiB, as the stock firmware gives it |
 | SMBIOS | Version 3.1.1, as the `EFI_SMBIOS3_TABLE` configuration table, whichever way the OS describes the board: the firmware (its vendor, the commit and its date), the system (maker, the board's name from its revision code, the revision code, the serial number and a UUID made from it), the board and its enclosure, the processor and the memory. `/sys/class/dmi/id`, `dmidecode`, `hostnamectl` and fwupd's hardware IDs read them, and an OS on the ACPI tables has no device tree to get the model and serial number from |
 | ACPI | The tables of the [next section](#acpi), as the `EFI_ACPI_20_TABLE_GUID` configuration table |
 | Variables | Held in RAM, with the non-volatile ones also in the variable store on the boot disk ([below](#the-variable-store)) |
@@ -94,7 +93,7 @@ The DSDT has a device for each of:
 | the TPM | `MSFT0101` | `tpm_crb`; its start method writes the doorbell to the mailbox |
 | the random number generator | `PRP0001`, with the `compatible` of the device tree's node | `iproc-rng200` |
 | the temperature sensor | a thermal zone, `_TMP` reading the sensor's register and `_CRT` giving 85 °C, the SoC's rating, since nothing here slows the cores down before then | the kernel's ACPI thermal driver (`acpitz`); the VPU starts the sensor's clock, which the zone and the device tree's thermal driver both need |
-| the SD host | `BRCME88C` | `sdhci-iproc`, with the card at 3.3 V and no DMA, as this firmware's own driver runs it: a sequential read of 64 MiB takes about 3.4 s (19 MB/s) on a Raspberry Pi 4B d03115, where stock Raspberry Pi OS reads the same card at 44 MB/s |
+| the SD host | `BRCME88C` | `sdhci-iproc`, with the card at 3.3 V and no DMA: a sequential read of 64 MiB takes about 3.4 s (19 MB/s) on a Raspberry Pi 4B d03115, where stock Raspberry Pi OS reads the same card at 44 MB/s |
 | the network interface | `BCM6E4E` | `genet`, with the address the device tree gives it |
 | the USB controller | `PNP0D10`, in a container device (`ACPI0004`) that says what it reaches | the kernel's generic xHCI driver (`xhci-plat-hcd`) |
 
@@ -172,8 +171,7 @@ loaders that follow: the Secure Boot configuration, each image's hash and the
 certificate that verified it, the tables handed to the OS, and the boot
 disk's GPT go to the PCRs of the TPM on the VPU ([tpm2.md](tpm2.md)).
 
-Signatures are checked with SHA-256 and RSA keys up to 4096 bits, as the UEFI
-CAs and the distributions' signers use.
+Signatures are checked with SHA-256 and RSA keys up to 4096 bits.
 
 ### Booting a distribution
 
@@ -232,7 +230,7 @@ starts, and the UEFI firmware asks for it over the property mailbox (tag
 `0x000300a8`: a status word, a length and the bytes). Then:
 
 - `db` is an `EFI_SIGNATURE_LIST` of that certificate alone. The built-in `db`
-  key, the test key of a test build and every `db` write stored in the flash
+  key, the test key of a test build and every `db` write in the variable store
   are left out, and `db` takes no writes (`EFI_WRITE_PROTECTED`). `KEK`, `dbx`
   and `PK` are unchanged, so `dbx` can still grow.
 - `start4.elf` extends PCR 7 with an `EV_EFI_ACTION` event, `owner-db
@@ -298,33 +296,35 @@ variable store.
 
 Non-volatile variables are kept in a window of 512 KiB on the boot disk, from
 byte offset 512 KiB, and come back at the next boot. The window is two banks of
-256 KiB, each a log of records. The firmware never writes the EEPROM: updating
-it leaves the store as it is.
+256 KiB, each a log of records. The firmware only reads the EEPROM, so an EEPROM
+update leaves the store as it is.
 
 **Where.** On the disk the firmware came from, the one that holds `start4.elf`
 or the `boot.img` the bootloader started it out of. The bootloader says which
 medium: the SD card, or a drive on the VL805. A `boot.img` in RAM says only
 that, so the disk is the one that holds a `boot.img` of its length. A board
-that came off the network, or whose boot disk cannot hold the store, keeps its
-variables in memory. Only a GPT disk holds the store; an MBR disk has none. The
-window is in the gap that partitioning tools leave in front of the first
-partition. The firmware lists the window in the disk's partition
-table as a partition of its own, so that a tool which discards the gap
-(`systemd-repart` does) leaves it alone, and an OS sees a partition of a type it
-has no use for (type `0ca9cdc0-6c28-49a6-a041-eeec6123df3a`). The listing is
-made once, when all of these hold, and changes nothing else on the disk:
+that came off the network, or from a drive on the USB-C socket, or whose boot
+disk cannot hold the store, keeps its variables in memory.
+
+Only a GPT disk holds the store. The window is in the gap that partitioning
+tools leave in front of the first partition. The firmware lists it in the
+disk's partition table as a partition of its own (type
+`0ca9cdc0-6c28-49a6-a041-eeec6123df3a`), so that a tool which discards the gap
+(`systemd-repart` does) leaves it alone and an OS sees a partition of a type it
+has no use for. The listing is made once, when all of these hold, and changes
+nothing else on the disk:
 
 - The GPT is intact: its two headers and entry arrays pass their checksums
   and agree.
-- No partition starts before the end of the window or reaches into it, and the
-  table has a free entry.
+- No partition overlaps the window, the partition entry array ends before it,
+  and the table has a free entry.
 - The window is blank: all zeros, or all ones.
 
 The first block partitions may use is moved down to the window if it was above
-it, in both headers. A disk that does not hold these is left alone
-and logged with the reason (`this disk cannot hold the store`); with no disk
-that holds the store, variables stay in RAM and a signed update of `KEK`, `db`
-or `dbx` cannot be kept. The store partition is not published to the EFI
+it, in both headers. A disk that does not hold these is left alone and logged
+with the reason (`this disk cannot hold the store`). With no disk that holds
+the store, variables stay in RAM and a signed update of `KEK`, `db` or `dbx`
+lasts until reset. The store partition is not published to the EFI
 applications.
 
 **Records.**
@@ -426,14 +426,14 @@ does not answer.
   reset. A board with no store the runtime services reach (it came off the
   network, or from a drive on the USB-C socket, which this firmware does not
   drive) takes a write of a non-volatile variable and keeps it until reset,
-  and a signed update of `KEK`, `db` or `dbx` returns `EFI_DEVICE_ERROR`. A
-  non-volatile variable has the attributes non-volatile, boot services and
-  runtime access, and at most 16 KiB, or the write is refused.
+  and a signed update of `KEK`, `db` or `dbx` returns `EFI_DEVICE_ERROR`. The
+  OS can write only variables with the attributes non-volatile, boot services
+  and runtime access, and at most 16 KiB of value; any other write is refused.
 
 ### The test build
 
 `scripts/build.sh --test-keys` (the `test-keys` cargo feature) builds
-`out/start4-test.elf`, whose UEFI firmware also has a test key in `db`: a
+`out/start4-test.elf`, whose UEFI firmware also has a test key in `db` and `KEK`: a
 self-signed certificate `scripts/build-uefi.sh` generates in
 `out/test-keys/` on first use, which is never committed.
 `scripts/build-uefi.sh --test-apps` signs the scenarios' EFI applications
@@ -450,10 +450,11 @@ A drive set up for UAS that then fails its first command is not attached: there 
 
 ## Firmware capsules
 
-The firmware and the EEPROM bootloader are the two resources in the ESRT, and fwupd's `uefi-capsule`
-plugin updates it by putting a capsule in `\EFI\UpdateCapsule` on the EFI
-system partition. At every boot, before the boot option runs, each `.cap` file
-there is checked:
+fwupd's `uefi-capsule` plugin updates the ESRT's resources by putting a capsule
+in `\EFI\UpdateCapsule` on the EFI system partition. At every boot, before the
+boot option runs, each `.cap` file there, on any file system, is checked; a boot
+reads at most 8 of them, within 30 s. For the firmware and the EEPROM
+bootloader:
 
 1. The header's GUID is the ESRT class of the firmware or of the EEPROM
    bootloader, and the sizes fit the file.
@@ -477,7 +478,7 @@ version in the root of the file system it boots from and leaves it in RAM for th
 
 A capsule that fails sets the ESRT's last attempt version and status
 (`4` invalid format, `5` authentication error, `3` incorrect version, `2`
-image too large) and is logged with the reason. `scripts/mkcapsule.py` builds
+image empty or too large) and is logged with the reason. `scripts/mkcapsule.py` builds
 one.
 
 A capsule that passes is staged as a tryboot, when the board has a device key
@@ -532,21 +533,13 @@ scripts/build-uefi.sh --test-apps   # also the EFI applications the scenarios ru
 `cargo build` in the repository runs `scripts/build-uefi.sh` itself.
 `uefi/rust-toolchain.toml` pins the nightly the firmware builds with. The
 build also needs `xz` and `openssl`, and `--test-apps` needs `sbsign`
-(sbsigntool).
-
-## Size
-
-`pi4-uefi.bin` goes into the EEPROM inside `start4.elf`
-([boot.md](boot.md)).
-
-| build | payload | `pi4-uefi.bin` |
-|---|---|---|
-| default | 218 KB | 103 KB |
+(sbsigntool). `pi4-uefi.bin` goes into `start4.elf` ([boot.md](boot.md)); it is
+about 120 KiB, and the payload it unpacks about 265 KiB.
 
 ## Running it in pimu
 
-After `scripts/build-uefi.sh --test-apps`, `scripts/build.sh` and
-`scripts/build.sh --test-keys`:
+[README.md](../README.md#running-it-in-pimu) has the build steps. The scenarios
+for the loader and Secure Boot:
 
 ```bash
 pimu boot --scenario scenarios/uefi-hello.yaml           # a signed EFI application off the SD card
@@ -554,33 +547,28 @@ pimu boot --scenario scenarios/usb-hello.yaml            # the same off a USB dr
 pimu boot --scenario scenarios/shim-grub.yaml            # Ubuntu's shim, signed with the test key, checks and starts GRUB, which reads grub.cfg
 pimu boot --scenario scenarios/shim-refused.yaml         # Ubuntu's shim as it ships, signed by Microsoft alone, is refused
 pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed by a key in db is refused
-pimu boot --scenario scenarios/owner-db.yaml     # a boot.img with owner-db.der: a leaf of the owner's CA boots
-pimu boot --scenario scenarios/owner-db-stranger.yaml  # ... another key is refused
-pimu boot --scenario scenarios/owner-db-builder.yaml   # ... so is the builder's test key
-pimu boot --scenario scenarios/owner-db-junk.yaml      # ... a file that is no certificate leaves db empty
-pimu boot --scenario scenarios/owner-db-invalid.yaml   # ... and so does one that is too long
-pimu boot --scenario scenarios/owner-db-absent.yaml    # without it the built-in db stays
-pimu boot --scenario scenarios/owner-db-capsule.yaml   # capsules in the owner's mode
-pimu boot --scenario scenarios/owner-db-update.yaml    # an update capsule the builder signed still applies
+pimu boot --scenario scenarios/owner-db.yaml             # a boot.img with owner-db.der: a leaf of the owner's CA boots
 ```
+
+The other `owner-db-*.yaml` scenarios cover a stranger's key, the builder's
+test key, a file that is no certificate or is too long, a `boot.img` without
+the file, capsules in the owner's mode, and an update capsule the builder
+signs.
 
 ## Known limitations
 
 - `pi4-uefi.bin` is linked at 0 and the payload at `0x100_0000`; neither is
   relocatable.
-- The device tree is Raspberry Pi's for the Pi 4B whatever the board, with
-  the memory, the TPM's node and its reserved page, the watchdog's reserved page, the board's serial number
-  and revision code and the Ethernet address filled in; the address is the one
-  in the OTP's MAC rows, as Raspberry Pi's firmware gives it, and a board whose
-  rows are blank gets a locally administered one from its serial number.
-- The ACPI tables describe a Raspberry Pi 4B's devices whatever the board, and
-  the SMBIOS tables a Pi 4's processor and memory, with the board named by its
-  revision code.
+- The device tree and the ACPI tables describe a Raspberry Pi 4B's devices
+  whatever the board, and the SMBIOS tables a Pi 4's processor and memory, with
+  the board named by its revision code.
 - Nothing reads `BootOrder`: the boot is always the removable-media path.
 - `dbx` holds image hashes only; a certificate in it is ignored.
-- Storage is read-only to EFI applications; the firmware writes only the files an update needs.
-- The OS's writes reach the variable store when it calls `ResetSystem`, and only when the store is on the SD card or on a drive on the VL805 ([below](#variables-the-os-writes)).
-- A write the OS makes to a variable after 64 KiB of records since boot, or with no room left in the bank, fails.
-- No NVMe, no network boot, no USB keyboards.
-- The xHCI driver gives each empty root port 400 ms to show a connection,
-  since a SuperSpeed port reads empty until its link has trained.
+- Storage is read-only to EFI applications. The firmware itself writes only the
+  store's window, its entry in the partition table, and the files an update
+  needs.
+- The OS's writes reach the variable store when it calls `ResetSystem`, and only
+  when the store is on the SD card or on a drive on the VL805 ([above](#variables-the-os-writes)).
+  A write after 64 KiB of records since boot, or with no room left in the bank,
+  fails.
+- No NVMe, no network protocols, no USB keyboards.

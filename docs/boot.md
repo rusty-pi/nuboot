@@ -218,7 +218,7 @@ tags and no other. None returns a fuse.
 | `0x00030041`, `0x00038041`, `0x00030043`, `0x00038043` | 8 | The GPIO expander's two SD pins, the card's power switch and signalling voltage select. The other pins belong to the radios, the power LED, the reset and the camera, and are not answered |
 | `0x000300a3` | 8 | A TPM 2.0 command and its response |
 | `0x000300a1`, `0x000300a4` | 8 | Extend a PCR; read an event the VPU measured before the ARM started |
-| `0x0003008e` to `0x00030095`, `0x0003009c`, `0x0003809c` | 8 | The device key's signatures, HMACs and public key ([keystore.md](keystore.md#the-firmware-cryptography-service)) |
+| `0x0003008e` to `0x00030095`, `0x00038090`, `0x0003809c`, `0x0003009c` | 8 | The device key's signatures, HMACs and public key ([keystore.md](keystore.md#the-firmware-cryptography-service)) |
 | none | 6 | The TPM's doorbell: the ACPI start method of the command response buffer, which makes the VPU run the command in the page at `0x3EBFF000` ([tpm2.md](tpm2.md#the-command-response-buffer)) |
 | `0x000300a9` | 7 | Seal a variable's write; the runtime services keep it until `ResetSystem` |
 | `0x000300aa`, `0x000300ac` | 7 | Power the SD card off and on, or reset the PCIe link and the VL805, so the runtime services can write the store at `ResetSystem` |
