@@ -4,56 +4,45 @@
 
 _`bootctl` on a Pi 4 running Debian, started by nuboot: UEFI, Secure Boot and the TPM, with no config file._
 
-nuboot is Raspberry Pi 4 firmware for headless servers, written in Rust: its own VPU
-firmware (`start4.elf`) in place of Raspberry Pi's, started by Raspberry Pi's
-EEPROM bootloader as it ships, built around a small
-preemptive thread scheduler and with its own idea of what the firmware is
-for:
+nuboot is firmware for headless Raspberry Pi 4 servers, written in Rust. It
+replaces Raspberry Pi's `start4.elf` and is started by the stock EEPROM
+bootloader. It has a small preemptive thread scheduler and a UEFI firmware of
+its own.
 
-- **Zero config.** No `config.txt`: the firmware takes what it needs from the
-  board and the boot medium.
-- **Headless only.** No display, camera or audio. A server needs a serial
-  console, storage, the network and a watchdog.
-- **A readable log.** Every line says when, how important, which subsystem and
-  what, with the values as named fields.
-- **UEFI with Secure Boot** as the way an operating system is started: a
-  small UEFI of its own in `uefi/` that runs only images signed by a key in
-  `db`, which holds the builder's key alone: Microsoft's UEFI CAs, which sign
-  shim for anyone, are not trusted unless the owner enrols them
-  ([docs/uefi.md](docs/uefi.md#booting-a-distribution)). The platform key is built in,
-  and `KEK`, `db` and `dbx` change through updates that a `PK` or `KEK` key signs.
-  An owner whose signed `boot.img` holds `owner-db.der` has that certificate as
-  the only `db` entry instead ([docs/uefi.md](docs/uefi.md#the-owners-db)).
-- **One file**: `start4.elf` carries the UEFI firmware and the board's device
-  tree, so a board with secure boot programmed takes this firmware in a signed
-  `boot.img` under Raspberry Pi's own bootloader ([docs/boot.md](docs/boot.md)).
-
-- **Updates through fwupd.** The firmware and the EEPROM bootloader are ESRT
-  resources. A board's owner signs `start4.elf` once, and a bundle that an
-  update key signs then replaces the whole firmware, VPU and UEFI, with no
-  signature by the owner; a capsule the owner signs is applied as a tryboot and
-  committed once it has reached the OS ([docs/updates.md](docs/updates.md)).
-
-- **The ARM at its board's full rate.** The VPU measures the die's core voltage
-  and sets the rail for 1800 MHz on a Pi 400 and a 4B from rev 1.4, 1500 MHz on
-  the others, and slows the ARM while the SoC is hot or the supply is in trouble
+- No `config.txt`. The firmware takes its defaults from the board and the boot
+  medium.
+- No display, camera or audio. A server needs storage, the network and a
+  watchdog. The log goes to the serial console, which is optional.
+- Every log line has a time, a level, a subsystem and a message, with the values
+  as named fields ([docs/logging.md](docs/logging.md)).
+- UEFI with Secure Boot starts the OS. It runs only images signed by a key in
+  `db`, which holds the builder's key alone: Microsoft's UEFI CAs are not
+  trusted unless the owner enrols them
+  ([docs/uefi.md](docs/uefi.md#booting-a-distribution)). An owner can replace
+  `db` with a certificate of their own in a signed `boot.img`
+  ([docs/uefi.md](docs/uefi.md#the-owners-db)).
+- A TPM 2.0 runs on the VPU, behind `EFI_TCG2_PROTOCOL` and, for the OS, ACPI
+  or the device tree ([docs/tpm2.md](docs/tpm2.md)).
+- `start4.elf` carries the UEFI firmware and the device tree, so a board with
+  secure boot programmed takes it in a signed `boot.img`
+  ([docs/boot.md](docs/boot.md)).
+- fwupd updates the firmware and the EEPROM bootloader as ESRT resources
+  ([docs/updates.md](docs/updates.md)).
+- The ARM runs at 1800 MHz on a Pi 400 and a 4B from rev 1.4, 1500 MHz on the
+  others, and slows down while the SoC is hot or the supply is in trouble
   ([docs/boot.md](docs/boot.md#arm-clock-and-core-voltage)).
+- After the OS powers the board off, a magic packet for the board's address
+  boots it ([docs/boot.md](docs/boot.md#wake-on-lan)).
+- The security design, what it defends and what breaks it, is in
+  [docs/security.md](docs/security.md).
 
-- **Wake-on-LAN.** The VPU firmware stays up after the OS powers the board
-  off, and a magic packet for the board's address boots it
-  ([docs/boot.md](docs/boot.md#wake-on-lan)).
-
-- **A stated security design**: what it defends, by what, and what it takes to
-  break it ([docs/security.md](docs/security.md)).
-
-Out of scope: HATs and IPv6. The operating system gets a device tree, and ACPI
-tables when it asks for them or has no device tree ([docs/uefi.md](docs/uefi.md#acpi)).
+HATs and IPv6 are out of scope. The OS gets a device tree, and ACPI tables when
+it asks for them or has no device tree ([docs/uefi.md](docs/uefi.md#acpi)).
 
 > [!NOTE]
-> This is an early firmware. On a Raspberry Pi 4B rev 1.5 (`d03115`) it starts
-> the ARM in UEFI, which boots Debian's arm64 kernel off the SD card and runs an
-> EFI application off a USB drive; the other boards are tested only in pimu
-> ([Tested](#tested)).
+> Early firmware. On a Raspberry Pi 4B rev 1.5 (`d03115`) it boots Debian, Ubuntu
+> and Raspberry Pi OS from SD and USB. Other boards
+> run only in pimu ([Tested](#tested)).
 
 ## What it does
 
@@ -61,30 +50,28 @@ From the boot ROM to the threads that run for as long as the board is up:
 
 1. Raspberry Pi's EEPROM bootloader brings up the SDRAM and starts
    `start4.elf` off the boot medium ([docs/boot.md](docs/boot.md)).
-2. `start4.elf` programs the PL011 on GPIO 14/15 for 115200 8N1 itself, so the log is on
-   the serial console with no setting anywhere.
-3. Logs the firmware's commit, the board's model and revision code, the boot
+2. `start4.elf` sets up the PL011 on GPIO 14/15 for 115200 8N1, so the log is
+   on the serial console with no setting anywhere.
+3. It logs the firmware's commit, the board's model and revision code, the boot
    medium, the RAM size and the bootloader's version, and starts the SoC's
    temperature sensor, which the OS reads as a thermal zone.
-4. Beats the boot watchdog the bootloader armed, or arms one, hands it to the ARM when it
-   starts, and takes it back at `ExitBootServices` until the operating
-   system's driver has it, so a hang anywhere in the boot, or an ARM that
-   stops, resets the board ([docs/boot.md](docs/boot.md#boot-watchdog)).
-5. Starts the ARM in the UEFI firmware it carries, with the board's device
-   tree ([docs/uefi.md](docs/uefi.md)), once it has brought up the PCIe link
-   and given the VL805 USB controller its firmware. UEFI finds the SD card and
-   any USB drive and boots `\EFI\BOOT\BOOTAA64.EFI` from them.
-   UEFI measures what it verifies into a TPM 2.0 on the VPU and offers
-   `EFI_TCG2_PROTOCOL` over it ([docs/tpm2.md](docs/tpm2.md)); the TPM's keys
-   come from the device private key ([docs/keystore.md](docs/keystore.md)).
-   The OS finds that TPM through the ACPI tables UEFI builds, with its own
-   driver, or through the device tree and a module
+4. It keeps the boot watchdog fed, hands it to the ARM when the ARM starts, and
+   takes it back at `ExitBootServices` until the OS's driver has it. A hang
+   anywhere in the boot, or an ARM that stops, resets the board
+   ([docs/boot.md](docs/boot.md#boot-watchdog)).
+5. It brings up the PCIe link, gives the VL805 USB controller its firmware and
+   starts the ARM in the UEFI firmware it carries, with the board's device tree
+   ([docs/uefi.md](docs/uefi.md)). UEFI finds the SD card and any USB drive and
+   boots `\EFI\BOOT\BOOTAA64.EFI` from them. It measures what it verifies into
+   a TPM 2.0 on the VPU and offers `EFI_TCG2_PROTOCOL` over it
+   ([docs/tpm2.md](docs/tpm2.md)); the TPM's keys come from the device private
+   key ([docs/keystore.md](docs/keystore.md)). The OS finds the TPM through the
+   ACPI tables UEFI builds, or through the device tree and a module
    ([docs/os-image.md](docs/os-image.md)). UEFI describes the board in SMBIOS
    tables too.
-6. Starts the scheduler: a service thread that answers the property mailbox
-   (Linux's `NOTIFY_XHCI_RESET`, which has the VL805's firmware reloaded, and
-   the TPM's commands), and a monitor thread that reports each
-   stack's high-water mark as it grows.
+6. It starts the scheduler: a service thread that answers the property mailbox
+   (`NOTIFY_XHCI_RESET`, which reloads the VL805's firmware, and the TPM's
+   commands) and a monitor thread that reports each stack's high-water mark.
 
 ```text
    0.267088 INFO  boot     nuboot 1a2b3c4  board="Raspberry Pi 4 Model B" revision=d03115 pcb=1.5
@@ -99,51 +86,42 @@ From the boot ROM to the threads that run for as long as the board is up:
 
 ## Tested
 
-✅ tested (in [pimu](https://github.com/rusty-pi/pimu), or on a board) · ❌ tried and does not work yet · ➖ not tried
+✅ tested (in [pimu](https://github.com/rusty-pi/pimu), or on a board) · ❌ does not work yet · ➖ not tried
 
-| | pimu | Pi 4B | Pi 400 | CM4 |
-|---|---|---|---|---|
-| `start4.elf` started by the stock EEPROM bootloader from SD | ✅ | ➖ | ➖ | ➖ |
-| `start4.elf` started by the stock EEPROM bootloader from the network (TFTP) | ➖ | ✅ | ➖ | ➖ |
-| `start4.elf` started from a USB drive | ✅ | ➖ | ➖ | ➖ |
-| Signed boot: `start4.elf` out of a `boot.img` the EEPROM's key signed, one signed by another key refused | ✅ | ➖ | ➖ | ➖ |
-| The owner's `db`: an `owner-db.der` in a signed `boot.img` is the only `db` entry, a leaf of its CA boots, a stranger's key and the builder's are refused | ✅ | ➖ | ➖ | ➖ |
-| Console log, board identity, threads | ✅ | ✅ | ➖ | ➖ |
-| Boot watchdog: a hang in UEFI resets the board, `ExitBootServices` hands it to the OS | ✅ | ➖ | ➖ | ➖ |
-| Pi 4B rev 1.4 (`d03114`) and rev 1.2 (`c03112`) | ✅ | ➖ | ➖ | ➖ |
-| ARM started in UEFI: SD card, a signed EFI application | ✅ | ✅ | ➖ | ➖ |
-| Secure Boot: Ubuntu's shim, signed with a key in `db`, and its GRUB run; the shim as Ubuntu ships it, signed by Microsoft alone, and an image not signed by a key in `db` are refused | ✅ | ➖ | ➖ | ➖ |
-| USB: VL805 firmware from the EEPROM, an EFI application off a USB drive | ✅ | ✅ | ➖ | ➖ |
-| Property mailbox: `NOTIFY_XHCI_RESET` reloads the VL805's firmware | ✅ | ✅ | ➖ | ➖ |
-| TPM 2.0 on the VPU (PCRs, properties, random numbers) behind `EFI_TCG2_PROTOCOL`, shim measuring into it, firmware, board, EEPROM bootloader and configuration and VL805 firmware measured into PCRs 0 and 1, separators in PCRs 0-7 | ✅ | ➖ | ➖ | ➖ |
-| systemd-boot and systemd-stub (a unified kernel image) measuring into the TPM | ✅ | ➖ | ➖ | ➖ |
-| Firmware update capsules: one signed by a key in `db` with a newer version is verified; an older one, a changed one, one signed by another key and a file that is not a capsule are refused | ✅ | ✅ | ➖ | ➖ |
-| Firmware update, the firmware's side: a capsule staged as `tryboot.img` with the bootloader's tryboot request, the updated firmware proven once it reaches the OS and committed as `boot.img`, or dropped when it does not | ✅ | ✅ | ➖ | ➖ |
-| EEPROM update, the firmware's side: a capsule staged, dropped when the bootloader did not update the EEPROM, reported as done when the EEPROM carries the update's time | ✅ | ➖ | ➖ | ➖ |
-| The firmware cryptography service: the fused key signs and HMACs for UEFI, gives its public key, never itself, and is locked from the OS | ✅ | ✅ | ➖ | ➖ |
-| Linux 6.12 (Debian's arm64 kernel in a signed unified kernel image, started by systemd-boot): its loader variables are there, Secure Boot reads as on and the kernel locks down, `efivarfs` and the ESRT read, `tools/tpm-vpu` (signed with a key in `db`) gives `/dev/tpm0` with the PCRs and the event log | ✅ | ✅ | ➖ | ➖ |
-| Linux 6.12 as above: `bootctl status` (systemd 257) reads Secure Boot as enabled and the unified kernel image as measured | ✅ | ✅ | ➖ | ➖ |
-| Linux 6.12 as above: a variable is written and is there after the OS resets the board, and its power off halts the board in the bootloader, both through the firmware's `ResetSystem` with no watchdog module loaded | ✅ | ✅ | ➖ | ➖ |
-| Linux 6.12 as above: the SMBIOS tables name the board (`/sys/class/dmi/id`: maker, model, serial number, firmware, enclosure and a UUID), with the device tree and with the ACPI tables | ✅ | ✅ | ➖ | ➖ |
-| Linux 6.12 as above: the temperature sensor reads as a thermal zone (`cpu-thermal` from the device tree, `acpitz` from the ACPI tables, with a critical trip), the hardware random number generator gives bytes and the cores' performance monitors register | ✅ | ✅ | ➖ | ➖ |
-| Debian forky's 7.2.9 arm64 kernel started with `acpi=on` (a cloud image's root on a USB drive): `tpm2_pcrread` reads the 24 PCRs and `tpm2_eventlog` the event log, which replays to every PCR but 9 (the initrd, which the kernel's EFI stub extends without logging) and 10 (IMA) | ➖ | ✅ | ➖ | ➖ |
-| Linux 6.12 as above, started with `acpi=on`: the generic `wdat_wdt` driver takes the watchdog the WDAT table describes (four words of a page the VPU serves), the VPU holds the timeout the driver sets, and a driver that stops pinging it gets the board reset at that timeout | ✅ | ✅ | ➖ | ➖ |
-| Linux 6.12 as above, started with `acpi=on` and no module: the kernel's own `tpm_crb` takes the TPM (the PCRs, the event log), the four cores start, the SD card, the network interface and the USB controller with a stick on it are there, the variable survives the reset, and the power off halts the board | ✅ | ✅ | ➖ | ➖ |
-| Linux 6.12 as above, given a device tree with nothing in it (a `.dtb` section in the unified kernel image) and no `acpi=on`: the kernel takes the ACPI tables by itself, and the TPM, the SD card, the network interface, the USB stick, the thermal zone, the SMBIOS tables and the power off are there | ✅ | ✅ | ➖ | ➖ |
-| Raspberry Pi OS (its own kernel 6.12.93+rpt, in a unified kernel image signed with a key in `db`, using the device tree): root on the SD card at the stock firmware's 44 MB/s, the network interface, the four cores and the USB controller; with stock's `console=serial0,115200 console=tty1`, `poweroff` ends in the stand-by and a magic packet boots it again | ➖ | ✅ | ➖ | ➖ |
-| The ARM at 1800 MHz on a 4B rev 1.5: the core rail characterised for the die and set for the rate, the ARM slowed to 600 MHz while the SoC is hot, and while a PMIC reports trouble with the power (forced; the PMICs have not reported a real fault) | ✅ | ✅ | ➖ | ➖ |
-| The ARM at 1800 MHz on a 4B rev 1.4 and at 1500 MHz on a 4B rev 1.2, whose core rail is on the system PMIC | ✅ | ➖ | ➖ | ➖ |
-| The network interface gets the address in the OTP's MAC rows, the one Raspberry Pi's firmware gives it; blank rows give a locally administered address from the serial number | ✅ | ✅ | ➖ | ➖ |
-| The GPIO expander's two SD pins over the property mailbox, every other pin refused | ✅ | ✅ | ➖ | ➖ |
-| The variable store in a window on the boot disk, listed in the partition table of a GPT disk (checked with `sfdisk`) | ✅ | ➖ | ➖ | ➖ |
-| Variables the OS writes through the runtime services, a signed `db` update among them, appended to the store on the boot medium, the SD card or a drive on the VL805, at `ResetSystem` and kept across the reset | ✅ | ➖ | ➖ | ➖ |
-| The variable store has room for the OS's writes after a boot: a bank the OS filled with the variables it replaced is started afresh with what the variables still need, and the OS writes again | ✅ | ➖ | ➖ | ➖ |
-| A shutdown through the runtime services, after `ExitBootServices`, ends in the bootloader's halt | ✅ | ➖ | ➖ | ➖ |
-| Update bundles: an update capsule's bundle is kept, left in RAM across a reset, checked against the update key and run in the update slot by the firmware the bootloader loaded, and proven at `ExitBootServices`; one no update key signed is refused | ✅ | ✅ | ➖ | ➖ |
-| A kept update bundle is staged again at the next power-up and runs; one that does not reach the OS is tried three times, counted in its file name, and then dropped for the one that ran before it; one that does is blessed and the older ones are removed | ✅ | ✅ | ➖ | ➖ |
-| Wake-on-LAN: the OS powers the board off, the VPU waits on the Ethernet port, a magic packet boots the board | ✅ | ✅ | ➖ | ➖ |
+The Pi 4B column is a rev 1.5 (`d03115`). Pi 400 and CM4 are untried.
 
-The Pi 4B column is a rev 1.5 (`d03115`).
+| | pimu | Pi 4B |
+|---|---|---|
+| Started from SD | ✅ | ✅ |
+| Started from a USB drive | ✅ | ✅ |
+| Started from the network (TFTP) | ➖ | ✅ |
+| Signed `boot.img`: the EEPROM key's image boots | ✅ | ✅ |
+| Signed `boot.img`: another key's image is refused | ✅ | ➖ |
+| Owner's `db` from `owner-db.der`: its CA's leaves boot, other keys are refused | ✅ | ➖ |
+| Other boards: Pi 4B rev 1.4 (`d03114`) and rev 1.2 (`c03112`) | ✅ | ➖ |
+| Console log, board identity, threads | ✅ | ✅ |
+| Boot watchdog: a hang in UEFI resets the board, `ExitBootServices` hands it to the OS | ✅ | ➖ |
+| Linux's `wdat_wdt` takes the watchdog from the ACPI WDAT table and resets the board when it stops pinging | ✅ | ✅ |
+| ARM started in UEFI, running a signed EFI application | ✅ | ✅ |
+| Secure Boot with Ubuntu's shim signed by a key in `db`; Microsoft's shim and unsigned images refused | ✅ | ➖ |
+| USB: VL805 firmware loaded, EFI application off a USB drive, `NOTIFY_XHCI_RESET` | ✅ | ✅ |
+| Firmware cryptography service, OTP MAC address, GPIO expander SD pins | ✅ | ✅ |
+| TPM 2.0 behind `EFI_TCG2_PROTOCOL`: PCRs, event log, shim and systemd-boot measuring | ✅ | ✅ |
+| TPM NV indices and NvPCRs kept across reboots, root sealed to the TPM | ✅ | ✅ |
+| Variable store in a GPT window on the boot disk: OS writes flushed at `ResetSystem` and read back | ✅ | ✅ |
+| Variable store compaction when the OS has filled a bank | ✅ | ➖ |
+| Shutdown through the runtime services ends in the bootloader's halt | ✅ | ✅ |
+| Update capsules: verified, and refused when old, changed, wrongly signed or not a capsule | ✅ | ✅ |
+| Firmware update as a tryboot: proven at the OS and committed, or dropped | ✅ | ✅ |
+| EEPROM update staged, dropped or reported done | ✅ | ➖ |
+| Update bundles: signed by the update key, kept across resets, tried three times, then dropped or blessed | ✅ | ✅ |
+| ARM at 1800 MHz with the core rail set for the die, slowed while hot or on a PMIC fault (forced) | ✅ | ✅ |
+| ARM at 1800 MHz on rev 1.4 and 1500 MHz on rev 1.2 | ✅ | ➖ |
+| Wake-on-LAN after power off | ✅ | ✅ |
+| Debian 6.12 in a signed unified kernel image, device tree: Secure Boot on, lockdown, `efivarfs`, ESRT, SMBIOS, thermal zone, hardware RNG, `bootctl` | ✅ | ✅ |
+| The same with ACPI (`acpi=on`, or an empty device tree): `tpm_crb`, four cores, SD, network, USB, power off | ✅ | ✅ |
+| Debian forky 7.2.9 with `acpi=on`: `tpm2_pcrread`, and an event log that replays to every PCR but 9 and 10 | ➖ | ✅ |
+| Raspberry Pi OS 6.12.93+rpt in a signed unified kernel image: root on SD, network, USB, `poweroff` and wake by magic packet | ➖ | ✅ |
 
 ## Building
 
@@ -168,74 +146,31 @@ publishes it as that tag's GitHub release, with the tag's message as the notes
 
 [`scenarios/`](scenarios/) holds the boots CI checks: each names the EEPROM
 image, the files of the boot medium and the lines the console has to print.
-After `scripts/build-uefi.sh --test-apps` for the EFI applications the UEFI
-scenarios put on the card, signed with a test key, and `scripts/build.sh` and
-`scripts/build.sh --test-keys` for `start4.elf` and its test build, which
-also trusts that key:
+Build the EFI applications the UEFI scenarios use, signed with a test key, and
+a `start4.elf` that trusts that key:
 
 ```bash
-pimu boot --scenario scenarios/sd-boot.yaml
-pimu boot --scenario scenarios/signed-boot.yaml
-pimu boot --scenario scenarios/signed-boot-refused.yaml
+scripts/build-uefi.sh --test-apps
+scripts/build.sh
+scripts/build.sh --test-keys
 pimu boot --scenario scenarios/uefi-hello.yaml
-pimu boot --scenario scenarios/shim-grub.yaml
-pimu boot --scenario scenarios/shim-refused.yaml
-pimu boot --scenario scenarios/secure-boot-refused.yaml
-pimu boot --scenario scenarios/rev14-hello.yaml
-pimu boot --scenario scenarios/usb-hello.yaml
-pimu boot --scenario scenarios/xhci-reset.yaml
-pimu boot --scenario scenarios/tpm2-commands.yaml
-pimu boot --scenario scenarios/systemd-boot.yaml
-pimu boot --scenario scenarios/watchdog-hang.yaml
-pimu boot --scenario scenarios/watchdog-exit.yaml
-pimu boot --scenario scenarios/watchdog-takeover.yaml
-pimu boot --scenario scenarios/watchdog-stuck.yaml
-pimu boot --scenario scenarios/watchdog-fault.yaml
 ```
 
-`scripts/run-scenarios.sh` boots several by name, one a CPU at a time, as CI
-does:
+`scripts/run-scenarios.sh` boots several by name, one CPU each, as CI does:
 
 ```bash
 scripts/run-scenarios.sh uefi-hello persist crypto
 ```
 
-To run it by hand, boot the image with a directory as the SD card:
+To boot with a directory as the SD card:
 
 ```bash
 pimu boot --eeprom out/stock-pieeprom.bin --sd boot/
 ```
 
-## Source
-
-| | |
-|---|---|
-| `src/firmware.rs`, `src/bin/` | The firmware: the boot, then the threads, linked where the bootloader loads it and for the update slot |
-| `src/log.rs` | The structured log and its console rendering |
-| `src/sched.rs`, `src/critical.rs`, `src/sync.rs`, `src/stack.rs` | Threads, critical sections, semaphores, queues and locks, stack guards |
-| `src/idle.rs`, `src/timer.rs`, `src/stc.rs` | Interrupts, sleeping, the system timer |
-| `src/watchdog.rs`, `src/wdat.rs`, `src/handover.rs` | The boot watchdog, the register page of the watchdog the ACPI tables' WDAT describes, and the state the bootloader hands over |
-| `src/tpm2.rs`, `src/keystore.rs`, `src/crypto.rs`, `src/rng.rs` | The TPM 2.0 on the VPU, its PCRs, the secrets derived from the device private key and the firmware cryptography service for it, the random number generator |
-| `src/console.rs`, `src/cm.rs`, `src/otp.rs`, `src/board.rs` | The PL011, clock generators, OTP and the board's identity |
-| `src/spi_flash.rs`, `src/eeprom.rs`, `src/elf.rs`, `src/cache.rs` | The EEPROM and its sections, loading the ARM's image |
-| `src/seal.rs` | The seal on the OS's variable writes |
-| `src/pcie.rs`, `src/vl805.rs`, `src/usb.rs`, `src/lzss.rs` | The PCIe link, and the VL805 and its firmware |
-| `src/wake.rs`, `src/genet.rs` | Waiting for a magic packet after the OS powers the board off, and the Ethernet MAC and PHY that wait on |
-| `src/i2c.rs`, `src/expander.rs`, `src/pmic.rs` | The master the PMICs and the GPIO expander hang off, the expander's pins, and the SoC core rail and the PMICs' status |
-| `src/avs.rs`, `src/dvfs.rs`, `src/thermal.rs` | The SoC's speed monitors and the core voltage they set, the ARM's rate and the throttle that holds it back, and the temperature sensor |
-| `src/mailbox.rs` | The property mailbox |
-| `src/tpm_crb.rs` | The TPM's command response buffer, a page of the ARM's memory the VPU answers commands in |
-| `src/arm.rs`, `src/fdt.rs` | Starting the ARM, and the device tree it gets |
-| `src/update.rs` | Checking and running an update bundle that UEFI left in RAM |
-| `scripts/mkcapsule.py` | Puts a signed `boot.img` and `boot.sig` in a firmware update capsule |
-| `scripts/mkcab.py` | Puts a capsule in the cabinet `fwupdmgr install` takes ([docs/updates.md](docs/updates.md)) |
-| `scripts/mkbootimg.py` | Puts `start4.elf` in a signed `boot.img` and `boot.sig` |
-| `scripts/mkbundle.py` | Signs an update bundle with the update key ([docs/updates.md](docs/updates.md#updates-the-owner-does-not-sign)) |
-| `uefi/` | The UEFI firmware, its Secure Boot keys and ACPI tables, and the armstub and decompressor the ARM starts in |
-
 ## Licence
 
-MIT — see [`LICENSE`](LICENSE). This is an independent project, not
+MIT, see [`LICENSE`](LICENSE). This is an independent project, not
 affiliated with, sanctioned by or endorsed by Raspberry Pi Ltd. or Broadcom.
 "Raspberry Pi" is a trademark of Raspberry Pi Ltd., used here only to say
 which hardware this runs on.
