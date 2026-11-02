@@ -12,8 +12,7 @@ its own.
 - No `config.txt`. The firmware takes its defaults from the board and the boot
   medium.
 - No display, camera or audio. A server needs storage, the network and a
-  watchdog. The log goes to the serial console when one is attached, and the
-  board needs nothing else for it.
+  watchdog. The log goes to the serial console, which is optional.
 - Every log line has a time, a level, a subsystem and a message, with the values
   as named fields ([docs/logging.md](docs/logging.md)).
 - UEFI with Secure Boot starts the OS. It runs only images signed by a key in
