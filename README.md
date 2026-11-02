@@ -1,4 +1,4 @@
-# nuboot
+# nuboot - custom raspberry pi 4b firmware
 
 ![bootctl on a Raspberry Pi 4 booted by nuboot: UEFI 2.70 (nuboot), Secure Boot enabled, TPM2 support, measured UKI and OS](docs/img/bootctl.png)
 
@@ -40,6 +40,10 @@ HATs and IPv6 are out of scope. The OS gets a device tree, and ACPI tables when
 it asks for them or has no device tree ([docs/uefi.md](docs/uefi.md#acpi)).
 
 > [!NOTE]
+> For transparency: this is AI slop. The author cannot write Rust at all.
+> If you're a Rust expert, feel free to comment how bad it is.
+
+> [!WARNING]
 > Early firmware. On a Raspberry Pi 4B rev 1.5 (`d03115`) it boots Debian, Ubuntu
 > and Raspberry Pi OS from SD and USB. Other boards
 > run only in pimu ([Tested](#tested)).
