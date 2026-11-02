@@ -880,7 +880,7 @@ pub fn init(console: efi::Handle, con_in: *mut r_efi::protocols::simple_text_inp
     d.st = efi::SystemTable {
         hdr: header(efi::SYSTEM_TABLE_SIGNATURE, core::mem::size_of::<efi::SystemTable>()),
         firmware_vendor: d.vendor.as_mut_ptr(),
-        firmware_revision: 0x0001_0000,
+        firmware_revision: crate::REVISION,
         console_in_handle: console,
         con_in,
         console_out_handle: console,

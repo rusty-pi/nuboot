@@ -96,6 +96,13 @@ pub extern "efiapi" fn efi_main(image: Handle, system_table: *mut SystemTable) -
     };
     check("reading this image's own file", read_self().is_some_and(|size| size > 0));
 
+    let revision = unsafe { (*system_table).firmware_revision };
+    let mut line = *b"hello test: firmware revision 0x00000000\r\n";
+    for i in 0..8 {
+        line[32 + i] = b"0123456789abcdef"[(revision >> (28 - 4 * i) & 0xf) as usize];
+    }
+    say(core::str::from_utf8(&line).unwrap_or(""));
+
     say("hello test: done\r\n");
     Status::SUCCESS
 }
