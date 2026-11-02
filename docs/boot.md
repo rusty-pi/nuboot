@@ -2,11 +2,11 @@
 
 Raspberry Pi's EEPROM bootloader, as it ships, starts this firmware. It is
 signed by Raspberry Pi, so a board with secure boot programmed in its OTP
-accepts it, and nothing of this firmware is in the EEPROM except the variable
-store. What this tree builds is `start4.elf`: the VPU firmware, with the UEFI
-firmware and the board's device tree inside it.
+accepts it, and nothing of this firmware is in the EEPROM. What this tree
+builds is `start4.elf`: the VPU firmware, with the UEFI firmware and the
+board's device tree inside it.
 
-## Boot
+## Boot sequence
 
 1. The boot ROM loads the bootloader out of the EEPROM, which brings up the
    SDRAM with its training firmware, reads its configuration from the EEPROM,
@@ -59,16 +59,6 @@ scripts/mkbootimg.py customer-private.pem out/start4.elf out --add owner.der:own
 tag of the handover block, reads the file out of it before the ARM starts and
 measures it into PCR 7 ([uefi.md](uefi.md#the-owners-db) has the format and the
 rules). A board that boots from a medium with no `boot.img` has no such file.
-
-## What the EEPROM holds besides the bootloader
-
-| from | what |
-|---|---|
-| `0x00000` | the bootloader's sections: the boot ROM's bootcode, `bootmain`, the SDRAM training firmware, `vl805hub.bin`, `vl805mcu.bin`, its configuration |
-| `0x7fff8` | after an update, its time and the time's complement, which the ESRT reports as the EEPROM's version |
-
-The sections end near `0x73068`. The firmware only reads the EEPROM: the
-variable store is on the boot disk ([uefi.md](uefi.md#the-variable-store)).
 
 ## Boot watchdog
 
@@ -161,7 +151,7 @@ power off coming and takes it instead of resetting.
   `PM_RSTS` and `PM_RSTC` for up to five seconds for what a power off writes,
   through the firmware's `ResetSystem` or `bcm2835-wdt`: partition 63 (halt) and
   the watchdog armed for a full reset. A reboot writes another partition, and the
-  board resets as it did before.
+  board resets.
 - On a power off the firmware takes the watchdog off before it expires and stops
   the ARM's clock. It resets the PCIe endpoint and powers the SerDes down, so the
   VL805 idles, and puts the VPU on the oscillator and stops the clock generators
@@ -174,7 +164,7 @@ power off coming and takes it instead of resetting.
   `PM_RSTS`, lights the LEDs again and resets the SoC, which boots as it does from
   power on.
 - With no PHY or no link to wake from, the firmware arms the watchdog again with
-  `PM_RSTS` as the OS left it, and the stock bootloader halts as it always has.
+  `PM_RSTS` as the OS left it, and the stock bootloader halts.
 
 The boot partition the OS asked for with `reboot N` is taken out of `PM_RSTS`
 when the firmware starts: the bootloader has acted on it, and a watchdog reset
@@ -191,7 +181,7 @@ powers off as it does without it.
 
 An OS started on the ACPI tables has no firmware driver to send `NOTIFY_REBOOT`
 (the tables do not describe the mailbox), so its power off ends in the
-bootloader's halt, as it did before.
+bootloader's halt.
 
 The EEPROM's `POWER_OFF_ON_HALT` is not read. A power off the OS asks for
 before the OS runs (UEFI's `ResetSystem` in boot services) halts in the
@@ -199,72 +189,40 @@ bootloader.
 
 ## Running it in pimu
 
+[`scenarios/`](../scenarios/) holds the boots CI checks. Each one runs with
+`pimu boot --scenario`:
+
 ```bash
 pimu boot --scenario scenarios/sd-boot.yaml      # start4.elf alone, under the stock bootloader
 pimu boot --scenario scenarios/signed-boot.yaml  # start4.elf out of a signed boot.img
-pimu boot --scenario scenarios/signed-boot-refused.yaml  # boot.img signed by another key
 pimu boot --scenario scenarios/uefi-hello.yaml   # a signed EFI application
-pimu boot --scenario scenarios/shim-grub.yaml    # Ubuntu's shim, signed with the test key, and GRUB
-pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed by a key in db
-pimu boot --scenario scenarios/rev14-hello.yaml  # an EFI application on a 4B rev 1.4
-pimu boot --scenario scenarios/usb-hello.yaml    # an EFI application off a USB drive
-pimu boot --scenario scenarios/xhci-reset.yaml   # NOTIFY_XHCI_RESET over the property mailbox
-pimu boot --scenario scenarios/reboot-flags.yaml  # the tryboot request over the property mailbox
-pimu boot --scenario scenarios/gpio-tags.yaml     # the SD card's pins on the GPIO expander over the property mailbox
-pimu boot --scenario scenarios/tpm2-commands.yaml  # TPM 2.0 commands on the VPU
-pimu boot --scenario scenarios/capsule.yaml     # firmware update capsules on the card
-pimu boot --scenario scenarios/capsule-stage.yaml   # a capsule written as tryboot.img and tryboot.sig
-pimu boot --scenario scenarios/capsule-trial.yaml   # the updated firmware proves itself
-pimu boot --scenario scenarios/capsule-commit.yaml  # the proven update becomes boot.img
-pimu boot --scenario scenarios/capsule-drop.yaml    # an update that never reached the OS is dropped
-pimu boot --scenario scenarios/capsule-eeprom-stage.yaml    # an EEPROM update staged
-pimu boot --scenario scenarios/capsule-eeprom-updated.yaml  # after the bootloader made it
-pimu boot --scenario scenarios/capsule-eeprom-failed.yaml   # an EEPROM update the bootloader did not make
-pimu boot --scenario scenarios/runtime-variables.yaml  # variables through the runtime services
-pimu boot --scenario scenarios/persist.yaml     # what the OS writes through them outlasts a reset
-pimu boot --scenario scenarios/persist-usb.yaml  # the same with a USB drive as the boot medium
-pimu boot --scenario scenarios/nv-persist.yaml  # the TPM's NV indices outlast a reset, the OS's changes to them too
-pimu boot --scenario scenarios/firmware-setup.yaml  # OsIndications asks for the firmware's screen at the next boot
-pimu boot --scenario scenarios/shutdown.yaml    # a shutdown through them ends in the bootloader's halt
-pimu boot --scenario scenarios/store-compact.yaml  # the store has room again at the next boot
-pimu boot --scenario scenarios/crypto.yaml      # the firmware cryptography service, locked from the OS
-scripts/build-linux-test.sh && pimu boot --scenario scenarios/linux.yaml  # Debian's kernel, from its own initramfs, to a power off a magic packet wakes from
-pimu boot --scenario scenarios/linux-acpi.yaml   # the same kernel with acpi=on
-pimu boot --scenario scenarios/linux-usb.yaml    # the same kernel off a USB drive, its variable written back to the drive at the reset
-pimu boot --scenario scenarios/linux-no-dt.yaml  # and with an empty device tree, which it takes the ACPI tables for
-pimu boot --scenario scenarios/watchdog-hang.yaml  # a hang in UEFI resets the board
-pimu boot --scenario scenarios/watchdog-exit.yaml  # ExitBootServices hands the dog to the OS
 pimu boot --eeprom out/stock-pieeprom.bin --sd boot/   # a directory holding start4.elf as the SD card
 ```
 
-The scenarios that run the test applications boot `out/start4-test.elf`
-(`scripts/build.sh --test-keys`), whose UEFI firmware also trusts the key
-they are signed with ([uefi.md](uefi.md#secure-boot)).
+`scripts/run-scenarios.sh` boots several by name. The scenarios that run the
+test applications boot `out/start4-test.elf` (`scripts/build.sh --test-keys`),
+whose UEFI firmware also trusts the key they are signed with
+([uefi.md](uefi.md#secure-boot)). The Linux scenarios need
+`scripts/build-linux-test.sh` first.
 
-## Known limitations
+## Property mailbox
 
-- On a board, only a Raspberry Pi 4B rev 1.5 (`d03115`) has run it, started by the stock EEPROM bootloader from the network; the rest
-  is tested in pimu, which models the bootloader, including its signed boot
-  ([README](../README.md#tested)).
-- The property mailbox answers `NOTIFY_REBOOT` (which starts the [watch for a power off](#wake-on-lan)), `GET_REBOOT_FLAGS` and `SET_REBOOT_FLAGS` (bit 0 is the one-shot tryboot request in `PM_RSTS`, which Linux's `reboot '0 tryboot'` sets), `NOTIFY_XHCI_RESET` (reload the VL805's
-  firmware after the OS has reset the PCIe link), the TPM 2.0 on the VPU (tag
-  `0x000300a3` carries a command, `0x000300a1` extends a PCR) and the
-  device key's signatures, HMACs and
-  public key (`0x0003008e` to `0x00030095`, [keystore.md](keystore.md#the-firmware-cryptography-service)),
-  and, on channel 6, the TPM's doorbell (the ACPI start method of the TPM's
-  command response buffer, which makes the VPU run the command in the page at
-  `0x3EBFF000`, [tpm2.md](tpm2.md#the-command-response-buffer)), and, on channel 7 for the
-  runtime services, the store's `0x000300a9` (seal a variable's write) and
-  `0x000300aa` (power the SD card off and on and hand its host back) and
-  `0x000300ac` (reset the PCIe link and the VL805 and load its firmware again),
-  so that the runtime services can write the store at `ResetSystem`, and
-  `0x000300ae` (the next change to a TPM NV index, as a sealed record for the
-  store; UEFI asks it on channel 8 as well), and, on channel 8 for UEFI only,
-  `0x000300af` (put an NV index back from a record, refused once UEFI has
-  handed the board to the OS), and, on
-  channel 8, `0x000300ab` (how the bootloader says the firmware was loaded,
-  which tells UEFI the disk the store is on), and, for the SD card's regulators, the GPIO expander's
-  two SD pins (`0x00030041`, `0x00038041`, `0x00030043` and `0x00038043`: the
-  card's power switch and its signalling voltage select), and no other tag. None
-  returns a fuse. The expander's other pins, which belong to the radios, the
-  power LED, the reset and the camera, are not answered.
+The OS and UEFI reach the VPU through the property mailbox. It answers these
+tags and no other. None returns a fuse.
+
+| Tag | Channel | What |
+|---|---|---|
+| `0x00030048` | 8 | `NOTIFY_REBOOT`: starts the [watch for a power off](#wake-on-lan) |
+| `0x00030064`, `0x00038064` | 8 | `GET_REBOOT_FLAGS`, `SET_REBOOT_FLAGS`; bit 0 is the one-shot tryboot request in `PM_RSTS`, which Linux's `reboot '0 tryboot'` sets |
+| `0x00030058` | 8 | `NOTIFY_XHCI_RESET`: reload the VL805's firmware after the OS has reset the PCIe link |
+| `0x00030041`, `0x00038041`, `0x00030043`, `0x00038043` | 8 | The GPIO expander's two SD pins, the card's power switch and signalling voltage select. The other pins belong to the radios, the power LED, the reset and the camera, and are not answered |
+| `0x000300a3` | 8 | A TPM 2.0 command and its response |
+| `0x000300a1`, `0x000300a4` | 8 | Extend a PCR; read an event the VPU measured before the ARM started |
+| `0x0003008e` to `0x00030095`, `0x0003009c`, `0x0003809c` | 8 | The device key's signatures, HMACs and public key ([keystore.md](keystore.md#the-firmware-cryptography-service)) |
+| none | 6 | The TPM's doorbell: the ACPI start method of the command response buffer, which makes the VPU run the command in the page at `0x3EBFF000` ([tpm2.md](tpm2.md#the-command-response-buffer)) |
+| `0x000300a9` | 7 | Seal a variable's write; the runtime services keep it until `ResetSystem` |
+| `0x000300aa`, `0x000300ac` | 7 | Power the SD card off and on, or reset the PCIe link and the VL805, so the runtime services can write the store at `ResetSystem` |
+| `0x000300ad` | 7 | The outcome of that write, which the VPU logs because the ARM cannot |
+| `0x000300ae` | 7, 8 | The next change to a TPM NV index, as a sealed record for the store |
+| `0x000300af` | 8, UEFI only | Put an NV index back from a record; refused once UEFI has handed the board to the OS |
+| `0x000300a8`, `0x000300ab` | 8 | The owner's `db` from `boot.img`; the medium the firmware was loaded from, which tells UEFI the disk the store is on |

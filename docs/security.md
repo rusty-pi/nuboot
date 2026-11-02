@@ -319,7 +319,7 @@ What a locked-down OS reaches:
 | path | what it carries | bound |
 |---|---|---|
 | TPM commands, over the ACPI command buffer or the mailbox tag | the TPM 2.0 subset in [tpm2.md](tpm2.md) | a parser over checked reads, every size field bounded; a command that would overrun a slot or a buffer gets `TPM_RC_SIZE`; a command is at most 2048 bytes and none runs long |
-| the property mailbox, channel 8 | the tags in [boot.md](boot.md#known-limitations) | the request is copied once, from a buffer that must lie wholly below the VPU's memory, and parsed from the copy; no tag returns a fuse or the device key |
+| the property mailbox, channel 8 | the tags in [boot.md](boot.md#property-mailbox) | the request is copied once, from a buffer that must lie wholly below the VPU's memory, and parsed from the copy; no tag returns a fuse or the device key |
 | the GPIO expander, over the same tags | the SD card's power switch and signalling voltage select, two of the expander's eight pins | any other pin gets no answer; each request is one bounded I2C transaction; the expander is the board's own, the OS has no other way to it |
 | the mailbox, channel 7 | the runtime services' two store tags | the OS's own mailbox driver does not use it, and the channel-8 path ignores these tags |
 | `GetVariable`, `GetNextVariableName`, `SetVariable`, `QueryVariableInfo`, `ResetSystem` | the runtime services | the rules above; every other runtime service returns `EFI_UNSUPPORTED` |
