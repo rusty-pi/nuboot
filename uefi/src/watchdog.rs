@@ -176,12 +176,27 @@ pub fn request_tryboot() {
     write32(PM_RSTS, PM_PASSWORD | read32(PM_RSTS) | PM_RSTS_TRYBOOT);
 }
 
+/// The dog's rate.
+const TICKS_PER_S: u64 = 65_536;
 /// The count a reset is asked for: 10 ticks of the dog, about 150 µs.
 const RESET_TICKS: u32 = 10;
-/// More than this left on the dog means somebody has reloaded it since.
-const RELOADED_ABOVE: u32 = 4 * RESET_TICKS;
+/// The count a shutdown is asked for: a second, which the VPU's watch for a
+/// power off has to see it in. The runtime services ask for it right after the
+/// VPU has answered their last request, so the 150 µs of a reset are too short
+/// a time for the watch to come back round to the dog.
+const HALT_TICKS: u32 = TICKS_PER_S as u32;
 
-/// Have the dog reset the board within a few ticks, as `bcm2835-wdt` does; with
+/// How often a reset waiting on the dog looks for a reload: a wait the model
+/// can skip, where a loop that only polls the dog runs instruction by
+/// instruction for the whole second of a shutdown.
+const RELOAD_CHECK_US: u64 = 1_000;
+
+/// The count asked for: [`HALT_TICKS`] with `halt`, else [`RESET_TICKS`].
+fn ticks(halt: bool) -> u32 {
+    if halt { HALT_TICKS } else { RESET_TICKS }
+}
+
+/// Have the dog reset the board within its count, as `bcm2835-wdt` does; with
 /// `halt`, to stay off.
 fn start_reset(halt: bool) {
     mask_interrupts();
@@ -189,7 +204,7 @@ fn start_reset(halt: bool) {
         let rsts = read32(PM_RSTS);
         write32(PM_RSTS, PM_PASSWORD | (rsts & !0xFFF) | PM_RSTS_HALT);
     }
-    write32(PM_WDOG, PM_PASSWORD | RESET_TICKS);
+    write32(PM_WDOG, PM_PASSWORD | ticks(halt));
     let rstc = read32(PM_RSTC);
     write32(PM_RSTC, PM_PASSWORD | (rstc & PM_RSTC_WRCFG_CLR) | PM_RSTC_WRCFG_FULL_RESET);
 }
@@ -205,14 +220,19 @@ pub fn reset(halt: bool) -> ! {
 /// after.
 ///
 /// The VPU reloads the dog for a while after `ExitBootServices`, and a reload
-/// before the dog runs out puts the reset off by seconds, so the count is asked
-/// for again whenever the dog has been reloaded.
+/// before the dog runs out puts the reset off by seconds, so what is left of the
+/// count is asked for again whenever the dog has been reloaded.
 pub extern "efiapi" fn runtime_reset_system(kind: efi::ResetType, _status: efi::Status, _size: usize, _data: *mut c_void) {
     crate::rtvar::flush_store();
-    start_reset(kind == efi::RESET_SHUTDOWN);
+    let halt = kind == efi::RESET_SHUTDOWN;
+    start_reset(halt);
+    let count = ticks(halt);
+    let end_us = counter_us() + count as u64 * 1_000_000 / TICKS_PER_S;
     loop {
-        if (read32(PM_WDOG) & PM_WDOG_MAX) > RELOADED_ABOVE {
-            write32(PM_WDOG, PM_PASSWORD | RESET_TICKS);
+        if (read32(PM_WDOG) & PM_WDOG_MAX) > 4 * count {
+            let left = end_us.saturating_sub(counter_us()) * TICKS_PER_S / 1_000_000;
+            write32(PM_WDOG, PM_PASSWORD | (left as u32).max(RESET_TICKS));
         }
+        crate::util::delay_us(RELOAD_CHECK_US);
     }
 }
