@@ -1,13 +1,13 @@
 # nuboot - custom raspberry pi 4b firmware
 
-![bootctl on a Raspberry Pi 4 booted by nuboot: UEFI 2.70 (nuboot), Secure Boot enabled, TPM2 support, measured UKI and OS](docs/img/bootctl.png)
-
-_`bootctl` on a Pi 4 running Debian, started by nuboot: UEFI, Secure Boot and the TPM, with no config file._
-
 nuboot is firmware for headless Raspberry Pi 4 servers, written in Rust. It
 replaces Raspberry Pi's `start4.elf` and is started by the stock EEPROM
 bootloader. It has a small preemptive thread scheduler and a UEFI firmware of
 its own.
+
+![bootctl on a Raspberry Pi 4 booted by nuboot: UEFI 2.70 (nuboot), Secure Boot enabled, TPM2 support, measured UKI and OS](docs/img/bootctl.png)
+
+_`bootctl` on a Pi 4 running Debian, started by nuboot: UEFI, Secure Boot and the TPM, with no config file._
 
 - No `config.txt`. The firmware takes its defaults from the board and the boot
   medium.
