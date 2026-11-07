@@ -135,6 +135,10 @@ jobs:
             out/boot-eeprom.img
             out/boot-eeprom.sig
             out/store-tamper.efi
+            out/store-tamper.bin
+            out/store-pending.bin
+            out/store-proven.bin
+            out/store-eeprom-pending.bin
             out/start4.elf
             out/start4-test.elf
             out/boot-test.img
