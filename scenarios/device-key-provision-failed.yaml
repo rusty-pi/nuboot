@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "device-key-provision-failed"
+description: "A board with signed boot and a blank device key, whose EEPROM configuration says NUBOOT_PROVISION_DEVICE_KEY=1, and whose fuses of row 60 do not blow: the firmware fuses rows 56-59, finds row 60 blank when it reads the key back, logs the failure and boots on. The EFI application resets, and the next boot finds a part-written key, leaves it and programs nothing more."
+
+boot:
+  eeprom: "../out/pieeprom-signed-provision.bin"
+  otp_signed_boot: "../out/boot-test-pubkey.bin"
+  otp_stuck_row:
+    - 60
+  sd:
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          boot.img: "../out/boot-test.img"
+          boot.sig: "../out/boot-test.sig"
+          EFI/BOOT/BOOTAA64.EFI: "../out/nv-persist.efi"
+  until: "nv persist test: done"
+  wall_secs: 3600
+
+milestones:
+  - why: "The first boot tried the key and failed, and said how far it got."
+    line: ["ERROR provision device key not fused whole", "reason=\"rows read back differently\"", "rows_fused=7"]
+  - why: "The firmware went on booting."
+    line: "ARM started in UEFI"
+  - why: "The second boot found the rows part fused and did not touch them."
+    line: ["WARN  provision device key rows are fused but do not form a whole key, nothing written", "blank_rows=1"]
+  - why: "Only the first boot programmed: seven rows, and none again."
+    line: "otp        7 rows programmed: 56 57 58 59 61 62 63"
+  - why: "The TPM stayed stable across the reset on the part-written key."
+    line: "runtime test: an index written before ExitBootServices is back ok"

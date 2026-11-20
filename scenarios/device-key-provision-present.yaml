@@ -1,0 +1,36 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "device-key-provision-present"
+description: "A board with signed boot and a device key fused (a test key, not a board's), whose EEPROM configuration says NUBOOT_PROVISION_DEVICE_KEY=1: the firmware finds the key and programs no row."
+
+boot:
+  eeprom: "../out/pieeprom-signed-provision.bin"
+  otp_signed_boot: "../out/boot-test-pubkey.bin"
+  otp_row:
+    - "56=0xc0de2001"
+    - "57=0xc0de3112"
+    - "58=0xc0de4223"
+    - "59=0xc0de5334"
+    - "60=0xc0de6445"
+    - "61=0xc0de7556"
+    - "62=0xc0de8667"
+    - "63=0xc0de9778"
+  sd:
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          boot.img: "../out/boot-test.img"
+          boot.sig: "../out/boot-test.sig"
+  until: "stack high-water mark  thread=1"
+  wall_secs: 900
+
+milestones:
+  - why: "The bootloader verified boot.img and started start4.elf out of it."
+    line: "medium=ramdisk"
+  - why: "The firmware found the key and left it."
+    line: "INFO  provision device key already fused, nothing written"
+  - why: "No row was programmed."
+    line: "otp        no row programmed"
+  - why: "No key was fused."
+    line: "device key fused"
+    absent: true

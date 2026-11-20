@@ -1,0 +1,38 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "device-key-provision"
+description: "A board with signed boot and a blank device key, whose EEPROM configuration says NUBOOT_PROVISION_DEVICE_KEY=1: the firmware fuses a key of its own drawing into OTP rows 56-63 before it derives the TPM's secrets. An EFI application defines NV indices and resets, and they are back after the reset, so the TPM was stable from the first boot; the second boot finds the key fused and writes nothing."
+
+boot:
+  eeprom: "../out/pieeprom-signed-provision.bin"
+  otp_signed_boot: "../out/boot-test-pubkey.bin"
+  sd:
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          boot.img: "../out/boot-test.img"
+          boot.sig: "../out/boot-test.sig"
+          EFI/BOOT/BOOTAA64.EFI: "../out/nv-persist.efi"
+  until: "nv persist test: done"
+  wall_secs: 3600
+
+milestones:
+  - why: "The bootloader verified bootconf.sig and boot.img on a board with signed boot, and started start4.elf out of it."
+    line: "medium=ramdisk"
+  - why: "The first boot found the key blank and fused one."
+    line: "INFO  provision device key fused  rows=8"
+  - why: "The second boot found it."
+    line: "INFO  provision device key already fused, nothing written"
+  - why: "The key was fused once: no later boot programmed a row again."
+    line: "rows programmed: 56 57 58 59 60 61 62 63"
+  - why: "The fuses were programmed and read back whole."
+    line: "otp        8 rows programmed"
+  - why: "No attempt failed."
+    line: "device key not fused"
+    absent: true
+  - why: "UEFI put the indices the first boot defined in the store, which only a board with a stable key can seal."
+    line: "index changes kept in the store"
+  - why: "The next boot put the indices back: the one written before ExitBootServices."
+    line: "runtime test: an index written before ExitBootServices is back ok"
+  - why: "The authorization value was kept with the index."
+    line: "runtime test: an index is read with its authorization value ok"
