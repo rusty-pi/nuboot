@@ -241,6 +241,14 @@ privileged ARM code ([below](#what-is-not-protected)).
   seeds' message begins `nuboot TPM secret v1` and its NV records' begins
   `nuboot NV index record v1`, so an HMAC made for one use is not valid for
   another.
+- **The key can be fused by the firmware**, once, at the first boot of a board
+  with signed boot whose `bootconf.txt` carries `NUBOOT_PROVISION_DEVICE_KEY=1`
+  and whose rows 56-63 are blank ([keystore.md](keystore.md#fusing-the-device-key)).
+  The request is the owner's because the bootloader of such a board checks
+  `bootconf.txt` against `bootconf.sig`; the firmware refuses it on a board
+  without signed boot. The key is drawn and fused inside the VPU and is not
+  logged. Nothing exports it, so a board whose key is lost or replaced is a
+  board with a new TPM.
 - **No secret is logged.** Logs carry PCR numbers, counts and the first four
   bytes of an extended digest.
 
@@ -478,7 +486,9 @@ Not defended, and not claimed:
 
 ## Operating it
 
-1. Program signed boot in the OTP and fuse a device key; check PCR 1.
+1. Program signed boot in the OTP and fuse a device key (or let the first boot
+   fuse it with `NUBOOT_PROVISION_DEVICE_KEY=1` in the signed `bootconf.txt`);
+   check PCR 1.
 2. Keep `PK` and `KEK`'s private keys offline, and `db`'s apart from the machine
    that builds OS images; build with `PI4_PK_CERT`, `PI4_KEK_CERT` and
    `PI4_DB_CERT`. Sign the shim, GRUB or kernel the board boots with the `db`

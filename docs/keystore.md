@@ -38,6 +38,55 @@ UEFI takes only for the OS's own variables
 ([uefi.md](uefi.md#variables-the-os-writes)). A board without a fused private
 key answers `KEY_NOT_SET`, and its variables stay in memory.
 
+## Fusing the device key
+
+A board with signed boot can have the firmware fuse its device key at the first
+boot. The EEPROM's `bootconf.txt` asks for it with a key in its `[all]` section:
+
+```text
+[all]
+NUBOOT_PROVISION_DEVICE_KEY=1
+```
+
+The stock bootloader ignores keys it does not know. The firmware acts on the
+request only when all of this holds, and otherwise writes nothing:
+
+1. **Signed boot is programmed in the OTP**: bit 14 and a bit of 18:15 of the
+   boot mode row (17) are set, and the customer key hash in rows 47-54 is not
+   blank. On such a board the bootloader runs only if `bootconf.sig`, signed by
+   the key whose hash is fused, covers `bootconf.txt`, so the request is the
+   owner's. The firmware does not check the signature again. Without signed boot
+   it logs a warning and writes nothing, because whoever can write the boot
+   medium could otherwise ask for the key.
+2. **Rows 56-63 are all blank.** A board with any of them fused is left alone,
+   and the log says whether the rows hold a whole key or only part of one.
+
+The key is drawn from the SoC's random number generator by rejection sampling:
+a non-zero value below the P-256 group order, none of whose rows is zero. It
+is programmed with the sequence of Raspberry Pi's own firmware (the block's four
+enable words, then each row OR-ed with what it held), read back row by row and
+used in the same boot, before the TPM's seeds and the records' keys are first
+derived, so the first boot of the OS already has a TPM that outlasts a reboot.
+The key stays in the VPU: it is never logged or answered, and the stack and
+registers that held it are overwritten as for any other use of it.
+
+A fuse cannot be cleared, so a failed programming leaves what it blew. It is
+logged as an error and the boot goes on: with no row fused the TPM's seeds are
+drawn for the boot, as on a board without a key; with some fused the next boot
+finds them, counts them as a key already there, leaves them and warns how many
+rows are blank. A board whose key is part-written is not repaired.
+
+```text
+INFO  provision device key fused  rows=8
+INFO  provision device key already fused, nothing written
+WARN  provision device key rows are fused but do not form a whole key, nothing written  blank_rows=1  valid=true
+ERROR provision device key not fused whole  reason="rows read back differently"  rows_fused=7
+WARN  provision NUBOOT_PROVISION_DEVICE_KEY ignored, the board has no signed boot in the OTP  bootmode=000008b0
+```
+
+`scenarios/device-key-provision*.yaml` run each case in pimu, whose OTP model
+only ever sets bits.
+
 ## The device key and the ARM
 
 The firmware answers no tag that returns a fuse.

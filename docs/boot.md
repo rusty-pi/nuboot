@@ -24,7 +24,9 @@ board's device tree inside it.
    slot at `0x3ee00200` and starts as `start4.elf` does from here on
    ([updates.md](updates.md#updates-the-owner-does-not-sign)).
 5. `start4.elf` reads `owner-db.der` out of the `boot.img`, if it started out
-   of one ([Signed boot](#signed-boot)), and measures it.
+   of one ([Signed boot](#signed-boot)), and measures it. If the EEPROM's
+   configuration asks for it, it fuses the device key
+   ([below](#fusing-the-device-key)).
 6. It brings up the PCIe link, gives the VL805 its firmware out of the EEPROM's
    `vl805hub.bin` and `vl805mcu.bin` on a board that needs it, and puts the
    controller's registers in the outbound window at `0x6_0200_0000`.
@@ -59,6 +61,32 @@ scripts/mkbootimg.py customer-private.pem out/start4.elf out --add owner.der:own
 tag of the handover block, reads the file out of it before the ARM starts and
 measures it into PCR 7 ([uefi.md](uefi.md#the-owners-db) has the format and the
 rules). A board that boots from a medium with no `boot.img` has no such file.
+
+## Fusing the device key
+
+A release image's EEPROM configuration carries one line more than the
+bootloader needs:
+
+```text
+[all]
+BOOT_ORDER=0xf41
+NUBOOT_PROVISION_DEVICE_KEY=1
+```
+
+(`BOOT_ORDER` is the image's own.) The stock bootloader ignores the key. On a
+board with signed boot, whose `bootconf.txt` the bootloader has checked against
+`bootconf.sig`, the firmware fuses a device key into OTP rows 56-63 at the first
+boot if they are blank, and writes nothing at any later boot. On a board
+without signed boot it logs a warning and writes nothing. The rules, the log
+lines and what a failed programming leaves are in
+[keystore.md](keystore.md#fusing-the-device-key). `scripts/mksignedeeprom.py`
+builds an EEPROM image with a signed `bootconf.txt` for pimu's boards with
+signed boot:
+
+```bash
+scripts/mksignedeeprom.py customer-private.pem out/stock-pieeprom.bin out/pieeprom-signed.bin \
+    BOOT_ORDER=0x1 NUBOOT_PROVISION_DEVICE_KEY=1
+```
 
 ## Boot watchdog
 
@@ -196,6 +224,7 @@ bootloader.
 pimu boot --scenario scenarios/sd-boot.yaml      # start4.elf alone, under the stock bootloader
 pimu boot --scenario scenarios/signed-boot.yaml  # start4.elf out of a signed boot.img
 pimu boot --scenario scenarios/uefi-hello.yaml   # a signed EFI application
+pimu boot --scenario scenarios/device-key-provision.yaml  # the first boot fuses the device key
 pimu boot --eeprom out/stock-pieeprom.bin --sd boot/   # a directory holding start4.elf as the SD card
 ```
 
