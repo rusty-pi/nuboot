@@ -139,3 +139,38 @@ pub fn digest(name: &[u8]) -> Option<Digest> {
     });
     Some(Digest { at: s.data, len: s.len, sha256 })
 }
+
+/// The most of `bootconf.txt` [`bootconf_flag`] reads.
+const BOOTCONF_MAX: usize = 2048;
+
+/// Whether `bootconf.txt` sets `key=1` in its `[all]` section (or before any
+/// section, which the bootloader treats the same). The last line that names the
+/// key decides. A section for a board, a GPIO or a state the bootloader
+/// evaluates is skipped: only what holds for every board counts.
+pub fn bootconf_flag(key: &[u8]) -> Result<bool, Error> {
+    let mut text = [0u8; BOOTCONF_MAX];
+    match load(b"bootconf.txt", &mut text) {
+        Ok(len) => Ok(conf_flag(&text[..len], key)),
+        Err(Error::NotFound) => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+fn conf_flag(text: &[u8], key: &[u8]) -> bool {
+    let mut in_all = true;
+    let mut set = false;
+    for line in text.split(|&c| c == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        match line.first() {
+            None | Some(b'#') => {}
+            Some(b'[') => in_all = line == b"[all]",
+            Some(_) if in_all => {
+                if let Some(value) = line.strip_prefix(key).and_then(|rest| rest.strip_prefix(b"=")) {
+                    set = value == b"1";
+                }
+            }
+            Some(_) => {}
+        }
+    }
+    set
+}

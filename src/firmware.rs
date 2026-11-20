@@ -123,6 +123,7 @@ fn firmware_main() -> ! {
     );
     measure::eeprom_bootcode(eeprom::digest(b"bootcode.bin").as_ref());
     measure::eeprom_config(eeprom::digest(b"bootconf.txt").map(|d| d.sha256));
+    nuboot::provision::run();
     load_owner_db();
     nuboot::keystore::seed();
     usb::bring_up(&board);
