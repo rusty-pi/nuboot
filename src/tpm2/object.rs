@@ -268,6 +268,10 @@ impl Public {
         Ok(())
     }
 
+    pub fn is_decrypt(&self) -> bool {
+        self.kind == ALG_ECC && self.attributes & DECRYPT != 0
+    }
+
     pub fn is_storage(&self) -> bool {
         self.kind == ALG_ECC && self.attributes & (RESTRICTED | DECRYPT) == RESTRICTED | DECRYPT
     }
@@ -1066,23 +1070,27 @@ pub fn open(slot: &Slot) -> Result<(Public, [u8; 32], usize, [u8; 128], usize), 
     Ok(result)
 }
 
+/// The private scalar of the ECC key in `slot`.
+pub fn private_scalar(slot: &Slot) -> Result<[u8; 32], u32> {
+    if slot.is_primary {
+        return Ok(slot.origin.private());
+    }
+    let (_, _, _, mut value, value_len) = open(slot)?;
+    let mut d = [0u8; 32];
+    d.copy_from_slice(&value[..32]);
+    keystore::zero(&mut value);
+    if value_len != 32 {
+        keystore::zero(&mut d);
+        return Err(RC_KEY);
+    }
+    Ok(d)
+}
+
 /// An ECDSA signature of `digest` by the key in `slot`. The per-signature
 /// secret mixes the private key and the digest with fresh random bytes, so a
 /// weak draw does not give the key away.
 pub fn ecdsa_sign(slot: &Slot, digest: &[u8; 32]) -> Result<([u8; 32], [u8; 32]), u32> {
-    let mut d = if slot.is_primary {
-        slot.origin.private()
-    } else {
-        let (_, _, _, mut value, value_len) = open(slot)?;
-        let mut d = [0u8; 32];
-        d.copy_from_slice(&value[..32]);
-        keystore::zero(&mut value);
-        if value_len != 32 {
-            keystore::zero(&mut d);
-            return Err(RC_KEY);
-        }
-        d
-    };
+    let mut d = private_scalar(slot)?;
     let mut result = Err(RC_RANGE);
     for attempt in 0..8u8 {
         let mut message = [0u8; 32 + 32 + 1];

@@ -13,11 +13,13 @@ use super::{
 };
 use crate::{keystore, p256, rsa, sha256, stc};
 
+pub const CC_CERTIFY: u32 = 0x148;
 pub const CC_QUOTE: u32 = 0x158;
 pub const CC_SIGN: u32 = 0x15d;
 pub const CC_VERIFY_SIGNATURE: u32 = 0x177;
 
 const GENERATED: [u8; 4] = [0xff, 0x54, 0x43, 0x47];
+const ST_ATTEST_CERTIFY: u16 = 0x8017;
 const ST_ATTEST_QUOTE: u16 = 0x8018;
 const ST_VERIFIED: u16 = 0x8022;
 pub const ST_HASHCHECK: u16 = 0x8024;
@@ -84,27 +86,27 @@ fn marshal_signature(out: &mut Out, r: &[u8; 32], s: &[u8; 32]) {
     out.put(s);
 }
 
-fn signing_key(handle: u32) -> Result<(&'static mut object::Slot, object::Public), u32> {
-    let slot = object::slot_of(handle).ok_or(RC_HANDLE | RC_1)?;
+fn signing_key(handle: u32, position: u32) -> Result<(&'static mut object::Slot, object::Public), u32> {
+    let slot = object::slot_of(handle).ok_or(RC_HANDLE | position * RC_1)?;
     let public = slot.public();
     if !public.is_signing() {
-        return Err(RC_KEY | RC_1);
+        return Err(RC_KEY | position * RC_1);
     }
     Ok((slot, public))
 }
 
 /// A key the TPM can sign with: one it made, not a public key it was given.
-fn private_signing_key(handle: u32) -> Result<(&'static mut object::Slot, object::Public), u32> {
-    let (slot, public) = signing_key(handle)?;
+fn private_signing_key(handle: u32, position: u32) -> Result<(&'static mut object::Slot, object::Public), u32> {
+    let (slot, public) = signing_key(handle, position)?;
     if public.kind != ALG_ECC || (slot.private_len == 0 && !slot.is_primary) {
-        return Err(RC_KEY | RC_1);
+        return Err(RC_KEY | position * RC_1);
     }
     Ok((slot, public))
 }
 
 /// `TPM2_Sign`.
 pub fn sign(c: &mut Command) -> Result<(), u32> {
-    let (slot, public) = private_signing_key(c.handles[0])?;
+    let (slot, public) = private_signing_key(c.handles[0], 1)?;
     let digest = c.params.sized().ok_or(RC_COMMAND_SIZE)?;
     let digest: &[u8; 32] = digest.try_into().map_err(|_| RC_SIZE | RC_P | RC_1)?;
     read_scheme(&mut c.params, &public, 2)?;
@@ -129,7 +131,7 @@ pub fn sign(c: &mut Command) -> Result<(), u32> {
 /// `TPM2_Quote`: a signed statement of the PCRs' values, which the caller's
 /// nonce makes fresh.
 pub fn quote(c: &mut Command) -> Result<(), u32> {
-    let (slot, public) = private_signing_key(c.handles[0])?;
+    let (slot, public) = private_signing_key(c.handles[0], 1)?;
     let nonce = c.params.sized().ok_or(RC_COMMAND_SIZE)?;
     if nonce.len() > 64 {
         return Err(RC_SIZE | RC_P | RC_1);
@@ -145,11 +147,48 @@ pub fn quote(c: &mut Command) -> Result<(), u32> {
     }
 
     let mut raw = [0u8; 256];
-    let mut attest = Out { buf: &mut raw, at: 0 };
-    attest.put(&GENERATED);
-    attest.u16(ST_ATTEST_QUOTE);
+    let mut attest = attest_header(&mut raw, ST_ATTEST_QUOTE, slot, nonce);
+    attest.u32(1);
+    attest.u16(ALG_SHA256);
+    attest.u8(3);
+    attest.put(&mask.to_le_bytes()[..3]);
+    attest.u16(32);
+    attest.put(&pcrs.finish());
+    let len = attest.at;
+    sign_attest(c, slot, &raw[..len])
+}
+
+/// `TPM2_Certify`: a signed statement that the object `handles[0]` has the
+/// name and qualified name it reports, which the key `handles[1]` makes.
+pub fn certify(c: &mut Command) -> Result<(), u32> {
+    let object = object::slot_of(c.handles[0]).ok_or(RC_HANDLE | RC_1)?;
+    let (slot, public) = private_signing_key(c.handles[1], 2)?;
+    let nonce = c.params.sized().ok_or(RC_COMMAND_SIZE)?;
+    if nonce.len() > 64 {
+        return Err(RC_SIZE | RC_P | RC_1);
+    }
+    read_scheme(&mut c.params, &public, 2)?;
+    if c.params.rest() != 0 {
+        return Err(RC_COMMAND_SIZE);
+    }
+    let mut raw = [0u8; 256];
+    let mut attest = attest_header(&mut raw, ST_ATTEST_CERTIFY, slot, nonce);
     attest.u16(34);
-    attest.put(&slot.qualified);
+    attest.put(&object.name);
+    attest.u16(34);
+    attest.put(&object.qualified);
+    let len = attest.at;
+    sign_attest(c, slot, &raw[..len])
+}
+
+/// The start of a `TPMS_ATTEST` of `kind`, up to and including the firmware
+/// version, which the attested structure follows.
+fn attest_header<'a>(raw: &'a mut [u8], kind: u16, signer: &object::Slot, nonce: &[u8]) -> Out<'a> {
+    let mut attest = Out { buf: raw, at: 0 };
+    attest.put(&GENERATED);
+    attest.u16(kind);
+    attest.u16(34);
+    attest.put(&signer.qualified);
     attest.u16(nonce.len() as u16);
     attest.put(nonce);
     let milliseconds = stc::now() / 1000;
@@ -158,18 +197,16 @@ pub fn quote(c: &mut Command) -> Result<(), u32> {
     attest.u32(0);
     attest.u8(1);
     attest.u64(0);
-    attest.u32(1);
-    attest.u16(ALG_SHA256);
-    attest.u8(3);
-    attest.put(&mask.to_le_bytes()[..3]);
-    attest.u16(32);
-    attest.put(&pcrs.finish());
-    let len = attest.at;
+    attest
+}
 
-    let (r, s) = object::ecdsa_sign(slot, &sha256::digest(&raw[..len]))?;
+/// The response of a command that attests: the structure and the signer's
+/// signature of its hash.
+fn sign_attest(c: &mut Command, signer: &object::Slot, attest: &[u8]) -> Result<(), u32> {
+    let (r, s) = object::ecdsa_sign(signer, &sha256::digest(attest))?;
     let mut parameters = Out { buf: &mut [0u8; 400], at: 0 };
-    parameters.u16(len as u16);
-    parameters.put(&raw[..len]);
+    parameters.u16(attest.len() as u16);
+    parameters.put(attest);
     marshal_signature(&mut parameters, &r, &s);
     let n = parameters.at;
     let out = parameters.buf;
@@ -179,7 +216,7 @@ pub fn quote(c: &mut Command) -> Result<(), u32> {
 
 /// `TPM2_VerifySignature`, and the ticket that says this TPM did.
 pub fn verify(c: &mut Command) -> Result<(), u32> {
-    let (slot, public) = signing_key(c.handles[0])?;
+    let (slot, public) = signing_key(c.handles[0], 1)?;
     let digest = c.params.sized().ok_or(RC_COMMAND_SIZE)?;
     let digest: &[u8; 32] = digest.try_into().map_err(|_| RC_SIZE | RC_P | RC_1)?;
     let algorithm = c.params.u16().ok_or(RC_COMMAND_SIZE)?;
