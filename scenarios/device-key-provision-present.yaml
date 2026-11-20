@@ -27,6 +27,9 @@ boot:
 milestones:
   - why: "The bootloader verified boot.img and started start4.elf out of it."
     line: "medium=ramdisk"
+  - why: "The request is authenticated: no warning that it is not."
+    line: "is not authenticated"
+    absent: true
   - why: "The firmware found the key and left it."
     line: "INFO  provision device key already fused, nothing written"
   - why: "No row was programmed."

@@ -242,13 +242,17 @@ privileged ARM code ([below](#what-is-not-protected)).
   `nuboot NV index record v1`, so an HMAC made for one use is not valid for
   another.
 - **The key can be fused by the firmware**, once, at the first boot of a board
-  with signed boot whose `bootconf.txt` carries `NUBOOT_PROVISION_DEVICE_KEY=1`
-  and whose rows 56-63 are blank ([keystore.md](keystore.md#fusing-the-device-key)).
-  The request is the owner's because the bootloader of such a board checks
-  `bootconf.txt` against `bootconf.sig`; the firmware refuses it on a board
-  without signed boot. The key is drawn and fused inside the VPU and is not
-  logged. Nothing exports it, so a board whose key is lost or replaced is a
-  board with a new TPM.
+  whose `bootconf.txt` carries `SIGNED_BOOT=1` and
+  `NUBOOT_PROVISION_DEVICE_KEY=1` and whose rows 56-63 are blank
+  ([keystore.md](keystore.md#fusing-the-device-key)). With signed boot in the
+  OTP the request is the owner's, because the bootloader checks `bootconf.txt`
+  against `bootconf.sig`. **Without it the request and the boot medium are
+  unauthenticated**: the firmware fuses the key and warns, and a
+  physical-access attacker who boots a medium of their own runs code that reads
+  the key from the OTP, and with it the TPM's seeds. The protection of the TPM
+  and of a root sealed to it relies on signed boot being fused. The key is
+  drawn and fused inside the VPU and is not logged. Nothing exports it, so a
+  board whose key is lost or replaced is a board with a new TPM.
 - **No secret is logged.** Logs carry PCR numbers, counts and the first four
   bytes of an extended digest.
 

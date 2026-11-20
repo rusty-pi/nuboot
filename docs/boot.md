@@ -70,14 +70,16 @@ bootloader needs:
 ```text
 [all]
 BOOT_ORDER=0xf41
+SIGNED_BOOT=1
 NUBOOT_PROVISION_DEVICE_KEY=1
 ```
 
-(`BOOT_ORDER` is the image's own.) The stock bootloader ignores the key. On a
-board with signed boot, whose `bootconf.txt` the bootloader has checked against
-`bootconf.sig`, the firmware fuses a device key into OTP rows 56-63 at the first
-boot if they are blank, and writes nothing at any later boot. On a board
-without signed boot it logs a warning and writes nothing. The rules, the log
+(`BOOT_ORDER` is the image's own.) The stock bootloader ignores the last key.
+With both of the last two set, the firmware fuses a device key into OTP rows
+56-63 at the first boot if they are blank, and writes nothing at any later boot.
+With `SIGNED_BOOT=1` missing it logs a warning and writes nothing. Without signed
+boot in the OTP it fuses the key and warns that the request is not
+authenticated: the boot medium is then unauthenticated too. The rules, the log
 lines and what a failed programming leaves are in
 [keystore.md](keystore.md#fusing-the-device-key). `scripts/mksignedeeprom.py`
 builds an EEPROM image with a signed `bootconf.txt` for pimu's boards with
@@ -85,7 +87,7 @@ signed boot:
 
 ```bash
 scripts/mksignedeeprom.py customer-private.pem out/stock-pieeprom.bin out/pieeprom-signed.bin \
-    BOOT_ORDER=0x1 NUBOOT_PROVISION_DEVICE_KEY=1
+    BOOT_ORDER=0x1 SIGNED_BOOT=1 NUBOOT_PROVISION_DEVICE_KEY=1
 ```
 
 ## Boot watchdog

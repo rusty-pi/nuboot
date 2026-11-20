@@ -76,7 +76,7 @@ if [ -n "$suffix" ]; then
   # the firmware to fuse the device key, and the fuses it goes with (pimu's
   # otp_signed_boot reads out/boot-test-pubkey.bin).
   scripts/mksignedeeprom.py out/test-keys/boot.key out/stock-pieeprom.bin out/pieeprom-signed.bin BOOT_ORDER=0x1 BOOT_UART=1
-  scripts/mksignedeeprom.py out/test-keys/boot.key out/stock-pieeprom.bin out/pieeprom-signed-provision.bin BOOT_ORDER=0x1 BOOT_UART=1 NUBOOT_PROVISION_DEVICE_KEY=1
+  scripts/mksignedeeprom.py out/test-keys/boot.key out/stock-pieeprom.bin out/pieeprom-signed-provision.bin BOOT_ORDER=0x1 BOOT_UART=1 SIGNED_BOOT=1 NUBOOT_PROVISION_DEVICE_KEY=1
   echo 'not a certificate' >out/test-keys/owner-junk.der
   scripts/mkbootimg.py out/test-keys/boot.key out/start4-test.elf out --prefix boot-owner --add out/test-keys/owner.der:owner-db.der
   scripts/mkbootimg.py out/test-keys/boot.key out/start4-test.elf out --prefix boot-owner-junk --add out/test-keys/owner-junk.der:owner-db.der

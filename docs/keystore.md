@@ -40,29 +40,41 @@ key answers `KEY_NOT_SET`, and its variables stay in memory.
 
 ## Fusing the device key
 
-A board with signed boot can have the firmware fuse its device key at the first
-boot. The EEPROM's `bootconf.txt` asks for it with a key in its `[all]` section:
+The firmware can fuse its device key at the first boot. The EEPROM's
+`bootconf.txt` asks for it with keys in its `[all]` section:
 
 ```text
 [all]
+SIGNED_BOOT=1
 NUBOOT_PROVISION_DEVICE_KEY=1
 ```
 
-The stock bootloader ignores keys it does not know. The firmware acts on the
-request only when all of this holds, and otherwise writes nothing:
+The stock bootloader ignores the second key. The firmware acts on the request
+only when all of this holds, and otherwise writes nothing:
 
-1. **Signed boot is programmed in the OTP**: bit 14 and a bit of 18:15 of the
-   boot mode row (17) are set, and the customer key hash in rows 47-54 is not
-   blank. On such a board the bootloader runs only if `bootconf.sig`, signed by
-   the key whose hash is fused, covers `bootconf.txt`, so the request is the
-   owner's. The firmware does not check the signature again. Without signed boot
-   it logs a warning and writes nothing, because whoever can write the boot
-   medium could otherwise ask for the key.
+1. **Both keys are set.** `SIGNED_BOOT=1` is the owner's marker that the board
+   boots only a signed `boot.img`. Without it the firmware logs a warning and
+   writes nothing.
 2. **Rows 56-63 are all blank.** A board with any of them fused is left alone,
    and the log says whether the rows hold a whole key or only part of one.
 
+**The request is authenticated only with signed boot programmed in the OTP**:
+bit 14 and a bit of 18:15 of the boot mode row (17) set, and a customer key hash
+in rows 47-54. The bootloader of such a board runs only if `bootconf.sig`,
+signed by the key whose hash is fused, covers `bootconf.txt`, so the request is
+the owner's; the firmware does not check the signature again. Without it, the
+firmware still fuses the key and logs a warning that the request is not
+authenticated: whoever can write the EEPROM or the boot medium decides what
+runs, and can run firmware that reads the key. The device key is readable from
+privileged ARM code ([below](#the-device-key-and-the-arm)), so on such a board a
+physical-access attacker who boots a medium of their own can read it. What the
+key protects, the TPM and a root sealed to it, holds only once signed boot is
+fused.
+
 The key is drawn from the SoC's random number generator by rejection sampling:
-a non-zero value below the P-256 group order, none of whose rows is zero. It
+a non-zero value below the P-256 group order, none of whose rows is zero. Row
+56 + *i* holds bytes 4*i* to 4*i*+3 of the 32-byte scalar, most significant byte
+first, as little-endian words, which is how the reader takes them. It
 is programmed with the sequence of Raspberry Pi's own firmware (the block's four
 enable words, then each row OR-ed with what it held), read back row by row and
 used in the same boot, before the TPM's seeds and the records' keys are first
@@ -81,7 +93,8 @@ INFO  provision device key fused  rows=8
 INFO  provision device key already fused, nothing written
 WARN  provision device key rows are fused but do not form a whole key, nothing written  blank_rows=1  valid=true
 ERROR provision device key not fused whole  reason="rows read back differently"  rows_fused=7
-WARN  provision NUBOOT_PROVISION_DEVICE_KEY ignored, the board has no signed boot in the OTP  bootmode=000008b0
+WARN  provision NUBOOT_PROVISION_DEVICE_KEY is not authenticated, the OTP has no signed boot  bootmode=000008b0
+WARN  provision NUBOOT_PROVISION_DEVICE_KEY ignored, bootconf.txt does not set SIGNED_BOOT=1  bootmode=000008b0
 ```
 
 `scenarios/device-key-provision*.yaml` run each case in pimu, whose OTP model

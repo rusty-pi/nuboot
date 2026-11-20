@@ -19,6 +19,9 @@ boot:
 milestones:
   - why: "The bootloader verified bootconf.sig and boot.img on a board with signed boot, and started start4.elf out of it."
     line: "medium=ramdisk"
+  - why: "The request is authenticated: no warning that it is not."
+    line: "is not authenticated"
+    absent: true
   - why: "The first boot found the key blank and fused one."
     line: "INFO  provision device key fused  rows=8"
   - why: "The second boot found it."
