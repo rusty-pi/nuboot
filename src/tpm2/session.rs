@@ -15,7 +15,9 @@ use super::{
 };
 use crate::{aes, kdf, keystore, p256, rng, sha256};
 
+/// How many sessions of each family, HMAC and policy, the TPM holds.
 pub const SESSION_SLOTS: usize = 4;
+pub const TABLE_SLOTS: usize = 2 * SESSION_SLOTS;
 const HMAC_SESSION_FIRST: u32 = 0x0200_0000;
 const POLICY_SESSION_FIRST: u32 = 0x0300_0000;
 
@@ -87,14 +89,21 @@ const EMPTY: Session = Session {
     bind_len: 0,
 };
 
-static mut SESSIONS: [Session; SESSION_SLOTS] = [EMPTY; SESSION_SLOTS];
+static mut SESSIONS: [Session; TABLE_SLOTS] = [EMPTY; TABLE_SLOTS];
 
-pub fn table() -> &'static mut [Session; SESSION_SLOTS] {
+pub fn table() -> &'static mut [Session; TABLE_SLOTS] {
     unsafe { &mut *(&raw mut SESSIONS) }
 }
 
-fn handle_of(index: usize, kind: u8) -> u32 {
-    (if kind == KIND_HMAC { HMAC_SESSION_FIRST } else { POLICY_SESSION_FIRST }) + index as u32
+/// The slots of a family of sessions in [`table`]: the HMAC sessions' first,
+/// then the policy and trial sessions', so a family's handle numbers do not
+/// depend on the other's sessions and a loaded context gets its handle back.
+pub fn family(kind: u8) -> core::ops::Range<usize> {
+    if kind == KIND_HMAC { 0..SESSION_SLOTS } else { SESSION_SLOTS..TABLE_SLOTS }
+}
+
+pub fn handle_of(index: usize) -> u32 {
+    if index < SESSION_SLOTS { HMAC_SESSION_FIRST + index as u32 } else { POLICY_SESSION_FIRST + (index - SESSION_SLOTS) as u32 }
 }
 
 pub fn session_of(handle: u32) -> Option<&'static mut Session> {
@@ -103,7 +112,11 @@ pub fn session_of(handle: u32) -> Option<&'static mut Session> {
         0x03 => (POLICY_SESSION_FIRST, false),
         _ => return None,
     };
-    let session = table().get_mut(handle.checked_sub(base)? as usize)?;
+    let number = handle.checked_sub(base)? as usize;
+    if number >= SESSION_SLOTS {
+        return None;
+    }
+    let session = table().get_mut(number + if wants_hmac { 0 } else { SESSION_SLOTS })?;
     (session.used && (session.kind == KIND_HMAC) == wants_hmac).then_some(session)
 }
 
@@ -119,7 +132,7 @@ pub fn flush(handle: u32) -> bool {
 }
 
 pub fn handles() -> impl Iterator<Item = u32> {
-    table().iter().enumerate().filter(|(_, s)| s.used).map(|(i, s)| handle_of(i, s.kind))
+    table().iter().enumerate().filter(|(_, s)| s.used).map(|(i, _)| handle_of(i))
 }
 
 /// One session of a command's authorization area, as it was sent.
@@ -610,7 +623,8 @@ pub fn respond(a: &mut Authorization, code: u32, response: &mut [u8]) -> usize {
 }
 
 fn new_session(kind: u8) -> Result<(usize, &'static mut Session), u32> {
-    let index = table().iter().position(|s| !s.used).ok_or(RC_SESSION_MEMORY)?;
+    let range = family(kind);
+    let index = range.start + table()[range].iter().position(|s| !s.used).ok_or(RC_SESSION_MEMORY)?;
     let session = &mut table()[index];
     *session = EMPTY;
     session.used = true;
@@ -699,7 +713,7 @@ pub fn start_auth_session(code: u32, handles: &[u32], params: &mut In, a: &mut A
         keystore::zero(&mut material);
         keystore::zero(&mut salt_value);
     }
-    a.new_handle = Some(handle_of(index, kind));
+    a.new_handle = Some(handle_of(index));
     let mut response = [0u8; 34];
     response[..2].copy_from_slice(&32u16.to_be_bytes());
     response[2..].copy_from_slice(&session.nonce_tpm);
