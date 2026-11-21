@@ -188,8 +188,7 @@ check "it is what went in" cmp credential.txt online.txt
 check "certify a key" tool tpm2_certify -C ak.ctx -c sk.ctx -g sha256 -o certify.attest -s certify.sig
 check "the TPM verifies the certification" tool tpm2_verifysignature -c ak.ctx -g sha256 -m certify.attest -s certify.sig
 tool tpm2_readpublic -c sk.ctx -n sk.name >/dev/null 2>&1
-tool tpm2_print -t TPMS_ATTEST certify.attest >certify.txt 2>&1
-check "the statement carries the key's name" grep -q "$(xxd -p -c 80 sk.name)" certify.txt
+check "the statement carries the key's name" sh -c 'xxd -p certify.attest | tr -d "\n" | grep -q "$(xxd -p sk.name | tr -d "\n")"'
 
 # A restricted key signs only a digest the TPM ticketed.
 check "hash with a ticket" tool tpm2_hash -C e -g sha256 -o digest.bin -t ticket.bin msg.txt
