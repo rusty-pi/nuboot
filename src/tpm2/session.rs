@@ -188,6 +188,9 @@ impl Entity {
         if matches!(handle, object::RH_OWNER | object::RH_ENDORSEMENT | object::RH_PLATFORM | RH_NULL) {
             return Ok(Entity::hierarchy());
         }
+        if handle < super::PCRS as u32 {
+            return Ok(Entity::hierarchy());
+        }
         if handle >> 24 == 0x01 {
             let nv = super::nv::authority(handle)?;
             return Ok(Entity {

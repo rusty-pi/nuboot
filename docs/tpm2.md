@@ -71,7 +71,7 @@ locality 0 but 17-22, and PCRs 16 and 23 can be reset.
 | `TPM2_Startup`, `Shutdown`, `SelfTest`, `IncrementalSelfTest`, `GetTestResult`, `StirRandom` | accepted; the NV indices are kept as they change ([below](#nv-indices)), so there is nothing to save |
 | `TPM2_GetCapability` | algorithms, handles, commands, PCRs, ECC curves and the TPM properties; the audit and PP command lists, PCR properties, authorization policies and the vendor range are empty; any other capability gets `TPM_RC_VALUE` |
 | `TPM2_GetRandom` | from the SoC's RNG200, up to 32 bytes |
-| `TPM2_PCR_Read`, `PCR_Extend`, `PCR_Event`, `PCR_Reset` | with a password session with an empty password; no other session. `PCR_Read` answers with the first eight registers of a selection and says which it read, and a caller asks again for the rest |
+| `TPM2_PCR_Read`, `PCR_Extend`, `PCR_Event`, `PCR_Reset` | `PCR_Extend`, `PCR_Event` and `PCR_Reset` take a password session with an empty password or an HMAC session, which is keyed with the session key alone because a PCR's authorization value is empty (a client's unsalted, unbound session verifies); a policy session is refused, as a PCR has no policy. `PCR_Extend` and `PCR_Reset` refuse a session with decrypt or encrypt set, and `PCR_Event` one with encrypt set, as their parameters are not sized buffers. `PCR_Read` answers with the first eight registers of a selection and says which it read, and a caller asks again for the rest |
 | `TPM2_Hash` | SHA-256, with the null, owner, endorsement or platform hierarchy for the ticket |
 | `TPM2_ReadClock`, `TestParms` | |
 | `TPM2_CreatePrimary` | an ECC P-256 key, a storage key or one that signs, under the owner, endorsement, platform or null hierarchy |
