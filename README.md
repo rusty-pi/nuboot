@@ -120,6 +120,7 @@ The Pi 4B column is a rev 1.5 (`d03115`). Pi 400 and CM4 are untried.
 | Firmware update as a tryboot: proven at the OS and committed, or dropped | ✅ | ✅ |
 | EEPROM update staged, dropped or reported done | ✅ | ➖ |
 | Update bundles: signed by the update key, kept across resets, tried three times, then dropped or blessed | ✅ | ✅ |
+| Boot counting: the counter in a boot entry's file name renamed through `SetInfo` (systemd-boot), everything else refused, kept across a reset | ✅ | ➖ |
 | ARM at 1800 MHz with the core rail set for the die, slowed while hot or on a PMIC fault (forced) | ✅ | ✅ |
 | ARM at 1800 MHz on rev 1.4 and 1500 MHz on rev 1.2 | ✅ | ➖ |
 | Wake-on-LAN after power off | ✅ | ✅ |

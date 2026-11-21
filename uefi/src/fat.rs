@@ -1,8 +1,9 @@
 //! FAT12, FAT16 and FAT32, with long names: what an EFI system partition is.
 //! Each volume gets `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL`, and each open file or
-//! directory an `EFI_FILE_PROTOCOL`, both read-only to an EFI application. The
-//! firmware itself writes the files an update needs ([`write_file`],
-//! [`remove_file`], [`adopt`]).
+//! directory an `EFI_FILE_PROTOCOL`, both read-only to an EFI application
+//! except for one `SetInfo`: the boot counter of a boot entry's name
+//! ([`counter_step`]). The firmware itself writes the files an update needs
+//! ([`write_file`], [`remove_file`], [`adopt`]).
 
 use alloc::boxed::Box;
 use alloc::vec;
@@ -13,8 +14,8 @@ use r_efi::efi;
 use r_efi::protocols::{file, simple_file_system};
 
 use crate::block::{self, Volume};
-use crate::util::{eq_ignore_case, wstr};
-use crate::{debug, proto, warn};
+use crate::util::{W, eq_ignore_case, wstr};
+use crate::{debug, info, proto, warn};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
@@ -364,13 +365,15 @@ struct File {
     /// The directories from the root down to this one's, for `..`.
     parents: Vec<Entry>,
     pos: u64,
+    /// Opened with `EFI_FILE_MODE_WRITE`, which only a boot entry's file is.
+    writable: bool,
     /// A directory's entries, read when it is first read and again after
     /// `SetPosition(0)`: each `Read` gives one, and reading the whole
     /// directory for every one costs the square of its size.
     listing: Option<Vec<Entry>>,
 }
 
-fn new_file(fs: *mut Fs, entry: Entry, parents: Vec<Entry>) -> *mut file::Protocol {
+fn new_file(fs: *mut Fs, entry: Entry, parents: Vec<Entry>, writable: bool) -> *mut file::Protocol {
     let f = Box::into_raw(Box::new(File {
         proto: file::Protocol {
             revision: file::REVISION,
@@ -393,6 +396,7 @@ fn new_file(fs: *mut Fs, entry: Entry, parents: Vec<Entry>) -> *mut file::Protoc
         entry,
         parents,
         pos: 0,
+        writable,
         listing: None,
     }));
     f as *mut file::Protocol
@@ -408,7 +412,7 @@ extern "efiapi" fn open_volume(this: *mut simple_file_system::Protocol, root: *m
     }
     let fs = this as *mut Fs;
     let entry = unsafe { (*fs).root() };
-    unsafe { *root = new_file(fs, entry, Vec::new()) };
+    unsafe { *root = new_file(fs, entry, Vec::new(), false) };
     efi::Status::SUCCESS
 }
 
@@ -459,7 +463,8 @@ extern "efiapi" fn open(
             return efi::Status::NOT_FOUND;
         }
     }
-    if mode & (file::MODE_WRITE | file::MODE_CREATE) != 0 {
+    let writable = mode & file::MODE_WRITE != 0;
+    if mode & file::MODE_CREATE != 0 || (writable && !(file.is_some() && counted_directory(&stack).is_some())) {
         return efi::Status::WRITE_PROTECTED;
     }
     let (entry, parents) = match file {
@@ -469,7 +474,7 @@ extern "efiapi" fn open(
             None => (fs.root(), Vec::new()),
         },
     };
-    unsafe { *new = new_file(f.fs, entry, parents) };
+    unsafe { *new = new_file(f.fs, entry, parents, writable) };
     efi::Status::SUCCESS
 }
 
@@ -649,8 +654,134 @@ extern "efiapi" fn get_info(this_: *mut file::Protocol, ty: *mut efi::Guid, size
     if need > room { efi::Status::BUFFER_TOO_SMALL } else { efi::Status::SUCCESS }
 }
 
-extern "efiapi" fn set_info(_this: *mut file::Protocol, _ty: *mut efi::Guid, _size: usize, _buf: *mut c_void) -> efi::Status {
-    efi::Status::WRITE_PROTECTED
+/// What `SetInfo` takes: `EFI_FILE_INFO` of a boot entry's file whose name
+/// differs from the current one in the boot counter alone. Times are not
+/// applied; a size, an attribute or any other change is refused.
+extern "efiapi" fn set_info(this_: *mut file::Protocol, ty: *mut efi::Guid, size: usize, buf: *mut c_void) -> efi::Status {
+    if this_.is_null() || ty.is_null() || buf.is_null() {
+        return efi::Status::INVALID_PARAMETER;
+    }
+    let f = this(this_);
+    if unsafe { *ty } != file::INFO_ID {
+        debug!("fat", "SetInfo refused"; reason = "not EFI_FILE_INFO", file = W(&f.entry.name));
+        return efi::Status::WRITE_PROTECTED;
+    }
+    match rename_by_info(f, buf as *const u8, size) {
+        Ok(()) => efi::Status::SUCCESS,
+        Err((status, reason)) => {
+            debug!("fat", "SetInfo refused"; reason = reason, file = W(&f.entry.name), status = status.as_usize());
+            status
+        }
+    }
+}
+
+/// The longest name `SetInfo` reads, in UTF-16 units: no directory holds a
+/// longer one.
+const MAX_NAME: usize = 255;
+
+type Refusal = (efi::Status, &'static str);
+
+/// The name is read up to its terminator, at most [`MAX_NAME`] units, and not
+/// up to `size`: systemd-boot's buffer is sized by `GetInfo` for the old name
+/// and the longer new one is copied into it.
+fn rename_by_info(f: &mut File, buf: *const u8, size: usize) -> Result<(), Refusal> {
+    let header = core::mem::size_of::<file::Info>();
+    if size < header + 2 {
+        return Err((efi::Status::BAD_BUFFER_SIZE, "buffer shorter than EFI_FILE_INFO"));
+    }
+    let info = unsafe { core::ptr::read_unaligned(buf as *const file::Info) };
+    let name_at = unsafe { buf.add(header) } as *const u16;
+    let name: Vec<u16> = (0..=MAX_NAME).map(|i| unsafe { name_at.add(i).read_unaligned() }).take_while(|&c| c != 0).collect();
+    if name.len() > MAX_NAME {
+        return Err((efi::Status::BAD_BUFFER_SIZE, "file name not terminated"));
+    }
+    let Some(directory) = counted_directory(&f.parents).filter(|_| f.entry.attr & ATTR_DIR == 0) else {
+        return Err((efi::Status::WRITE_PROTECTED, "not a file of a boot entry directory"));
+    };
+    if !f.writable {
+        return Err((efi::Status::ACCESS_DENIED, "opened read-only"));
+    }
+    if f.entry.attr & 0x01 != 0 {
+        return Err((efi::Status::WRITE_PROTECTED, "read-only file"));
+    }
+    if info.file_size != f.entry.size as u64 {
+        return Err((efi::Status::WRITE_PROTECTED, "size change"));
+    }
+    if info.attribute != (f.entry.attr & 0x37) as u64 {
+        return Err((efi::Status::WRITE_PROTECTED, "attribute change"));
+    }
+    if name == f.entry.name {
+        return Ok(());
+    }
+    counter_step(&f.entry.name, &name).map_err(|reason| (efi::Status::WRITE_PROTECTED, reason))?;
+    if !long_name_ok(&name) {
+        return Err((efi::Status::INVALID_PARAMETER, "not a valid file name"));
+    }
+    let fs = unsafe { &mut *f.fs };
+    let dir = f.parents.last().cloned().unwrap_or_else(|| fs.root());
+    let old = core::mem::take(&mut f.entry.name);
+    match fs.rename(&dir, &old, &name) {
+        Ok(()) => {
+            info!("fat", "boot entry renamed"; from = W(&old), to = W(&name), dir = directory);
+            f.entry.name = name;
+            Ok(())
+        }
+        Err(status) => {
+            f.entry.name = old;
+            Err((status, "the directory update failed or the name exists"))
+        }
+    }
+}
+
+/// The directory of boot entries a path of parents ends in: the unified
+/// kernel images' `\EFI\Linux` and the type 1 entries' `\loader\entries`.
+fn counted_directory(parents: &[Entry]) -> Option<&'static str> {
+    let wide = |text: &str| -> Vec<u16> { text.encode_utf16().collect() };
+    let is = |names: [&str; 2]| parents.len() == 2 && parents.iter().zip(names).all(|(p, n)| eq_ignore_case(&p.name, &wide(n)));
+    if is(["EFI", "Linux"]) {
+        Some("\\EFI\\Linux")
+    } else if is(["loader", "entries"]) {
+        Some("\\loader\\entries")
+    } else {
+        None
+    }
+}
+
+/// `name` without its boot counting suffix, with the tries left and the tries
+/// done: `+N` or `+N-M` after a non-empty stem and before the extension, as the
+/// boot loader specification's automatic boot assessment has it, `+N` meaning
+/// `+N-0`.
+fn split_counter(name: &[u16]) -> Option<(Vec<u16>, u32, u32)> {
+    let dot = name.iter().rposition(|&c| c == b'.' as u16).unwrap_or(name.len());
+    let (stem, extension) = name.split_at(dot);
+    let plus = stem.iter().rposition(|&c| c == b'+' as u16).filter(|&plus| plus > 0)?;
+    let number = |digits: &[u16]| {
+        let valid = !digits.is_empty() && digits.len() <= 9 && digits.iter().all(|c| (b'0' as u16..=b'9' as u16).contains(c));
+        valid.then(|| digits.iter().fold(0u32, |n, &c| n * 10 + (c - b'0' as u16) as u32))
+    };
+    let counter = &stem[plus + 1..];
+    let (left, done) = match counter.iter().position(|&c| c == b'-' as u16) {
+        Some(dash) => (number(&counter[..dash])?, number(&counter[dash + 1..])?),
+        None => (number(counter)?, 0),
+    };
+    Some(([&stem[..plus], extension].concat(), left, done))
+}
+
+/// Whether a boot entry's file may be renamed from `old` to `new`: both carry
+/// a boot counter, everything else in the two names is the same, and the
+/// counter only counts down: the tries left do not grow and the tries done do
+/// not shrink, as a boot attempt makes it.
+pub fn counter_step(old: &[u16], new: &[u16]) -> Result<(), &'static str> {
+    let (Some((old_base, old_left, old_done)), Some((new_base, new_left, new_done))) = (split_counter(old), split_counter(new)) else {
+        return Err("a name without a boot counter");
+    };
+    if old_base != new_base {
+        return Err("the name differs by more than the boot counter");
+    }
+    if new_left > old_left || new_done < old_done {
+        return Err("the boot counter goes backwards");
+    }
+    Ok(())
 }
 
 extern "efiapi" fn flush(_this: *mut file::Protocol) -> efi::Status {
@@ -1241,38 +1372,52 @@ pub fn remove_file(handle: efi::Handle, dir: &[u16], name: &[u16]) -> Result<(),
 pub fn rename_file(handle: efi::Handle, dir: &[u16], from: &[u16], to: &[u16]) -> Result<(), efi::Status> {
     let fs = fs_of(handle)?;
     let dir = fs.resolve(dir).ok_or(efi::Status::NOT_FOUND)?;
-    let mut bytes = fs.dir_bytes(&dir);
-    let old = bytes.clone();
-    let all = fs.parse(&bytes);
-    let source = all.iter().find(|f| eq_ignore_case(&f.entry.name, from)).ok_or(efi::Status::NOT_FOUND)?;
-    if source.entry.attr & ATTR_DIR != 0 || all.iter().any(|f| eq_ignore_case(&f.entry.name, to)) {
-        return Err(efi::Status::ACCESS_DENIED);
-    }
-    let short = short_slot(to);
-    if short.is_none() && !long_name_ok(to) {
-        return Err(efi::Status::UNSUPPORTED);
-    }
-    let mut entry = [0u8; 32];
-    entry.copy_from_slice(&bytes[source.slot * 32..source.slot * 32 + 32]);
-    for i in source.first..=source.slot {
-        bytes[i * 32] = 0xe5;
-    }
-    let (alias, long) = match short {
-        Some(slot) => (slot, Vec::new()),
-        None => {
-            let alias = alias_for(to, &bytes);
-            (alias, long_entries(to, &alias))
+    fs.rename(&dir, from, to)
+}
+
+impl Fs {
+    /// [`rename_file`] in the directory `dir`. The new entries take the slots
+    /// of the old ones when they fit, so the rename stays within the sectors
+    /// the file's entries were in.
+    fn rename(&mut self, dir: &Entry, from: &[u16], to: &[u16]) -> Result<(), efi::Status> {
+        let mut bytes = self.dir_bytes(dir);
+        let old = bytes.clone();
+        let all = self.parse(&bytes);
+        let source = all.iter().find(|f| eq_ignore_case(&f.entry.name, from)).ok_or(efi::Status::NOT_FOUND)?;
+        if source.entry.attr & ATTR_DIR != 0 || all.iter().any(|f| eq_ignore_case(&f.entry.name, to)) {
+            return Err(efi::Status::ACCESS_DENIED);
         }
-    };
-    let start = free_run(&bytes, long.len() + 1).ok_or(efi::Status::OUT_OF_RESOURCES)?;
-    for (i, e) in long.iter().enumerate() {
-        bytes[(start + i) * 32..(start + i) * 32 + 32].copy_from_slice(e);
+        let short = short_slot(to);
+        if short.is_none() && !long_name_ok(to) {
+            return Err(efi::Status::UNSUPPORTED);
+        }
+        let mut entry = [0u8; 32];
+        entry.copy_from_slice(&bytes[source.slot * 32..source.slot * 32 + 32]);
+        for i in source.first..=source.slot {
+            bytes[i * 32] = 0xe5;
+        }
+        let (alias, long) = match short {
+            Some(slot) => (slot, Vec::new()),
+            None => {
+                let alias = alias_for(to, &bytes);
+                (alias, long_entries(to, &alias))
+            }
+        };
+        let need = long.len() + 1;
+        let start = if need <= source.slot - source.first + 1 {
+            source.first
+        } else {
+            free_run(&bytes, need).ok_or(efi::Status::OUT_OF_RESOURCES)?
+        };
+        for (i, e) in long.iter().enumerate() {
+            bytes[(start + i) * 32..(start + i) * 32 + 32].copy_from_slice(e);
+        }
+        entry[..11].copy_from_slice(&alias);
+        entry[12] = 0;
+        let at = start + long.len();
+        bytes[at * 32..at * 32 + 32].copy_from_slice(&entry);
+        self.store_dir(dir, &old, &bytes)
     }
-    entry[..11].copy_from_slice(&alias);
-    entry[12] = 0;
-    let at = start + long.len();
-    bytes[at * 32..at * 32 + 32].copy_from_slice(&entry);
-    fs.store_dir(&dir, &old, &bytes)
 }
 
 /// Make each `to` in `dir` the file `from` is, and remove `from`: the entries

@@ -47,7 +47,7 @@ from `start4.elf`'s:
 | Runtime services | `GetVariable`, `GetNextVariableName`, `SetVariable`, `QueryVariableInfo` and `ResetSystem` after `ExitBootServices`; every other one returns `EFI_UNSUPPORTED`. The firmware image is typed as runtime services code and data, the variables are a 128 KiB table in it, the DMA arena is runtime data, and the pages of the mailbox, the power manager, the SD host and the VL805's windows are typed as memory-mapped I/O for the OS to map. The OS reads the variables the firmware holds and creates or changes others, and the writes outlast a reset ([below](#variables-the-os-writes)). `PK` and the Secure Boot state refuse writes. The `EFI_RT_PROPERTIES_TABLE` lists only these five, so `SetVirtualAddressMap` is not offered and the OS maps the runtime regions where they are |
 | `ResetSystem` | The power manager's watchdog (`PM_RSTC`/`PM_WDOG`): every kind but a shutdown resets the board, and a shutdown resets it with `PM_RSTS` partition 63 set, where the bootloader halts ([boot.md](boot.md#wake-on-lan)). The same after `ExitBootServices`, which is how Linux resets and powers off |
 | Console | `SimpleTextOutput` and `SimpleTextInput` on the PL011 at `0xFE20_1000`, with VT100 keys |
-| Storage | The SD card on EMMC2 (`0xFE34_0000`), and USB drives (bulk-only mass storage, and UAS on a SuperSpeed port, [below](#usb-attached-scsi)) on the VL805's root ports or behind a hub. `BlockIo`, `DiskIo`, MBR and GPT partitions, and a read-only FAT12/16/32 `SimpleFileSystem` |
+| Storage | The SD card on EMMC2 (`0xFE34_0000`), and USB drives (bulk-only mass storage, and UAS on a SuperSpeed port, [below](#usb-attached-scsi)) on the VL805's root ports or behind a hub. `BlockIo`, `DiskIo`, MBR and GPT partitions, and a FAT12/16/32 `SimpleFileSystem` that is read-only except for boot counting ([below](#boot-counting)) |
 | USB | The VL805's xHCI behind the PCIe root complex, which `start4.elf` has brought up and given its firmware |
 | `EFI_TCG2_PROTOCOL` | The TPM on the VPU ([tpm2.md](tpm2.md)) |
 | `EFI_RNG_PROTOCOL` | RNG200's FIFO, raw |
@@ -204,6 +204,44 @@ it ships. Either of these boots it:
 
 A unified kernel image or systemd-boot signed with `keys/db` boots without
 shim.
+
+### Boot counting
+
+systemd-boot's automatic boot assessment (the UAPI boot loader specification's
+`+TRIES_LEFT-TRIES_DONE` suffix, as in `\EFI\Linux\system_1+3-0.efi`) counts
+a boot attempt by renaming the entry's file with `EFI_FILE_PROTOCOL.SetInfo`,
+and then sets `LoaderBootCountPath`. The OS's `systemd-bless-boot` drops the
+counter when the boot is good, and an entry with no tries left is skipped, so
+the previous one boots. This firmware accepts that one rename and nothing else
+that writes to the file system:
+
+- The file is a regular file of `\EFI\Linux` or `\loader\entries`, opened
+  with `EFI_FILE_MODE_WRITE` (no other file opens for writing; creating a file
+  is refused). `Write`, `Delete` and every other `SetInfo` return
+  `EFI_WRITE_PROTECTED`: another information type, a size or attribute that
+  differs from the file's, a read-only file. Times in the information are
+  ignored. A handle opened read-only gets `EFI_ACCESS_DENIED`.
+- The new name keeps everything of the old one but the counter: the same stem
+  and extension, both with a counter (`+N` or `+N-M`, `+N` meaning `+N-0`),
+  the tries left no larger and the tries done no smaller than before. A name
+  with a path, a name without a counter, and any other change are refused with
+  `EFI_WRITE_PROTECTED`; a name that exists gets `EFI_ACCESS_DENIED`.
+- The directory entry and its long-name entries are rewritten in place in one
+  directory update: the file's clusters, size and times stay, the new entries
+  take the old ones' slots, and the 8.3 alias is chosen to be unique. The
+  write has reached the medium when `SetInfo` returns, on the SD card and on
+  a USB drive alike. The handle that was renamed reads and reports the new
+  name; other handles of the file keep the old name.
+
+Secure Boot does not matter here: the rename changes no content, and an image's
+signature covers its bytes, not its name, so an entry verifies the same
+by its new name. The rule keeps the rename from being more than that: a
+payload cannot use it to move a file to a name that something else reads.
+
+`scenarios/bootcount.yaml` (SD card) and `scenarios/bootcount-usb.yaml` do the
+renames and the refusals from an EFI application and read the directory again
+after a reset; `scenarios/systemd-boot-counting.yaml` has systemd-boot itself
+bump the counter of an entry and start it by the new name.
 
 ### The owner's db
 
@@ -546,6 +584,7 @@ for the loader and Secure Boot:
 ```bash
 pimu boot --scenario scenarios/uefi-hello.yaml           # a signed EFI application off the SD card
 pimu boot --scenario scenarios/usb-hello.yaml            # the same off a USB drive
+pimu boot --scenario scenarios/bootcount.yaml            # systemd-boot's boot counting: the counter in a boot entry's name is renamed through SetInfo
 pimu boot --scenario scenarios/shim-grub.yaml            # Ubuntu's shim, signed with the test key, checks and starts GRUB, which reads grub.cfg
 pimu boot --scenario scenarios/shim-refused.yaml         # Ubuntu's shim as it ships, signed by Microsoft alone, is refused
 pimu boot --scenario scenarios/secure-boot-refused.yaml  # an image not signed by a key in db is refused
@@ -566,9 +605,10 @@ signs.
   the board named by its revision code.
 - Nothing reads `BootOrder`: the boot is always the removable-media path.
 - `dbx` holds image hashes only; a certificate in it is ignored.
-- Storage is read-only to EFI applications. The firmware itself writes only the
-  store's window, its entry in the partition table, and the files an update
-  needs.
+- Storage is read-only to EFI applications except for the boot counter in the
+  name of a boot entry ([above](#boot-counting)), whose name is at most 64
+  characters. The firmware itself writes only the store's window, its entry in
+  the partition table, and the files an update needs.
 - The OS's writes reach the variable store when it calls `ResetSystem`, and only
   when the store is on the SD card or on a drive on the VL805 ([above](#variables-the-os-writes)).
   A write after 64 KiB of records since boot, or with no room left in the bank,
