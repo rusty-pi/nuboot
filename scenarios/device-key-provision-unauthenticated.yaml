@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "device-key-provision-unauthenticated"
+description: "A board that runs with SIGNED_BOOT=1 in its EEPROM configuration and nothing fused for it in the OTP, whose configuration also says NUBOOT_PROVISION_DEVICE_KEY=1: the firmware fuses the device key, and warns that the request is not authenticated."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  eeprom_pubkey: "../out/boot-test-pubkey.bin"
+  boot_order: "0x1"
+  bootconf:
+    - "SIGNED_BOOT=1"
+    - "NUBOOT_PROVISION_DEVICE_KEY=1"
+  sd:
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          boot.img: "../out/boot-test.img"
+          boot.sig: "../out/boot-test.sig"
+  until: "stack high-water mark  thread=1"
+  wall_secs: 900
+
+milestones:
+  - why: "The bootloader verified boot.img against the EEPROM's key and started start4.elf out of it."
+    line: "medium=ramdisk"
+  - why: "The firmware said the request is not authenticated."
+    line: "WARN  provision NUBOOT_PROVISION_DEVICE_KEY is not authenticated, the OTP has no signed boot"
+  - why: "It fused the key all the same."
+    line: "INFO  provision device key fused  rows=8"
+  - why: "Eight rows were programmed."
+    line: "otp        8 rows programmed: 56 57 58 59 60 61 62 63"

@@ -241,6 +241,18 @@ privileged ARM code ([below](#what-is-not-protected)).
   seeds' message begins `nuboot TPM secret v1` and its NV records' begins
   `nuboot NV index record v1`, so an HMAC made for one use is not valid for
   another.
+- **The key can be fused by the firmware**, once, at the first boot of a board
+  whose `bootconf.txt` carries `SIGNED_BOOT=1` and
+  `NUBOOT_PROVISION_DEVICE_KEY=1` and whose rows 56-63 are blank
+  ([keystore.md](keystore.md#fusing-the-device-key)). With signed boot in the
+  OTP the request is the owner's, because the bootloader checks `bootconf.txt`
+  against `bootconf.sig`. **Without it the request and the boot medium are
+  unauthenticated**: the firmware fuses the key and warns, and a
+  physical-access attacker who boots a medium of their own runs code that reads
+  the key from the OTP, and with it the TPM's seeds. The protection of the TPM
+  and of a root sealed to it relies on signed boot being fused. The key is
+  drawn and fused inside the VPU and is not logged. Nothing exports it, so a
+  board whose key is lost or replaced is a board with a new TPM.
 - **No secret is logged.** Logs carry PCR numbers, counts and the first four
   bytes of an extended digest.
 
@@ -478,7 +490,9 @@ Not defended, and not claimed:
 
 ## Operating it
 
-1. Program signed boot in the OTP and fuse a device key; check PCR 1.
+1. Program signed boot in the OTP and fuse a device key (or let the first boot
+   fuse it with `NUBOOT_PROVISION_DEVICE_KEY=1` in the signed `bootconf.txt`);
+   check PCR 1.
 2. Keep `PK` and `KEK`'s private keys offline, and `db`'s apart from the machine
    that builds OS images; build with `PI4_PK_CERT`, `PI4_KEK_CERT` and
    `PI4_DB_CERT`. Sign the shim, GRUB or kernel the board boots with the `db`

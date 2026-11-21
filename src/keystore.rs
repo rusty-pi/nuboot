@@ -210,6 +210,89 @@ pub fn device_key_fused() -> bool {
     }
 }
 
+/// What [`provision_device_key`] found or did.
+pub enum Provisioned {
+    /// Some of rows 56-63 were fused already, so nothing was written: how many
+    /// of the eight are blank, and whether what they hold is a P-256 private
+    /// key.
+    Present { blank_rows: usize, valid: bool },
+    /// A key was drawn, fused and read back: how many rows.
+    Fused { rows: usize },
+}
+
+/// Why the key was not fused.
+pub enum ProvisionFault {
+    NoRandom,
+    NotEnabled,
+    Command,
+    /// A row did not read back as what was programmed into it.
+    Mismatch,
+}
+
+pub struct ProvisionFailed {
+    pub fault: ProvisionFault,
+    /// How many of the eight rows read back as programmed; the others are as
+    /// the fuses left them.
+    pub rows_fused: usize,
+}
+
+/// Fuse a private key of the SoC's own drawing into rows 56-63, if every one of
+/// them is blank. The key is drawn from the random number generator, checked
+/// to be a P-256 private key, programmed and read back, and never leaves the
+/// VPU's registers and stack, which are overwritten after. If any row holds
+/// something, nothing is written, whatever that is: a fuse cannot be cleared, so
+/// what a failed attempt left stays what the next boot finds.
+pub fn provision_device_key() -> Result<Provisioned, ProvisionFailed> {
+    let _section = critical::enter();
+    if let Some(mut present) = private_key() {
+        let blank_rows = present.chunks_exact(4).filter(|row| row.iter().all(|&b| b == 0)).count();
+        let valid = p256::valid_scalar(&present);
+        zero(&mut present);
+        scrub();
+        return Ok(Provisioned::Present { blank_rows, valid });
+    }
+    let mut key = [0u8; ROWS * 4];
+    let mut words = [0u32; ROWS];
+    let result = fuse(&mut key, &mut words);
+    zero(&mut key);
+    for word in words.iter_mut() {
+        unsafe { write_volatile(word, 0) };
+    }
+    scrub();
+    result.map(|()| Provisioned::Fused { rows: ROWS })
+}
+
+fn fuse(key: &mut [u8; ROWS * 4], words: &mut [u32; ROWS]) -> Result<(), ProvisionFailed> {
+    if !draw_key(key) {
+        return Err(ProvisionFailed { fault: ProvisionFault::NoRandom, rows_fused: 0 });
+    }
+    for (word, chunk) in words.iter_mut().zip(key.chunks_exact(4)) {
+        *word = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+    }
+    let programmed = otp::program(FIRST_ROW, words);
+    let rows_fused = words.iter().enumerate().filter(|(i, word)| otp::read(FIRST_ROW + *i as u32) == **word).count();
+    match programmed {
+        Err(otp::ProgramError::NotEnabled) => Err(ProvisionFailed { fault: ProvisionFault::NotEnabled, rows_fused }),
+        Err(otp::ProgramError::Command) => Err(ProvisionFailed { fault: ProvisionFault::Command, rows_fused }),
+        Ok(()) if rows_fused != ROWS => Err(ProvisionFailed { fault: ProvisionFault::Mismatch, rows_fused }),
+        Ok(()) => Ok(()),
+    }
+}
+
+/// A P-256 private key by rejection sampling, none of whose rows is zero, so
+/// that every row has a bit to fuse and a blank row means a part-written key.
+fn draw_key(key: &mut [u8; ROWS * 4]) -> bool {
+    for _ in 0..16 {
+        if !rng::fill(key) {
+            return false;
+        }
+        if p256::valid_scalar(key) && key.chunks_exact(4).all(|row| row.iter().any(|&b| b != 0)) {
+            return true;
+        }
+    }
+    false
+}
+
 fn private_key() -> Option<[u8; ROWS * 4]> {
     let mut private = [0u8; ROWS * 4];
     let mut fused = 0;

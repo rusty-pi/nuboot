@@ -128,6 +128,8 @@ jobs:
           path: |
             out/stock-pieeprom.bin
             out/pieeprom-stamped.bin
+            out/pieeprom-signed.bin
+            out/pieeprom-signed-provision.bin
             out/boot-next.img
             out/boot-next.sig
             out/capsule-apply.cap

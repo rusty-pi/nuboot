@@ -38,6 +38,68 @@ UEFI takes only for the OS's own variables
 ([uefi.md](uefi.md#variables-the-os-writes)). A board without a fused private
 key answers `KEY_NOT_SET`, and its variables stay in memory.
 
+## Fusing the device key
+
+The firmware can fuse its device key at the first boot. The EEPROM's
+`bootconf.txt` asks for it with keys in its `[all]` section:
+
+```text
+[all]
+SIGNED_BOOT=1
+NUBOOT_PROVISION_DEVICE_KEY=1
+```
+
+The stock bootloader ignores the second key. The firmware acts on the request
+only when all of this holds, and otherwise writes nothing:
+
+1. **Both keys are set.** `SIGNED_BOOT=1` is the owner's marker that the board
+   boots only a signed `boot.img`. Without it the firmware logs a warning and
+   writes nothing.
+2. **Rows 56-63 are all blank.** A board with any of them fused is left alone,
+   and the log says whether the rows hold a whole key or only part of one.
+
+**The request is authenticated only with signed boot programmed in the OTP**:
+bit 14 and a bit of 18:15 of the boot mode row (17) set, and a customer key hash
+in rows 47-54. The bootloader of such a board runs only if `bootconf.sig`,
+signed by the key whose hash is fused, covers `bootconf.txt`, so the request is
+the owner's; the firmware does not check the signature again. Without it, the
+firmware still fuses the key and logs a warning that the request is not
+authenticated: whoever can write the EEPROM or the boot medium decides what
+runs, and can run firmware that reads the key. The device key is readable from
+privileged ARM code ([below](#the-device-key-and-the-arm)), so on such a board a
+physical-access attacker who boots a medium of their own can read it. What the
+key protects, the TPM and a root sealed to it, holds only once signed boot is
+fused.
+
+The key is drawn from the SoC's random number generator by rejection sampling:
+a non-zero value below the P-256 group order, none of whose rows is zero. Row
+56 + *i* holds bytes 4*i* to 4*i*+3 of the 32-byte scalar, most significant byte
+first, as little-endian words, which is how the reader takes them. It
+is programmed with the sequence of Raspberry Pi's own firmware (the block's four
+enable words, then each row OR-ed with what it held), read back row by row and
+used in the same boot, before the TPM's seeds and the records' keys are first
+derived, so the first boot of the OS already has a TPM that outlasts a reboot.
+The key stays in the VPU: it is never logged or answered, and the stack and
+registers that held it are overwritten as for any other use of it.
+
+A fuse cannot be cleared, so a failed programming leaves what it blew. It is
+logged as an error and the boot goes on: with no row fused the TPM's seeds are
+drawn for the boot, as on a board without a key; with some fused the next boot
+finds them, counts them as a key already there, leaves them and warns how many
+rows are blank. A board whose key is part-written is not repaired.
+
+```text
+INFO  provision device key fused  rows=8
+INFO  provision device key already fused, nothing written
+WARN  provision device key rows are fused but do not form a whole key, nothing written  blank_rows=1  valid=true
+ERROR provision device key not fused whole  reason="rows read back differently"  rows_fused=7
+WARN  provision NUBOOT_PROVISION_DEVICE_KEY is not authenticated, the OTP has no signed boot  bootmode=000008b0
+WARN  provision NUBOOT_PROVISION_DEVICE_KEY ignored, bootconf.txt does not set SIGNED_BOOT=1  bootmode=000008b0
+```
+
+`scenarios/device-key-provision*.yaml` run each case in pimu, whose OTP model
+only ever sets bits.
+
 ## The device key and the ARM
 
 The firmware answers no tag that returns a fuse.

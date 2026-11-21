@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "device-key-provision-off"
+description: "A board with signed boot and a blank device key, whose EEPROM configuration does not ask for NUBOOT_PROVISION_DEVICE_KEY: the firmware touches no row and says nothing about it."
+
+boot:
+  eeprom: "../out/pieeprom-signed.bin"
+  otp_signed_boot: "../out/boot-test-pubkey.bin"
+  sd:
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          boot.img: "../out/boot-test.img"
+          boot.sig: "../out/boot-test.sig"
+  until: "stack high-water mark  thread=1"
+  wall_secs: 900
+
+milestones:
+  - why: "The bootloader verified boot.img and started start4.elf out of it."
+    line: "medium=ramdisk"
+  - why: "No row was programmed."
+    line: "otp        no row programmed"
+  - why: "The firmware did not look at the device key."
+    line: "INFO  provision"
+    absent: true
+  - why: "Nor did it warn about it."
+    line: "WARN  provision"
+    absent: true

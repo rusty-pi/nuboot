@@ -110,6 +110,7 @@ The Pi 4B column is a rev 1.5 (`d03115`). Pi 400 and CM4 are untried.
 | Secure Boot with Ubuntu's shim signed by a key in `db`; Microsoft's shim and unsigned images refused | ✅ | ➖ |
 | USB: VL805 firmware loaded, EFI application off a USB drive, `NOTIFY_XHCI_RESET` | ✅ | ✅ |
 | Firmware cryptography service, OTP MAC address, GPIO expander SD pins | ✅ | ✅ |
+| Device key fused at the first boot of a board that asks for it with `SIGNED_BOOT=1` (a warning when the OTP has no signed boot: the request and the boot medium are unauthenticated), left alone when set or part-written, ignored without the marker | ✅ | ➖ |
 | TPM 2.0 behind `EFI_TCG2_PROTOCOL`: PCRs, event log, shim and systemd-boot measuring | ✅ | ✅ |
 | TPM NV indices and NvPCRs kept across reboots, root sealed to the TPM | ✅ | ✅ |
 | Variable store in a GPT window on the boot disk: OS writes flushed at `ResetSystem` and read back | ✅ | ✅ |

@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "device-key-provision-no-marker"
+description: "A board with a blank device key whose EEPROM configuration says NUBOOT_PROVISION_DEVICE_KEY=1 but not SIGNED_BOOT=1: the firmware refuses with a warning and programs no row."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  bootconf:
+    - "NUBOOT_PROVISION_DEVICE_KEY=1"
+  sd:
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+  until: "stack high-water mark  thread=1"
+  wall_secs: 600
+
+milestones:
+  - why: "The stock bootloader ignored the key it does not know and started start4.elf."
+    line: "medium=sd"
+  - why: "The firmware refused, and said why."
+    line: "WARN  provision NUBOOT_PROVISION_DEVICE_KEY ignored, bootconf.txt does not set SIGNED_BOOT=1"
+  - why: "No row was programmed."
+    line: "otp        no row programmed"
+  - why: "No key was fused."
+    line: "device key fused"
+    absent: true
