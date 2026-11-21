@@ -11,7 +11,7 @@
 //! Client profile has it except 17-22 (DRTM, which nothing here does), and
 //! PCRs 16 and 23 resettable. The hierarchies, the primary keys under them and
 //! the data and signing keys created under those are in [`object`]; sessions
-//! and policies in [`session`]; signatures and quotes in [`sign`]; what lets a
+//! and policies in [`session`]; signatures, quotes and certifications in [`sign`]; credentials in [`credential`]; what lets a
 //! tool keep them between commands in [`context`].
 
 use crate::keystore::{self, PCRS};
@@ -19,6 +19,8 @@ use crate::{rng, sha256, stc};
 
 #[path = "tpm2/context.rs"]
 mod context;
+#[path = "tpm2/credential.rs"]
+mod credential;
 #[path = "tpm2/nv.rs"]
 mod nv;
 pub use nv::{ExportError as NvExportError, ImportError as NvImportError, RECORD_MAX as NV_RECORD_MAX, export as nv_export, import as nv_import};
@@ -108,7 +110,7 @@ const CC_STIR_RANDOM: u32 = 0x146;
 /// Commands in numeric order, for `TPM_CAP_COMMANDS`: the number of handles in
 /// the command (bits 25-27 of `TPMA_CC`), and 8 more when the response has a
 /// handle (bit 28).
-const COMMANDS: [(u32, u32); 49] = [
+const COMMANDS: [(u32, u32); 52] = [
     (object::CC_EVICT_CONTROL, 2),
     (nv::CC_NV_UNDEFINE_SPACE, 2),
     (nv::CC_NV_DEFINE_SPACE, 1),
@@ -123,6 +125,8 @@ const COMMANDS: [(u32, u32); 49] = [
     (CC_STARTUP, 0),
     (CC_SHUTDOWN, 0),
     (CC_STIR_RANDOM, 0),
+    (credential::CC_ACTIVATE_CREDENTIAL, 2),
+    (sign::CC_CERTIFY, 2),
     (CC_PCR_EVENT, 1),
     (nv::CC_NV_READ, 2),
     (session::CC_POLICY_SECRET, 2),
@@ -136,6 +140,7 @@ const COMMANDS: [(u32, u32); 49] = [
     (object::CC_CONTEXT_SAVE, 1),
     (object::CC_FLUSH_CONTEXT, 0),
     (object::CC_LOAD_EXTERNAL, 8),
+    (credential::CC_MAKE_CREDENTIAL, 1),
     (nv::CC_NV_READ_PUBLIC, 1),
     (session::CC_POLICY_AUTHORIZE, 1),
     (session::CC_POLICY_AUTH_VALUE, 1),
@@ -168,7 +173,7 @@ struct Spec {
     authorized: usize,
 }
 
-const OBJECT_COMMANDS: [Spec; 35] = [
+const OBJECT_COMMANDS: [Spec; 38] = [
     Spec { code: object::CC_EVICT_CONTROL, handles: 2, authorized: 1 },
     Spec { code: object::CC_CREATE_PRIMARY, handles: 1, authorized: 1 },
     Spec { code: object::CC_CREATE, handles: 1, authorized: 1 },
@@ -178,6 +183,9 @@ const OBJECT_COMMANDS: [Spec; 35] = [
     Spec { code: session::CC_POLICY_AUTHORIZE, handles: 1, authorized: 0 },
     Spec { code: sign::CC_SIGN, handles: 1, authorized: 1 },
     Spec { code: sign::CC_QUOTE, handles: 1, authorized: 1 },
+    Spec { code: sign::CC_CERTIFY, handles: 2, authorized: 2 },
+    Spec { code: credential::CC_ACTIVATE_CREDENTIAL, handles: 2, authorized: 2 },
+    Spec { code: credential::CC_MAKE_CREDENTIAL, handles: 1, authorized: 0 },
     Spec { code: sign::CC_VERIFY_SIGNATURE, handles: 1, authorized: 0 },
     Spec { code: session::CC_POLICY_SECRET, handles: 2, authorized: 1 },
     Spec { code: object::CC_READ_PUBLIC, handles: 1, authorized: 0 },
@@ -479,6 +487,9 @@ fn dispatch(code: u32, handles: &[u32; 3], params: &mut In, a: &mut session::Aut
         }
         sign::CC_SIGN => sign::sign(&mut command),
         sign::CC_QUOTE => sign::quote(&mut command),
+        sign::CC_CERTIFY => sign::certify(&mut command),
+        credential::CC_ACTIVATE_CREDENTIAL => credential::activate(&mut command),
+        credential::CC_MAKE_CREDENTIAL => credential::make(&mut command),
         sign::CC_VERIFY_SIGNATURE => sign::verify(&mut command),
         session::CC_POLICY_SECRET => session::policy_secret(handles[0], handles[1], params, a),
         object::CC_READ_PUBLIC => object::read_public_command(&mut command),

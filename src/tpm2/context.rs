@@ -7,7 +7,7 @@
 //! started again and not on another board.
 
 use super::object::{self, Origin, SLOTS, TRANSIENT_FIRST};
-use super::session::{self, SESSION_SLOTS};
+use super::session;
 use super::{In, RC_COMMAND_SIZE, RC_HANDLE, RC_INTEGRITY, RC_REFERENCE_H0, RC_OBJECT_MEMORY, RC_P, RC_RANGE, RC_SESSION_MEMORY, RC_SIZE, RC_1};
 use super::session::Authorization;
 use crate::{aes, kdf, keystore, sha256};
@@ -224,15 +224,18 @@ pub fn load(params: &mut In, a: &mut Authorization) -> Result<(), u32> {
             TRANSIENT_FIRST + index as u32
         }
         SESSION => {
-            let index = saved as usize & 0xffff;
-            let family = saved & 0xff00_0000;
-            let free = if index < SESSION_SLOTS && !session::table()[index].used { index } else { session::table().iter().position(|s| !s.used).ok_or(RC_SESSION_MEMORY)? };
+            let kind = *input.buf.get(input.at).ok_or(RC_INTEGRITY | RC_P | RC_1)?;
+            let family = session::family(kind);
+            let wanted = family.start + (saved as usize & 0xffff);
+            let free = if family.contains(&wanted) && !session::table()[wanted].used {
+                wanted
+            } else {
+                family.start + session::table()[family.clone()].iter().position(|s| !s.used).ok_or(RC_SESSION_MEMORY)?
+            };
             let s = &mut session::table()[free];
             read_session(&mut input, s).ok_or(RC_INTEGRITY | RC_P | RC_1)?;
             s.used = true;
-            let base = if s.kind == 0 { 0x0200_0000 } else { 0x0300_0000 };
-            let _ = family;
-            base + free as u32
+            session::handle_of(free)
         }
         _ => return Err(RC_INTEGRITY | RC_P | RC_1),
     };

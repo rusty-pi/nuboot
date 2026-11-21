@@ -53,6 +53,20 @@ refused() {
     echo "ok: $what refused"
   fi
 }
+refused_with() {
+  local what="$1" pattern="$2"
+  shift 2
+  if "$@" >"$work/out.txt" 2>&1; then
+    echo "FAILED: $what was accepted"
+    failures=$((failures + 1))
+  elif grep -qi -- "$pattern" "$work/out.txt"; then
+    echo "ok: $what refused with $pattern"
+  else
+    echo "FAILED: $what was refused, but not with $pattern"
+    sed 's/^/    /' "$work/out.txt" | tail -8
+    failures=$((failures + 1))
+  fi
+}
 
 echo "top secret" >secret.txt
 
@@ -127,6 +141,54 @@ refused "the quote of another nonce" tool tpm2_checkquote -u ak.pub -m quote.msg
 tool tpm2_pcrextend 0:sha256=0000000000000000000000000000000000000000000000000000000000000002 >/dev/null 2>&1
 tool tpm2_quote -c ak.ctx -l sha256:0,7 -q 0011223344 -m quote2.msg -s quote2.sig -o quote2.pcrs -g sha256 >/dev/null 2>&1
 refused "the new quote against the old PCRs" tool tpm2_checkquote -u ak.pub -m quote2.msg -s quote2.sig -f quote.pcrs -g sha256 -q 0011223344
+
+# A credential made offline for the attestation key and the endorsement key's
+# public part, which only the TPM that holds both opens, as a registrar does it
+# for Keylime's agent.
+openssl rand 32 >credential.txt
+ak_name="$(xxd -p -c 80 ak.name)"
+check "make a credential offline" tool tpm2_makecredential -T none -e ek.pub -s credential.txt -n "$ak_name" -o cred.out
+activate() {
+  tool tpm2_startauthsession --policy-session -S act.ctx || return 1
+  tool tpm2_policysecret -S act.ctx -c e || return 1
+  tool tpm2_activatecredential -c ak.ctx -C ek.ctx -i "$1" -o "$2" -P session:act.ctx
+}
+check "activate the credential" activate cred.out recovered.txt
+check "the credential is what went in" cmp credential.txt recovered.txt
+tool tpm2_readpublic -c prim.ctx -n other.name >/dev/null 2>&1
+check "make a credential for another name" tool tpm2_makecredential -T none -e ek.pub -s credential.txt -n "$(xxd -p -c 80 other.name)" -o other.out
+refused_with "activating a credential made for another name" "integrity" activate other.out wrong.txt
+flip() {
+  python3 - "$1" "$2" "$3" <<'PY'
+import sys
+data = bytearray(open(sys.argv[1], "rb").read())
+data[int(sys.argv[3])] ^= 0xff
+open(sys.argv[2], "wb").write(data)
+PY
+}
+flip cred.out tampered-mac.out 14
+refused_with "activating a credential with a changed HMAC" "integrity" activate tampered-mac.out wrong.txt
+flip cred.out tampered-data.out 50
+refused_with "activating a credential with a changed ciphertext" "integrity" activate tampered-data.out wrong.txt
+flip cred.out tampered-point.out "$(($(stat -c %s cred.out) - 1))"
+refused_with "activating a credential with a changed point" "not on the required curve" activate tampered-point.out wrong.txt
+activate_owner_secret() {
+  tool tpm2_startauthsession --policy-session -S act.ctx || return 1
+  tool tpm2_policysecret -S act.ctx -c o || return 1
+  tool tpm2_activatecredential -c ak.ctx -C ek.ctx -i cred.out -o wrong.txt -P session:act.ctx
+}
+refused_with "activating under a policy secret of the owner hierarchy" "policy check failed" activate_owner_secret
+refused_with "activating with a password for the endorsement key" "0xB2F" tool tpm2_activatecredential -c ak.ctx -C ek.ctx -i cred.out -o wrong.txt
+check "make a credential through the TPM" tool tpm2_makecredential -e ek.pub -s credential.txt -n "$ak_name" -o online.out
+check "activate it" activate online.out online.txt
+check "it is what went in" cmp credential.txt online.txt
+
+# An attestation key certifies another loaded key: the statement names it, and
+# the signature checks out.
+check "certify a key" tool tpm2_certify -C ak.ctx -c sk.ctx -g sha256 -o certify.attest -s certify.sig
+check "the TPM verifies the certification" tool tpm2_verifysignature -c ak.ctx -g sha256 -m certify.attest -s certify.sig
+tool tpm2_readpublic -c sk.ctx -n sk.name >/dev/null 2>&1
+check "the statement carries the key's name" sh -c 'xxd -p certify.attest | tr -d "\n" | grep -q "$(xxd -p sk.name | tr -d "\n")"'
 
 # A restricted key signs only a digest the TPM ticketed.
 check "hash with a ticket" tool tpm2_hash -C e -g sha256 -o digest.bin -t ticket.bin msg.txt

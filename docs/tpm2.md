@@ -74,7 +74,8 @@ locality 0 but 17-22, and PCRs 16 and 23 can be reset.
 | `TPM2_CreatePrimary` | an ECC P-256 key, a storage key or one that signs, under the owner, endorsement, platform or null hierarchy |
 | `TPM2_Create`, `Load`, `ReadPublic`, `Unseal` | sealed data and ECDSA signing keys under a primary storage key |
 | `TPM2_LoadExternal` | a public key, ECC P-256 or RSA of 2048, 3072 or 4096 bits (exponent 65537), under the owner, endorsement, platform or null hierarchy; or, under the null hierarchy only, an HMAC-SHA256 key with its secret part, which `PolicySigned` uses |
-| `TPM2_Sign`, `Quote`, `VerifySignature` | ECDSA over P-256 and SHA-256, with a key that signs; a restricted key (an attestation key) signs only what the TPM attested or a digest that `Hash` ticketed; `VerifySignature` also checks RSASSA (PKCS#1 v1.5) with SHA-256 by a loaded RSA public key of 2048, 3072 or 4096 bits |
+| `TPM2_Sign`, `Quote`, `Certify`, `VerifySignature` | ECDSA over P-256 and SHA-256, with a key that signs; a restricted key (an attestation key) signs only what the TPM attested or a digest that `Hash` ticketed; `Certify` signs a statement of another loaded object's name and qualified name; `VerifySignature` also checks RSASSA (PKCS#1 v1.5) with SHA-256 by a loaded RSA public key of 2048, 3072 or 4096 bits |
+| `TPM2_MakeCredential`, `ActivateCredential` | credential protection with an ECC P-256 key that decrypts (an endorsement key): the credential, up to 32 bytes, is bound to the name of the object it is for. `ActivateCredential` needs the object's own authorization and the endorsement key's policy session |
 | `TPM2_ContextSave`, `ContextLoad`, `FlushContext` | objects and sessions |
 | `TPM2_EvictControl` | a primary key made persistent at a handle in the owner's or the platform's range, two at most, and removed again; they last until the TPM restarts, and a tool that finds none makes the primary again |
 | `TPM2_StartAuthSession` | HMAC, policy and trial sessions, unsalted or salted to a primary key with ECDH, bound to nothing or to an object, with AES-128-CFB for parameter encryption or none |
@@ -89,7 +90,18 @@ An endorsement key (`tpm2_createek`, the TCG template with a `PolicySecret` on
 the endorsement hierarchy) is a primary like any other, so its public key is the
 same at every boot on a board with the device key fused, and `tpm2_createak`
 makes an attestation key under it. `tpm2_quote` signs the PCRs with that key and
-`tpm2_checkquote` checks the result without the TPM.
+`tpm2_checkquote` checks the result without the TPM, and `tpm2_certify` has it
+sign the name of another loaded key.
+
+A registrar proves that an attestation key lives in the same TPM as an
+endorsement key with a credential: `tpm2_makecredential` (offline, from the
+endorsement key's public part, or through `TPM2_MakeCredential`) wraps a secret
+for the attestation key's name, and `tpm2_activatecredential` opens it with the
+attestation key's authorization and a policy session that has met `PolicySecret`
+on the endorsement hierarchy. The seed comes from an ECDH exchange with the
+endorsement key (`KDFe`, label `IDENTITY`); an AES-128-CFB key (`STORAGE`) and
+an HMAC key (`INTEGRITY`) follow from it with `KDFa`. A credential made for
+another name, or altered, gets `TPM_RC_INTEGRITY`.
 
 A policy that a key authorizes works as `systemd-measure` and
 `systemd-cryptenroll --tpm2-public-key` use it: the policy of the sealed object
@@ -156,7 +168,7 @@ the hierarchy and the hash of the template. A sealed object is kept as the blob
 `TPM2_Create` returned (AES-128-CFB under a key from the parent's seed and the
 object's name, with an HMAC), and is plaintext only inside `Unseal`.
 
-The TPM has four object slots and four sessions. A tool that runs one
+The TPM has four object slots, four HMAC sessions and four policy or trial sessions. A tool that runs one
 command per process, such as `tpm2-tools`, leaves its objects loaded, so
 the kernel's resource manager (`/dev/tpmrm0`) is what to use: it saves and
 loads around each command, with `ContextSave`, `ContextLoad` and
@@ -164,7 +176,7 @@ loads around each command, with `ContextSave`, `ContextLoad` and
 
 A context holds one object or session, at most 1024 bytes before it is
 encrypted (an object with an RSA-4096 public key is the largest). Saving a
-session frees its slot; saving an object leaves it loaded until it is flushed.
+session frees its slot, and the session loads back with the handle it had when its slot is free; saving an object leaves it loaded until it is flushed.
 Saved contexts are encrypted under keys that last for the boot, so they load
 again until the TPM restarts and not on another board.
 
@@ -240,7 +252,10 @@ drives it with the real tools (`tools/tpm-sim/tpm2-tools-test.sh`): the primary 
 unsealing, a PCR policy built by a trial session and refused once a PCR has
 changed, a salted HMAC session that also encrypts the secret on its way in, a
 signing key whose signature OpenSSL accepts, an endorsement key, an
-attestation key and a quote that `tpm2_checkquote` accepts, and a secret sealed
+attestation key, a quote that `tpm2_checkquote` accepts, a certification of a
+key, and a credential made for the attestation key that is activated with the
+endorsement key's policy and refused when it is altered, made for another name
+or activated under another policy, and a secret sealed
 under a policy that an RSA key authorizes and unsealed with that key's
 signature of a PCR policy, a primary key made persistent and removed, and,
 with `systemd-cryptenroll` and `cryptsetup` installed, a LUKS2 volume whose key
