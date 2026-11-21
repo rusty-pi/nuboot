@@ -398,9 +398,24 @@ pub fn execute(command: &[u8], response: &mut [u8]) -> usize {
             len
         }
         Err(rc) => {
-            crate::warn!("tpm2", "command failed"; code = format_args!("{:#x}", code), rc = format_args!("{:#x}", rc));
+            report_failure(code, rc);
             fail(response, rc)
         }
+    }
+}
+
+/// Answers a payload gets in the ordinary course of its start-up and of the
+/// kernel's resource manager: `TPM2_Startup` of a TPM the firmware has already
+/// started, and `TPM2_ContextSave` of a handle the TPM no longer holds.
+fn routine_refusal(code: u32, rc: u32) -> bool {
+    matches!((code, rc), (CC_STARTUP, RC_INITIALIZE) | (object::CC_CONTEXT_SAVE, RC_REFERENCE_H0))
+}
+
+fn report_failure(code: u32, rc: u32) {
+    if routine_refusal(code, rc) {
+        crate::debug!("tpm2", "command refused"; code = format_args!("{:#x}", code), rc = format_args!("{:#x}", rc));
+    } else {
+        crate::warn!("tpm2", "command failed"; code = format_args!("{:#x}", code), rc = format_args!("{:#x}", rc));
     }
 }
 
@@ -431,7 +446,7 @@ fn object_command(spec: &Spec, tag: u16, input: &mut In, response: &mut [u8]) ->
     match result {
         Ok(len) => len,
         Err(rc) => {
-            crate::warn!("tpm2", "command failed"; code = format_args!("{:#x}", spec.code), rc = format_args!("{:#x}", rc));
+            report_failure(spec.code, rc);
             fail(response, rc)
         }
     }
