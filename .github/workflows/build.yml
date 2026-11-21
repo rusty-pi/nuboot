@@ -188,6 +188,8 @@ jobs:
             out/reboot-flags.efi
             out/gpio-tags.efi
             out/tpm2-test.efi
+            out/bootcount.efi
+            out/bootcount-entry.bin
             out/store-enroll.efi
             out/store-enrolled.efi
             out/db-x.auth
