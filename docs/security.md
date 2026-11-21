@@ -221,7 +221,7 @@ loader, and one update build from another, by the hash of the VPU image.
 
 ## The device key and the TPM's secrets
 
-OTP rows 56-63 hold a per-board P-256 private key. The VPU uses it on the OS's
+OTP rows 56-63 hold a per-board P-256 private key. Row 56 holds its most significant four bytes, as in Raspberry Pi's stock firmware, so a key fused with `rpi-otp-private-key` and one fused by nuboot read the same under both. The VPU uses it on the OS's
 and UEFI's behalf and never gives it out, but the OTP block is not hidden from
 privileged ARM code ([below](#what-is-not-protected)).
 

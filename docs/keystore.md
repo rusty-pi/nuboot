@@ -18,7 +18,8 @@ the rest start at zero.
 The VPU answers the mailbox tags Raspberry Pi's `rpi-fw-crypto` speaks
 (`0x0003008e` to `0x00030095`, `0x00038090`, `0x0003009c`, `0x0003809c`), for
 key id 1, the device private key in OTP rows 56-63, read as a P-256 private key,
-most significant byte first: an ECDSA signature of a SHA-256 hash (in DER), an
+most significant byte first, row 56 holding the first four bytes (the layout of
+stock `start4.elf`): an ECDSA signature of a SHA-256 hash (in DER), an
 HMAC-SHA256 of up to 2048 bytes with the key's 32 raw bytes, and the public key
 (`SubjectPublicKeyInfo`). The key itself is never answered, nor is a key
 generated or its usage set.
@@ -74,7 +75,9 @@ fused.
 The key is drawn from the SoC's random number generator by rejection sampling:
 a non-zero value below the P-256 group order, none of whose rows is zero. Row
 56 + *i* holds bytes 4*i* to 4*i*+3 of the 32-byte scalar, most significant byte
-first, as little-endian words, which is how the reader takes them. It
+first, as big-endian words: row 56 holds the most significant four bytes,
+which is how Raspberry Pi's stock `start4.elf` and `rpi-otp-private-key` take
+them, so a key fused by either reads the same under the other. It
 is programmed with the sequence of Raspberry Pi's own firmware (the block's four
 enable words, then each row OR-ed with what it held), read back row by row and
 used in the same boot, before the TPM's seeds and the records' keys are first
