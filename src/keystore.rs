@@ -267,7 +267,7 @@ fn fuse(key: &mut [u8; ROWS * 4], words: &mut [u32; ROWS]) -> Result<(), Provisi
         return Err(ProvisionFailed { fault: ProvisionFault::NoRandom, rows_fused: 0 });
     }
     for (word, chunk) in words.iter_mut().zip(key.chunks_exact(4)) {
-        *word = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+        *word = u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
     }
     let programmed = otp::program(FIRST_ROW, words);
     let rows_fused = words.iter().enumerate().filter(|(i, word)| otp::read(FIRST_ROW + *i as u32) == **word).count();
@@ -299,7 +299,7 @@ fn private_key() -> Option<[u8; ROWS * 4]> {
     for (i, chunk) in private.chunks_exact_mut(4).enumerate() {
         let row = otp::read(FIRST_ROW + i as u32);
         fused |= row;
-        chunk.copy_from_slice(&row.to_le_bytes());
+        chunk.copy_from_slice(&row.to_be_bytes());
     }
     (fused != 0).then_some(private)
 }

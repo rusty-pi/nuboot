@@ -40,7 +40,7 @@ GLOBAL = uuid.UUID("8be4df61-93ca-11d2-aa0d-00e098032b8c").bytes_le
 
 
 def seal_of(digest):
-    private = b"".join(struct.pack("<I", r) for r in ROWS)
+    private = b"".join(struct.pack(">I", r) for r in ROWS)
     return hmac.new(private, digest, hashlib.sha256).digest()
 
 
