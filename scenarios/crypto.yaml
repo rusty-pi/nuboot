@@ -29,6 +29,8 @@ milestones:
     line: "runtime test: the device key may sign and HMAC at first ok"
   - why: "The public key is a P-256 key on the curve."
     line: "runtime test: the public key comes as a P-256 SubjectPublicKeyInfo ok"
+  - why: "The rows are read as stock start4.elf reads them, most significant word first: the public key is the one stock gives for these rows."
+    line: "runtime test: the public key is the one Raspberry Pi's start4.elf gives for the same rows ok"
   - why: "The signature is the device key's: an independent verifier with the public key accepts it."
     line: "runtime test: the signature verifies against the public key ok"
   - why: "The private key is never answered."
