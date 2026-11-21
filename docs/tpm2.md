@@ -15,7 +15,10 @@ the TPM in one of two ways, by what it describes the board with:
 Both end in the same TPM: the commands, the PCRs and the keys are the same.
 
 The TPM is started when the firmware is. A `TPM2_Startup` from a payload gets
-`TPM_RC_INITIALIZE`.
+`TPM_RC_INITIALIZE`, and a `TPM2_ContextSave` of a handle the TPM no longer holds
+gets `TPM_RC_REFERENCE_H0`. Both are the answers the kernel's driver and
+resource manager expect, so the log records them at `debug`; any other refused
+command is a `warn`.
 
 ## What is measured
 
