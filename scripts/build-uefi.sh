@@ -31,6 +31,10 @@
 #                     uefi/test-apps/runtime: exit boot services and use the
 #                     variable services the OS is left with, fill the flash
 #                     store with them, and shut down
+#   out/bootcount.efi, out/bootcount-entry.bin
+#                     uefi/test-apps/bootcount: rename a boot entry's counter
+#                     through SetInfo, as systemd-boot does, and check what
+#                     else is refused; the file is the content of the entries
 #   out/hello-owner.efi, out/hello-stranger.efi
 #                     hello.efi signed by a leaf that the owner's CA in
 #                     out/test-keys/owner.der issued, and by a key nothing
@@ -271,6 +275,11 @@ sign "$rt/target/aarch64-unknown-uefi/release/nvpersist.efi" "$out/nv-persist.ef
 sign "$rt/target/aarch64-unknown-uefi/release/setup.efi" "$out/firmware-setup.efi"
 sign "$rt/target/aarch64-unknown-uefi/release/compact.efi" "$out/store-compact.efi"
 sign "$rt/target/aarch64-unknown-uefi/release/shutdown.efi" "$out/runtime-shutdown.efi"
+
+bc="$here/uefi/test-apps/bootcount"
+(cd "$bc" && cargo build --release --target aarch64-unknown-uefi)
+sign "$bc/target/aarch64-unknown-uefi/release/bootcount.efi" "$out/bootcount.efi"
+python3 -c 'import sys; sys.stdout.buffer.write(bytes((i * 7 + 3) & 255 for i in range(5000)))' >"$out/bootcount-entry.bin"
 
 st="$here/uefi/test-apps/store"
 (cd "$st" && cargo build --release --target aarch64-unknown-uefi)

@@ -1,0 +1,55 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "bootcount"
+description: "Boot counting, as systemd-boot does it: an EFI application renames the boot counter in the name of a unified kernel image and of a type 1 entry through EFI_FILE_PROTOCOL.SetInfo and finds the file readable under the new name through the same handle. A rename that changes more than the counter, goes back, lands on an existing name, changes the size or an attribute, or is of a file outside \\EFI\\Linux and \\loader\\entries is refused. After a reset the card holds the new names."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  sd:
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/bootcount.efi"
+          EFI/Linux/test_1+3-0.efi: "../out/bootcount-entry.bin"
+          EFI/Linux/test_1+0-3.efi: "../out/bootcount-entry.bin"
+          EFI/Linux/plain.efi: "../out/bootcount-entry.bin"
+          loader/entries/type1_1+3.conf: "../out/bootcount-entry.bin"
+          data/entry+3-0.efi: "../out/bootcount-entry.bin"
+  until: "bootcount test: done"
+  wall_secs: 900
+
+milestones:
+  - why: "SetInfo renames +3-0 to +2-1, the way systemd-boot bumps the counter."
+    line: "bootcount test: the counter is renamed to +2-1 ok"
+  - why: "The firmware logs the rename."
+    line: "boot entry renamed"
+  - why: "The handle that was renamed reports the new name and still reads the same bytes."
+    line: "bootcount test: the handle reports the new name ok"
+  - why: "The directory lists the new name and not the old one."
+    line: "bootcount test: the directory no longer lists the old name ok"
+  - why: "A second rename, +2-1 to +1-2, through the same handle."
+    line: "bootcount test: the counter is renamed again to +1-2 ok"
+  - why: "A rename to anything but the counter is refused."
+    line: "bootcount test: another name is refused ok"
+  - why: "A rename onto an existing name is refused."
+    line: "bootcount test: a name that exists is refused ok"
+  - why: "A counter that goes back is refused."
+    line: "bootcount test: a counter that goes back is refused ok"
+  - why: "A size change is refused."
+    line: "bootcount test: a size change is refused ok"
+  - why: "An attribute change is refused."
+    line: "bootcount test: an attribute change is refused ok"
+  - why: "A file outside the entry directories cannot be opened for writing or renamed."
+    line: "bootcount test: a file outside the entry directories is refused ok"
+  - why: "A name with no counter does not get one."
+    line: "bootcount test: a counterless entry cannot get a counter ok"
+  - why: "A type 1 entry takes the rename too."
+    line: "bootcount test: a type 1 entry is renamed to a longer name in a buffer sized for the old one ok"
+  - why: "The card holds the new names after a reset."
+    line: "bootcount test: the medium lists the last name ok"
+  - why: "The renamed file has its content after the reset."
+    line: "bootcount test: the renamed file has its content ok"
+  - why: "It ran to the end."
+    line: "bootcount test: done"
