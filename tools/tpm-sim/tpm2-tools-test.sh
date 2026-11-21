@@ -109,6 +109,16 @@ check "load the object sealed through the session" tool tpm2_load -C prim.ctx -u
 check "unseal it" tool tpm2_unseal -c hseal.ctx -o hout.txt
 check "the secret is what went in" cmp secret.txt hout.txt
 
+# The PCR commands, which tpm2-tools send with a password session. The HMAC
+# session of other clients is in tests/pcr_session.rs: these tools cannot take one.
+check "reset PCR 16" tool tpm2_pcrreset 16
+check "extend PCR 16" tool tpm2_pcrextend 16:sha256=0000000000000000000000000000000000000000000000000000000000000005
+tool tpm2_pcrread sha256:16 -o pcr16.bin >/dev/null 2>&1
+printf '\0%.0s' $(seq 32) >zeros.bin
+printf '%064x' 5 | xxd -r -p >five.bin
+cat zeros.bin five.bin | sha256sum | cut -d' ' -f1 | xxd -r -p >expected16.bin
+check "PCR 16 is the digest extended onto zeros" cmp pcr16.bin expected16.bin
+
 # A signing key under the primary: what it signs checks out with the TPM and
 # with OpenSSL.
 echo "a message to sign" >msg.txt

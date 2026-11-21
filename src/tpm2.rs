@@ -173,7 +173,7 @@ struct Spec {
     authorized: usize,
 }
 
-const OBJECT_COMMANDS: [Spec; 38] = [
+const OBJECT_COMMANDS: [Spec; 41] = [
     Spec { code: object::CC_EVICT_CONTROL, handles: 2, authorized: 1 },
     Spec { code: object::CC_CREATE_PRIMARY, handles: 1, authorized: 1 },
     Spec { code: object::CC_CREATE, handles: 1, authorized: 1 },
@@ -212,6 +212,9 @@ const OBJECT_COMMANDS: [Spec; 38] = [
     Spec { code: nv::CC_NV_EXTEND, handles: 2, authorized: 1 },
     Spec { code: nv::CC_NV_INCREMENT, handles: 2, authorized: 1 },
     Spec { code: nv::CC_NV_SET_BITS, handles: 2, authorized: 1 },
+    Spec { code: CC_PCR_EXTEND, handles: 1, authorized: 1 },
+    Spec { code: CC_PCR_EVENT, handles: 1, authorized: 1 },
+    Spec { code: CC_PCR_RESET, handles: 1, authorized: 1 },
 ];
 
 const ALG_HMAC: u16 = 0x0005;
@@ -384,7 +387,7 @@ pub fn execute(command: &[u8], response: &mut [u8]) -> usize {
         return object_command(spec, tag, &mut input, response);
     }
     let mut body = Out { buf: response, at: 10 };
-    let result = run(code, tag, &mut input, &mut body);
+    let result = run(code, &mut input, &mut body);
     // A command that took a hierarchy's proof (`Hash`'s ticket) has had the
     // device key's pads on the stack.
     keystore::scrub();
@@ -457,6 +460,9 @@ fn object_run(spec: &Spec, tag: u16, input: &mut In, response: &mut [u8]) -> Res
     for handle in handles.iter_mut().take(spec.handles) {
         *handle = input.u32().ok_or(RC_COMMAND_SIZE)?;
     }
+    if matches!(spec.code, CC_PCR_EXTEND | CC_PCR_EVENT | CC_PCR_RESET) && handles[0] >= PCRS as u32 {
+        return Err(RC_HANDLE | RC_1);
+    }
     let area = if tag == ST_SESSIONS {
         let size = input.u32().ok_or(RC_COMMAND_SIZE)? as usize;
         input.take(size).ok_or(RC_COMMAND_SIZE)?
@@ -465,6 +471,7 @@ fn object_run(spec: &Spec, tag: u16, input: &mut In, response: &mut [u8]) -> Res
     };
     let (sent, count) = session::parse_area(area)?;
     let wire = &input.buf[input.at..];
+    refuse_unencryptable(spec.code, &sent[..count])?;
     let mut names = [([0u8; 34], 0usize); 3];
     for (name, handle) in names.iter_mut().zip(&handles).take(spec.handles) {
         *name = name_for(*handle);
@@ -484,6 +491,23 @@ fn object_run(spec: &Spec, tag: u16, input: &mut In, response: &mut [u8]) -> Res
     result
 }
 
+/// A session cannot decrypt a first parameter or encrypt a first response
+/// parameter that is not a sized buffer: `PCR_Extend` and `PCR_Reset` take no
+/// such parameter, and `PCR_Event` answers with a list of digests.
+fn refuse_unencryptable(code: u32, sent: &[session::Sent]) -> Result<(), u32> {
+    const DECRYPT: u8 = 0x20;
+    const ENCRYPT: u8 = 0x40;
+    let refused = match code {
+        CC_PCR_EXTEND | CC_PCR_RESET => DECRYPT | ENCRYPT,
+        CC_PCR_EVENT => ENCRYPT,
+        _ => 0,
+    };
+    match sent.iter().position(|s| s.handle != 0x4000_0009 && s.attributes & refused != 0) {
+        Some(i) => Err(RC_ATTRIBUTES | RC_S | (i as u32 + 1) * RC_1),
+        None => Ok(()),
+    }
+}
+
 fn dispatch(code: u32, handles: &[u32; 3], params: &mut In, a: &mut session::Authorization) -> Result<(), u32> {
     let mut command = object::Command { handles: [handles[0], handles[1]], params: In { buf: params.buf, at: params.at }, auth: a };
     match code {
@@ -500,6 +524,9 @@ fn dispatch(code: u32, handles: &[u32; 3], params: &mut In, a: &mut session::Aut
             }
             session::policy_authorize_nv(*handles, a)
         }
+        CC_PCR_EXTEND => pcr_extend(&mut command),
+        CC_PCR_EVENT => pcr_event(&mut command),
+        CC_PCR_RESET => pcr_reset(&mut command),
         sign::CC_SIGN => sign::sign(&mut command),
         sign::CC_QUOTE => sign::quote(&mut command),
         sign::CC_CERTIFY => sign::certify(&mut command),
@@ -526,35 +553,7 @@ fn dispatch(code: u32, handles: &[u32; 3], params: &mut In, a: &mut session::Aut
     }
 }
 
-/// The authorization area of a command whose first handle is a PCR: a
-/// password session with an empty password, which is all a PCR has. Whether
-/// the command carried sessions is what the response then has to say.
-fn password_session(input: &mut In, tag: u16) -> Result<bool, u32> {
-    if tag != ST_SESSIONS {
-        return Err(RC_AUTH_MISSING);
-    }
-    let area = input.u32().ok_or(RC_COMMAND_SIZE)? as usize;
-    let mut sessions = In { buf: input.take(area).ok_or(RC_COMMAND_SIZE)?, at: 0 };
-    let handle = sessions.u32().ok_or(RC_COMMAND_SIZE)?;
-    let nonce = sessions.sized().ok_or(RC_COMMAND_SIZE)?;
-    let _attributes = sessions.u8().ok_or(RC_COMMAND_SIZE)?;
-    let hmac = sessions.sized().ok_or(RC_COMMAND_SIZE)?;
-    // TPM_RS_PW. Any other session would need keys this TPM does not have.
-    if handle != 0x4000_0009 || !nonce.is_empty() || !hmac.is_empty() || sessions.rest() != 0 {
-        return Err(RC_AUTH_UNAVAILABLE);
-    }
-    Ok(true)
-}
-
-/// A response's authorization area for one password session: no nonce, the
-/// continue-session attribute, no HMAC.
-fn password_response(out: &mut Out) {
-    out.u16(0);
-    out.u8(1);
-    out.u16(0);
-}
-
-fn run(code: u32, tag: u16, input: &mut In, out: &mut Out) -> Result<bool, u32> {
+fn run(code: u32, input: &mut In, out: &mut Out) -> Result<bool, u32> {
     match code {
         CC_STARTUP => {
             input.u16().ok_or(RC_COMMAND_SIZE)?;
@@ -596,9 +595,6 @@ fn run(code: u32, tag: u16, input: &mut In, out: &mut Out) -> Result<bool, u32> 
         }
         CC_GET_CAPABILITY => get_capability(input, out).map(|_| false),
         CC_PCR_READ => pcr_read(input, out).map(|_| false),
-        CC_PCR_EXTEND => pcr_extend(tag, input, out),
-        CC_PCR_EVENT => pcr_event(tag, input, out),
-        CC_PCR_RESET => pcr_reset(tag, input, out),
         CC_HASH => hash(input, out).map(|_| false),
         CC_READ_CLOCK => {
             let ms = stc::now() / 1000;
@@ -786,27 +782,18 @@ fn extendable(pcr: u32) -> bool {
     pcr < PCRS as u32 && !(17..=22).contains(&pcr)
 }
 
-fn pcr_handle(input: &mut In) -> Result<u32, u32> {
-    let handle = input.u32().ok_or(RC_COMMAND_SIZE)?;
-    if handle >= PCRS as u32 {
-        return Err(RC_HANDLE | RC_1);
-    }
-    Ok(handle)
-}
-
-fn pcr_extend(tag: u16, input: &mut In, out: &mut Out) -> Result<bool, u32> {
-    let pcr = pcr_handle(input)?;
-    password_session(input, tag)?;
-    let count = input.u32().ok_or(RC_COMMAND_SIZE)?;
+fn pcr_extend(c: &mut object::Command) -> Result<(), u32> {
+    let pcr = c.handles[0];
+    let count = c.params.u32().ok_or(RC_COMMAND_SIZE)?;
     let mut digest = None;
     for _ in 0..count {
-        let alg = input.u16().ok_or(RC_COMMAND_SIZE)?;
+        let alg = c.params.u16().ok_or(RC_COMMAND_SIZE)?;
         if alg != ALG_SHA256 {
             return Err(RC_HASH | RC_P | RC_1);
         }
-        digest = Some(<[u8; 32]>::try_from(input.take(32).ok_or(RC_COMMAND_SIZE)?).unwrap());
+        digest = Some(<[u8; 32]>::try_from(c.params.take(32).ok_or(RC_COMMAND_SIZE)?).unwrap());
     }
-    if input.rest() != 0 {
+    if c.params.rest() != 0 {
         return Err(RC_COMMAND_SIZE);
     }
     if !extendable(pcr) {
@@ -815,16 +802,13 @@ fn pcr_extend(tag: u16, input: &mut In, out: &mut Out) -> Result<bool, u32> {
     if let Some(digest) = digest {
         keystore::extend(pcr as usize, &digest).map_err(|_| RC_HANDLE | RC_1)?;
     }
-    out.u32(0);
-    password_response(out);
-    Ok(true)
+    Ok(())
 }
 
-fn pcr_event(tag: u16, input: &mut In, out: &mut Out) -> Result<bool, u32> {
-    let pcr = pcr_handle(input)?;
-    password_session(input, tag)?;
-    let event = input.sized().ok_or(RC_COMMAND_SIZE)?;
-    if input.rest() != 0 {
+fn pcr_event(c: &mut object::Command) -> Result<(), u32> {
+    let pcr = c.handles[0];
+    let event = c.params.sized().ok_or(RC_COMMAND_SIZE)?;
+    if c.params.rest() != 0 {
         return Err(RC_COMMAND_SIZE);
     }
     if event.len() > 1024 {
@@ -835,27 +819,24 @@ fn pcr_event(tag: u16, input: &mut In, out: &mut Out) -> Result<bool, u32> {
     }
     let digest = sha256::digest(event);
     keystore::extend(pcr as usize, &digest).map_err(|_| RC_HANDLE | RC_1)?;
-    out.u32(4 + 2 + 32);
-    out.u32(1);
-    out.u16(ALG_SHA256);
-    out.put(&digest);
-    password_response(out);
-    Ok(true)
+    let mut response = [0u8; 4 + 2 + 32];
+    response[..4].copy_from_slice(&1u32.to_be_bytes());
+    response[4..6].copy_from_slice(&ALG_SHA256.to_be_bytes());
+    response[6..].copy_from_slice(&digest);
+    c.auth.response_params(&response);
+    Ok(())
 }
 
-fn pcr_reset(tag: u16, input: &mut In, out: &mut Out) -> Result<bool, u32> {
-    let pcr = pcr_handle(input)?;
-    password_session(input, tag)?;
-    if input.rest() != 0 {
+fn pcr_reset(c: &mut object::Command) -> Result<(), u32> {
+    let pcr = c.handles[0];
+    if c.params.rest() != 0 {
         return Err(RC_COMMAND_SIZE);
     }
     if pcr != 16 && pcr != 23 {
         return Err(RC_LOCALITY);
     }
     keystore::reset(pcr as usize).map_err(|_| RC_HANDLE | RC_1)?;
-    out.u32(0);
-    password_response(out);
-    Ok(true)
+    Ok(())
 }
 
 fn hash(input: &mut In, out: &mut Out) -> Result<(), u32> {
