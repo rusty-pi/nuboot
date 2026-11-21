@@ -55,6 +55,23 @@ pub mod otp {
             _ => 0,
         }
     }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum ProgramError {
+        NotEnabled,
+        Command,
+    }
+
+    pub fn program(first_row: u32, bits: &[u32]) -> Result<(), ProgramError> {
+        let mut rows = ROWS.lock().unwrap();
+        for (row, &word) in (first_row..).zip(bits) {
+            match row.checked_sub(56) {
+                Some(i) if i < 8 => rows[i as usize] |= word,
+                _ => return Err(ProgramError::Command),
+            }
+        }
+        Ok(())
+    }
 }
 
 pub mod rng {
