@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "systemd-boot-counting"
+description: "Debian's systemd-boot finds a unified kernel image whose name carries a boot counter, `test+3.efi`, renames it to `test+2-1.efi` through SetInfo as an attempt to boot it, and starts it by the new name. systemd-boot would set LoaderBootCountPath for the OS to bless the entry."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  sd:
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/systemd-bootaa64.efi"
+          EFI/Linux/test+3.efi: "../out/uki.efi"
+          loader/loader.conf: { inline: "timeout 0\nconsole-mode keep\n" }
+  until: "hello test: done"
+  wall_secs: 900
+
+milestones:
+  - why: "systemd-boot renamed the entry's counter, +3 to +2-1, through SetInfo."
+    line: "boot entry renamed  from=test+3.efi to=test+2-1.efi dir=\\EFI\\Linux"
+  - why: "UEFI verified and started the unified kernel image by its new name."
+    line: "image verified  signer=\"nuboot test key\" db=\"nuboot test key\" path=VenHw/SD(0)/HD(1)\\EFI\\Linux\\test+2-1.efi"
+  - why: "The kernel inside the image ran."
+    line: "hello test: done"
