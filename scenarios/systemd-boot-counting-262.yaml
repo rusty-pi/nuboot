@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "systemd-boot-counting-262"
+description: "Debian's systemd-boot 262, from a 512 MiB FAT32 partition of a USB drive: it opens the unified kernel image `system_1+3-0.efi` for writing, reads its attributes, renames it to `system_1+2-1.efi` through SetInfo, flushes it and starts it by the new name."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x4"
+  usb:
+    partitions:
+      - type: esp
+        format: vfat
+        size: 512M
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/systemd-bootaa64-262.efi"
+          EFI/Linux/system_1+3-0.efi: "../out/uki.efi"
+          loader/loader.conf: { inline: "timeout 0\nconsole-mode keep\n" }
+  until: "hello test: done"
+  wall_secs: 900
+
+milestones:
+  - why: "systemd-boot 262 renamed the entry's counter, +3-0 to +2-1, through SetInfo."
+    line: "boot entry renamed  from=system_1+3-0.efi to=system_1+2-1.efi dir=\\EFI\\Linux"
+  - why: "UEFI verified and started the unified kernel image by its new name."
+    line: "image verified  signer=\"nuboot test key\" db=\"nuboot test key\" path=PciRoot(0)/Pci(0,0)/Pci(0,0)/USB(1,0)/HD(1)\\EFI\\Linux\\system_1+2-1.efi"
+  - why: "The kernel inside the image ran."
+    line: "hello test: done"
