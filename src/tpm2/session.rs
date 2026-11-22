@@ -7,6 +7,7 @@
 //! way every command and response carries an HMAC over what was sent, so the
 //! one who answers is the one who holds the session.
 
+use core::ptr::{read_volatile, write_volatile};
 use super::object::{self, ALG_AES, ALG_CFB, ALG_ECC, RH_NULL, RH_PASSWORD};
 use super::{
     ALG_HMAC, ALG_NULL, ALG_SHA256, In, Out, RC_ATTRIBUTES, RC_AUTH_FAIL, RC_AUTH_MISSING, RC_AUTH_TYPE, RC_AUTH_UNAVAILABLE, RC_BAD_AUTH,
@@ -106,18 +107,54 @@ pub fn handle_of(index: usize) -> u32 {
     if index < SESSION_SLOTS { HMAC_SESSION_FIRST + index as u32 } else { POLICY_SESSION_FIRST + (index - SESSION_SLOTS) as u32 }
 }
 
-pub fn session_of(handle: u32) -> Option<&'static mut Session> {
-    let (base, wants_hmac) = match handle >> 24 {
-        0x02 => (HMAC_SESSION_FIRST, true),
-        0x03 => (POLICY_SESSION_FIRST, false),
+/// The slot a session handle stands for, in use or not.
+pub fn slot_of_handle(handle: u32) -> Option<usize> {
+    let (base, offset) = match handle >> 24 {
+        0x02 => (HMAC_SESSION_FIRST, 0),
+        0x03 => (POLICY_SESSION_FIRST, SESSION_SLOTS),
         _ => return None,
     };
     let number = handle.checked_sub(base)? as usize;
-    if number >= SESSION_SLOTS {
-        return None;
+    (number < SESSION_SLOTS).then_some(number + offset)
+}
+
+pub fn session_of(handle: u32) -> Option<&'static mut Session> {
+    let session = table().get_mut(slot_of_handle(handle)?)?;
+    (session.used && (session.kind == KIND_HMAC) == (handle >> 24 == 0x02)).then_some(session)
+}
+
+/// When each slot's session was saved with `TPM2_ContextSave`, as a count of
+/// saves, or 0 for a slot whose session was not. The TPM keeps the handle of a
+/// saved session for it, so that loading the context gives the same handle
+/// back and no session started meanwhile has it.
+static mut SAVED: [u32; TABLE_SLOTS] = [0; TABLE_SLOTS];
+static mut SAVES: u32 = 0;
+
+fn saved() -> &'static mut [u32; TABLE_SLOTS] {
+    unsafe { &mut *(&raw mut SAVED) }
+}
+
+/// Keep the handle of the session just saved.
+pub fn reserve(handle: u32) {
+    if let Some(slot) = slot_of_handle(handle) {
+        let count = unsafe { read_volatile(&raw const SAVES) }.wrapping_add(1).max(1);
+        unsafe { write_volatile(&raw mut SAVES, count) };
+        saved()[slot] = count;
     }
-    let session = table().get_mut(number + if wants_hmac { 0 } else { SESSION_SLOTS })?;
-    (session.used && (session.kind == KIND_HMAC) == wants_hmac).then_some(session)
+}
+
+/// The slot of a saved session's handle, which loading its context takes
+/// back; none for a handle no saved session holds.
+pub fn take_saved(handle: u32) -> Option<usize> {
+    let slot = slot_of_handle(handle)?;
+    (core::mem::take(&mut saved()[slot]) != 0).then_some(slot)
+}
+
+/// A slot for a new session of a family: a free one, else the one whose saved
+/// session was saved longest ago, which is then lost to its owner, as a
+/// session is when the TPM's context gap closes on it.
+fn free_slot(family: core::ops::Range<usize>) -> Option<usize> {
+    family.clone().find(|&i| !table()[i].used && saved()[i] == 0).or_else(|| family.filter(|&i| !table()[i].used).min_by_key(|&i| saved()[i]))
 }
 
 pub fn flush(handle: u32) -> bool {
@@ -127,7 +164,7 @@ pub fn flush(handle: u32) -> bool {
             *session = EMPTY;
             true
         }
-        None => false,
+        None => take_saved(handle).is_some(),
     }
 }
 
@@ -504,7 +541,9 @@ pub fn authorize(
         // command's HMAC was empty too: the response answers the command as the
         // reference TPM does. A client that sent an HMAC keyed with nothing
         // (tpm2-tss before 4.1.4) takes one back, and a client that sent none
-        // (4.1.4 and later) refuses any but a zero-length one.
+        // (4.1.4 and later) refuses any but a zero-length one, and then keeps the
+        // TPM nonce it had: such a session answers with that nonce, which is
+        // also what encrypts the response.
         let no_response_hmac = session.kind == KIND_POLICY && (session.password || (!session.auth_value && session.key_len == 0 && s.hmac.is_empty()));
         a.used[i].keyed = !no_response_hmac;
         a.used[i].key = key;
@@ -556,7 +595,7 @@ pub fn respond(a: &mut Authorization, code: u32, response: &mut [u8]) -> usize {
     for i in 0..a.count {
         if !a.used[i].password {
             if let Some(session) = session_of(a.used[i].handle) {
-                if !rng::fill(&mut session.nonce_tpm) {
+                if a.used[i].keyed && !rng::fill(&mut session.nonce_tpm) {
                     return super::fail(response, RC_FAILURE);
                 }
                 nonces[i] = session.nonce_tpm;
@@ -627,7 +666,8 @@ pub fn respond(a: &mut Authorization, code: u32, response: &mut [u8]) -> usize {
 
 fn new_session(kind: u8) -> Result<(usize, &'static mut Session), u32> {
     let range = family(kind);
-    let index = range.start + table()[range].iter().position(|s| !s.used).ok_or(RC_SESSION_MEMORY)?;
+    let index = free_slot(range).ok_or(RC_SESSION_MEMORY)?;
+    saved()[index] = 0;
     let session = &mut table()[index];
     *session = EMPTY;
     session.used = true;

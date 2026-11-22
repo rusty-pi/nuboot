@@ -178,8 +178,34 @@ loads around each command, with `ContextSave`, `ContextLoad` and
 `FlushContext`.
 
 A context holds one object or session, at most 1024 bytes before it is
-encrypted (an object with an RSA-4096 public key is the largest). Saving a
-session frees its slot, and the session loads back with the handle it had when its slot is free; saving an object leaves it loaded until it is flushed.
+encrypted (an object with an RSA-4096 public key is the largest). An object's
+context holds its public area and name, its hierarchy and template hash (which
+give back the seed that protects what is created under it), its qualified name
+and authorization value, and, for a loaded child, its private blob; a primary
+or child that is saved and loaded again creates, loads, signs and quotes as the
+original did. A session's context holds its type, key, both nonces, symmetric
+algorithm, policy digest, the PCR selection and counter of `PolicyPCR`, its
+command code and authorization-value and password flags, `PolicyNvWritten`'s
+state and the name it is bound to, so a policy or HMAC session that is saved
+and loaded between commands authorizes, decrypts and encrypts as it would have
+without.
+
+A policy session that has no key and was used with an empty HMAC answers
+with a zero-length HMAC and keeps its TPM nonce from one command to the next,
+because the client then keeps the nonce it has and derives the keys that decrypt
+and encrypt parameters from it (tpm2-tss 4.1.4 and later); any other session
+gets a new TPM nonce in each response.
+
+Saving an object leaves it loaded until it is flushed, and loading a context
+gives the object a handle that need not be the one it had. Saving a session
+removes it from the TPM but keeps its handle for it: no session started
+meanwhile gets that handle, loading the context gives the session back under
+it, and a context loads once. A saved session's handle is released when its
+context is loaded or `FlushContext` names the handle. When no slot is left for
+a new session, the saved session whose context is oldest loses its handle, and
+its context no longer loads (`TPM_RC_HANDLE`). The kernel's resource manager
+relies on this: it loads every saved object and session before a command, and
+a session has to come back under the handle the client's command hash names.
 Saved contexts are encrypted under keys that last for the boot, so they load
 again until the TPM restarts and not on another board.
 
@@ -247,7 +273,7 @@ code on the host.
 runs two things. Its unit tests compare P-256 (public keys, ECDH, ECDSA),
 AES-CFB, `KDFa` and `KDFe` with vectors from Python's `cryptography`
 (`tools/tpm-sim/gen-vectors.py`), and run the command response buffer's code,
-malformed commands, saved and loaded contexts, RSA public keys of 2048, 3072
+malformed commands, saved and loaded contexts, a client that works through a resource manager as the kernel's does (an endorsement key, a key created and loaded under it with a `PolicySecret` session, and a quote), RSA public keys of 2048, 3072
 and 4096 bits, NV indices with a policy that `PolicyNvWritten` is part of, and
 NV indices exported on one boot and imported on the next. With `tpm2-tools`
 installed it also serves the TPM over the TPM simulator's socket protocol and

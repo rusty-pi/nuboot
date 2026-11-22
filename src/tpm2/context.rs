@@ -8,7 +8,7 @@
 
 use super::object::{self, Origin, SLOTS, TRANSIENT_FIRST};
 use super::session;
-use super::{In, RC_COMMAND_SIZE, RC_HANDLE, RC_INTEGRITY, RC_REFERENCE_H0, RC_OBJECT_MEMORY, RC_P, RC_RANGE, RC_SESSION_MEMORY, RC_SIZE, RC_1};
+use super::{In, RC_COMMAND_SIZE, RC_HANDLE, RC_INTEGRITY, RC_REFERENCE_H0, RC_OBJECT_MEMORY, RC_P, RC_RANGE, RC_SIZE, RC_1};
 use super::session::Authorization;
 use crate::{aes, kdf, keystore, sha256};
 
@@ -173,6 +173,7 @@ pub fn save(handle: u32, params: &In, a: &mut Authorization) -> Result<(), u32> 
     keystore::zero(&mut plain);
     if saved_session {
         session::flush(handle);
+        session::reserve(handle);
     }
     Ok(())
 }
@@ -225,13 +226,8 @@ pub fn load(params: &mut In, a: &mut Authorization) -> Result<(), u32> {
         }
         SESSION => {
             let kind = *input.buf.get(input.at).ok_or(RC_INTEGRITY | RC_P | RC_1)?;
-            let family = session::family(kind);
-            let wanted = family.start + (saved as usize & 0xffff);
-            let free = if family.contains(&wanted) && !session::table()[wanted].used {
-                wanted
-            } else {
-                family.start + session::table()[family.clone()].iter().position(|s| !s.used).ok_or(RC_SESSION_MEMORY)?
-            };
+            let held = session::slot_of_handle(saved).filter(|i| session::family(kind).contains(i));
+            let free = held.and_then(|_| session::take_saved(saved)).ok_or(RC_HANDLE | RC_P | RC_1)?;
             let s = &mut session::table()[free];
             read_session(&mut input, s).ok_or(RC_INTEGRITY | RC_P | RC_1)?;
             s.used = true;
