@@ -541,7 +541,9 @@ pub fn authorize(
         // command's HMAC was empty too: the response answers the command as the
         // reference TPM does. A client that sent an HMAC keyed with nothing
         // (tpm2-tss before 4.1.4) takes one back, and a client that sent none
-        // (4.1.4 and later) refuses any but a zero-length one.
+        // (4.1.4 and later) refuses any but a zero-length one, and then keeps the
+        // TPM nonce it had: such a session answers with that nonce, which is
+        // also what encrypts the response.
         let no_response_hmac = session.kind == KIND_POLICY && (session.password || (!session.auth_value && session.key_len == 0 && s.hmac.is_empty()));
         a.used[i].keyed = !no_response_hmac;
         a.used[i].key = key;
@@ -593,7 +595,7 @@ pub fn respond(a: &mut Authorization, code: u32, response: &mut [u8]) -> usize {
     for i in 0..a.count {
         if !a.used[i].password {
             if let Some(session) = session_of(a.used[i].handle) {
-                if !rng::fill(&mut session.nonce_tpm) {
+                if a.used[i].keyed && !rng::fill(&mut session.nonce_tpm) {
                     return super::fail(response, RC_FAILURE);
                 }
                 nonces[i] = session.nonce_tpm;

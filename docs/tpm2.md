@@ -190,6 +190,12 @@ state and the name it is bound to, so a policy or HMAC session that is saved
 and loaded between commands authorizes, decrypts and encrypts as it would have
 without.
 
+A policy session that has no key and was used with an empty HMAC answers
+with a zero-length HMAC and keeps its TPM nonce from one command to the next,
+because the client then keeps the nonce it has and derives the keys that decrypt
+and encrypt parameters from it (tpm2-tss 4.1.4 and later); any other session
+gets a new TPM nonce in each response.
+
 Saving an object leaves it loaded until it is flushed, and loading a context
 gives the object a handle that need not be the one it had. Saving a session
 removes it from the TPM but keeps its handle for it: no session started

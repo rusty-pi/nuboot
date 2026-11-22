@@ -72,6 +72,10 @@ struct Response {
     params: Vec<u8>,
 }
 
+/// A client of tpm2-tss 4.1.4 or later keeps the TPM nonce it had when a session's
+/// response has no HMAC (a policy session with no key), so it decrypts a response
+/// with the nonce the session started with or the last HMAC response gave.
+///
 /// The kernel's resource manager, as `drivers/char/tpm/tpm2-space.c` has it:
 /// before each command it loads every object and session the client has saved,
 /// maps the client's transient handles (`0x80ffffff - n`) to the loaded ones,
@@ -202,11 +206,14 @@ impl Manager {
                         continue;
                     }
                     let (nonce, next) = sized_at(&response, cursor);
-                    self.nonces.insert(*h, nonce.to_vec());
-                    if encrypt == Some(*h) {
-                        crypt_first(&mut out.params, nonce, &CALLER_NONCE, true);
+                    let (hmac, after) = sized_at(&response, next + 1);
+                    if !hmac.is_empty() {
+                        self.nonces.insert(*h, nonce.to_vec());
                     }
-                    cursor = sized_at(&response, next + 1).1;
+                    if encrypt == Some(*h) {
+                        crypt_first(&mut out.params, &self.nonces[h], &CALLER_NONCE, true);
+                    }
+                    cursor = after;
                 }
             } else {
                 out.params = response[at..].to_vec();
