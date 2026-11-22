@@ -34,9 +34,9 @@ this order:
 | 0 | `EV_S_CRTM_VERSION` | `nuboot` and the commit, in UTF-16 |
 | 0 | `EV_EFI_PLATFORM_FIRMWARE_BLOB2` | the UEFI image, and the device tree it starts the ARM with |
 | 1 | `EV_PLATFORM_CONFIG_FLAGS` | `board.revision`, `board.ext_revision`, `board.serial`, `board.mac_rows`, `otp.bootmode` and `sdram.mib`, one event each, as `name=value` |
-| 0 | `EV_EFI_PLATFORM_FIRMWARE_BLOB2` | the EEPROM's bootloader (`eeprom-bootcode`), as the SHA-256 of the `bootcode.bin` section as the flash stores it, and where in the flash it is |
-| 1 | `EV_PLATFORM_CONFIG_FLAGS` | `eeprom.bootconf=`, the SHA-256 of `bootconf.txt` in the EEPROM as it is stored, or `none` |
-| 0 | `EV_EFI_PLATFORM_FIRMWARE_BLOB2` | the VL805's hub and MCU images (`vl805-hub`, `vl805-mcu`), when the VPU loads them into the chip, which the 4B revisions without a flash of their own for it need |
+| 2 | `EV_EFI_PLATFORM_FIRMWARE_BLOB2` | the EEPROM's bootloader (`eeprom-bootcode`), as the SHA-256 of the `bootcode.bin` section as the flash stores it, and where in the flash it is |
+| 3 | `EV_PLATFORM_CONFIG_FLAGS` | `eeprom.bootconf=`, the SHA-256 of `bootconf.txt` in the EEPROM as it is stored, or `none` |
+| 2 | `EV_EFI_PLATFORM_FIRMWARE_BLOB2` | the VL805's hub and MCU images (`vl805-hub`, `vl805-mcu`), when the VPU loads them into the chip, which the 4B revisions without a flash of their own for it need |
 | 7 | `EV_EFI_ACTION` | `owner-db sha256=` and the SHA-256 of the `owner-db.der` in the `boot.img` the firmware started out of, or `owner-db invalid` for one it could not use ([uefi.md](uefi.md#the-owners-db)); only when the `boot.img` has one |
 | 7 | `EV_EFI_VARIABLE_DRIVER_CONFIG` | the Secure Boot configuration: `SecureBoot`, `PK`, `KEK`, `db` and `dbx` |
 | 1 | `EV_EFI_HANDOFF_TABLES2` | the pointers to the ACPI and SMBIOS tables handed to the OS |
@@ -57,8 +57,8 @@ asked for it is also appended to the final events table
 stub's copy of the log needs to be completed with: the stub measures the initrd
 after it has taken the log. The table holds 32 KiB of events.
 
-Nothing is measured into PCRs 2, 3 and 6: there are no option ROMs and no
-suspend. The ExitBootServices actions are not logged.
+Nothing else is measured into PCRs 2 and 3, and nothing into PCR 6: there are
+no option ROMs and no suspend. The ExitBootServices actions are not logged.
 
 ## What it implements
 
@@ -252,7 +252,7 @@ the scenario checks that systemd-boot and the stub measured into PCRs 5 and
 11 on the way.
 
 `scripts/check-tpm2.py` checks the first: that the event log replays to the
-PCRs, with the board's identity and the EEPROM's configuration in PCR 1, a
+PCRs, with the board's identity in PCR 1, the EEPROM's bootloader in PCR 2 and its configuration in PCR 3, a
 separator in each of PCRs 0 to 7, the handoff tables and the call to the boot
 option, the properties, that the PCRs read back are what SHA-256 makes of what
 was extended, the update counter, the error codes of the commands the TPM

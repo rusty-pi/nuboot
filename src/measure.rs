@@ -3,11 +3,14 @@
 //! put them in the log it hands to the OS (tag `0x000300a4`), which then
 //! replays to the PCRs the way a TPM's event log does.
 //!
-//! PCR 0 holds the firmware: its version, the UEFI image and the device tree
-//! it starts the ARM with, the EEPROM's bootloader and the VL805's images when
-//! the VPU loads them. PCR 1 holds the board: the revision code, the serial
-//! number, the extended revision, the MAC address fuses, the SDRAM size, the
-//! boot mode row and the EEPROM's `bootconf.txt`, each as a `name=value` event.
+//! PCR 0 holds the firmware: its version, and the UEFI image and the device tree
+//! it starts the ARM with. PCR 2 holds the firmware of the peripherals: the
+//! EEPROM's bootloader and the VL805's images when the VPU loads them, so that
+//! a change of either is told apart from a change of this firmware. PCR 1 holds
+//! the board: the revision code, the serial number, the extended revision, the
+//! MAC address fuses, the boot mode row and the SDRAM size, each as a
+//! `name=value` event. PCR 3 holds the configuration of the peripherals: the
+//! EEPROM's `bootconf.txt`, so an EEPROM update moves PCR 2 and 3 and not PCR 1.
 
 use core::fmt::Write;
 use core::ptr::{read_volatile, write_volatile};
@@ -23,6 +26,8 @@ pub const EV_EFI_PLATFORM_FIRMWARE_BLOB2: u32 = 0x8000_000a;
 
 const PCR_FIRMWARE: usize = 0;
 const PCR_BOARD: usize = 1;
+const PCR_PERIPHERAL: usize = 2;
+const PCR_PERIPHERAL_CONFIG: usize = 3;
 const PCR_SECURE_BOOT: usize = 7;
 
 pub const MAX_EVENTS: usize = 24;
@@ -80,29 +85,29 @@ impl Write for Text {
     }
 }
 
-fn setting(args: core::fmt::Arguments) {
+fn setting(pcr: usize, args: core::fmt::Arguments) {
     let mut text = Text { bytes: [0; MAX_DATA], len: 0 };
     if text.write_fmt(args).is_ok() {
         let data = &text.bytes[..text.len];
-        record(PCR_BOARD, EV_PLATFORM_CONFIG_FLAGS, sha256::digest(data), data);
+        record(pcr, EV_PLATFORM_CONFIG_FLAGS, sha256::digest(data), data);
     }
 }
 
 /// `UEFI_PLATFORM_FIRMWARE_BLOB2`: what is measured is the blob, and the
 /// event says which it is.
-pub fn blob(description: &str, blob: &[u8]) {
-    blob_at(description, sha256::digest(blob), blob.as_ptr() as u64, blob.len() as u64);
+fn blob(pcr: usize, description: &str, blob: &[u8]) {
+    blob_at(pcr, description, sha256::digest(blob), blob.as_ptr() as u64, blob.len() as u64);
 }
 
 /// A blob event for a blob that was hashed where it is, `len` bytes at `base`.
-fn blob_at(description: &str, digest: [u8; 32], base: u64, len: u64) {
+fn blob_at(pcr: usize, description: &str, digest: [u8; 32], base: u64, len: u64) {
     let mut data = [0u8; MAX_DATA];
     data[0] = description.len() as u8;
     data[1..1 + description.len()].copy_from_slice(description.as_bytes());
     let at = 1 + description.len();
     data[at..at + 8].copy_from_slice(&base.to_le_bytes());
     data[at + 8..at + 16].copy_from_slice(&len.to_le_bytes());
-    record(PCR_FIRMWARE, EV_EFI_PLATFORM_FIRMWARE_BLOB2, digest, &data[..at + 16]);
+    record(pcr, EV_EFI_PLATFORM_FIRMWARE_BLOB2, digest, &data[..at + 16]);
 }
 
 /// A firmware version event: `text` as UTF-16.
@@ -124,7 +129,7 @@ fn crtm_version(args: core::fmt::Arguments) {
 }
 
 /// The EEPROM's boot configuration, `bootconf.txt`, as the SHA-256 of its
-/// bytes; `none` when the EEPROM has no such file.
+/// bytes, into PCR 3; `none` when the EEPROM has no such file.
 pub fn eeprom_config(digest: Option<[u8; 32]>) {
     let mut hex = [0u8; 64];
     let value = match &digest {
@@ -137,23 +142,23 @@ pub fn eeprom_config(digest: Option<[u8; 32]>) {
         }
         None => "none",
     };
-    setting(format_args!("eeprom.bootconf={value}"));
+    setting(PCR_PERIPHERAL_CONFIG, format_args!("eeprom.bootconf={value}"));
 }
 
-/// The EEPROM's bootloader, `bootcode.bin`, which ran before this firmware: the
+/// The EEPROM's bootloader, `bootcode.bin`, which ran before this firmware, into PCR 2: the
 /// SHA-256 of the section as the flash stores it, `at` and `len` placing it in
 /// the flash. Nothing when the EEPROM has none.
 pub fn eeprom_bootcode(bootcode: Option<&eeprom::Digest>) {
     if let Some(b) = bootcode {
-        blob_at("eeprom-bootcode", b.sha256, b.at as u64, b.len as u64);
+        blob_at(PCR_PERIPHERAL, "eeprom-bootcode", b.sha256, b.at as u64, b.len as u64);
     }
 }
 
 /// The images the VPU loaded into the VL805, which is the firmware the
-/// controller runs.
+/// controller runs, into PCR 2.
 pub fn vl805(hub: &[u8], mcu: &[u8]) {
-    blob("vl805-hub", hub);
-    blob("vl805-mcu", mcu);
+    blob(PCR_PERIPHERAL, "vl805-hub", hub);
+    blob(PCR_PERIPHERAL, "vl805-mcu", mcu);
 }
 
 /// Measure the firmware that started this one as an update, ahead of this one:
@@ -161,7 +166,7 @@ pub fn vl805(hub: &[u8], mcu: &[u8]) {
 /// it ran it, which `base` and `len` place in memory.
 pub fn loader(commit: &str, version: u32, digest: [u8; 32], base: u32, len: u32) {
     crtm_version(format_args!("nuboot-loader {commit} {version}"));
-    blob_at("start4-update", digest, base as u64, len as u64);
+    blob_at(PCR_FIRMWARE, "start4-update", digest, base as u64, len as u64);
 }
 
 /// The certificate the owner's `boot.img` holds for UEFI to trust in place of
@@ -188,13 +193,13 @@ pub fn owner_db(file: Option<&[u8]>) {
 /// Measure the firmware and the board. Once, before the ARM starts.
 pub fn platform(commit: &str, uefi: &[u8], tree: &[u8], revision: u32, ext_revision: u32, serial: u32, mac: (u32, u32), bootmode: u32, sdram_mib: u32) {
     crtm_version(format_args!("nuboot {commit}"));
-    blob("pi4-uefi", uefi);
-    blob("device-tree", tree);
+    blob(PCR_FIRMWARE, "pi4-uefi", uefi);
+    blob(PCR_FIRMWARE, "device-tree", tree);
 
-    setting(format_args!("board.revision={revision:08x}"));
-    setting(format_args!("board.ext_revision={ext_revision:08x}"));
-    setting(format_args!("board.serial={serial:08x}"));
-    setting(format_args!("board.mac_rows={:08x}{:08x}", mac.0, mac.1));
-    setting(format_args!("otp.bootmode={bootmode:08x}"));
-    setting(format_args!("sdram.mib={sdram_mib}"));
+    setting(PCR_BOARD, format_args!("board.revision={revision:08x}"));
+    setting(PCR_BOARD, format_args!("board.ext_revision={ext_revision:08x}"));
+    setting(PCR_BOARD, format_args!("board.serial={serial:08x}"));
+    setting(PCR_BOARD, format_args!("board.mac_rows={:08x}{:08x}", mac.0, mac.1));
+    setting(PCR_BOARD, format_args!("otp.bootmode={bootmode:08x}"));
+    setting(PCR_BOARD, format_args!("sdram.mib={sdram_mib}"));
 }
