@@ -139,12 +139,14 @@ def main():
             by_text[data.decode()] = pcr
         if kind not in (3, 0x8000000A, 0x80000001, 0x80000003, 0x800000E0) and digest != sha256(data):
             fail(f"event type {kind:#x} in PCR {pcr}: its digest is not the hash of its data")
-    needed = ("board.revision=", "board.serial=", "board.ext_revision=", "board.mac_rows=", "otp.bootmode=", "sdram.mib=", "eeprom.bootconf=")
+    needed = ("board.revision=", "board.serial=", "board.ext_revision=", "board.mac_rows=", "otp.bootmode=", "sdram.mib=")
     for want in needed:
         if not any(t.startswith(want) and pcr == 1 for t, pcr in by_text.items()):
             fail(f"the log has no {want} event in PCR 1")
-    if not any(pcr == 0 and kind == 0x8000000A and data[1:1 + data[0]] == b"eeprom-bootcode" for pcr, kind, digest, data in events):
-        fail("the log has no event for the EEPROM's bootloader in PCR 0")
+    if not any(t.startswith("eeprom.bootconf=") and pcr == 3 for t, pcr in by_text.items()):
+        fail("the log has no eeprom.bootconf event in PCR 3")
+    if not any(pcr == 2 and kind == 0x8000000A and data[1:1 + data[0]] == b"eeprom-bootcode" for pcr, kind, digest, data in events):
+        fail("the log has no event for the EEPROM's bootloader in PCR 2")
     separated = sorted(pcr for pcr, kind, digest, data in events if kind == 0x4)
     if separated != list(range(8)):
         fail(f"the log has separators in PCRs {separated}, not in each of 0 to 7")
