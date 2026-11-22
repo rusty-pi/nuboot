@@ -178,7 +178,7 @@ pub extern "efiapi" fn efi_main(_image: Handle, system_table: *mut SystemTable) 
         return Status::NOT_FOUND;
     }
     let submit: Submit = unsafe { core::mem::transmute(*(protocol as *const usize).add(3)) };
-    let mut run = |name: &str, command: &[u8]| -> ([u8; 1024], usize) {
+    let run = |name: &str, command: &[u8]| -> ([u8; 1024], usize) {
         let mut response = [0u8; 1024];
         let status = submit(protocol, command.len() as u32, command.as_ptr(), 1024, response.as_mut_ptr());
         say(system_table, "tpm2 test: ");

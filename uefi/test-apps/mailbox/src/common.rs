@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use core::ptr::{read_volatile, write_volatile};
 
 use r_efi::efi::{Char16, SystemTable};

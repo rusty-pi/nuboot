@@ -38,7 +38,6 @@ static USED: Global<usize> = Global::new(0);
 /// A drive a driver found while the runtime services use it.
 pub struct Offered {
     pub disk: Box<dyn Disk>,
-    pub name: &'static str,
 }
 
 static OFFERED: Global<Vec<Offered>> = Global::new(Vec::new());
@@ -73,8 +72,8 @@ pub fn alloc(layout: Layout) -> *mut u8 {
 
 /// `block::add_disk` while the runtime services use a driver: keep the drive
 /// for them instead of publishing it.
-pub fn offer(disk: Box<dyn Disk>, name: &'static str) {
-    OFFERED.get().push(Offered { disk, name });
+pub fn offer(disk: Box<dyn Disk>) {
+    OFFERED.get().push(Offered { disk });
 }
 
 pub fn offered() -> &'static mut Vec<Offered> {

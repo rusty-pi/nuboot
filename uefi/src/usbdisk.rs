@@ -22,7 +22,6 @@ pub const USE_UAS: bool = true;
 
 pub struct UsbDisk {
     slot: u32,
-    interface: u8,
     bulk_in: (u32, u32),
     bulk_out: (u32, u32),
     tag: u32,
@@ -43,8 +42,8 @@ struct Pipes {
 }
 
 impl UsbDisk {
-    fn new(slot: u32, interface: u8, bulk_in: (u32, u32), bulk_out: (u32, u32), uas: Option<Pipes>, buf: u64) -> UsbDisk {
-        UsbDisk { slot, interface, bulk_in, bulk_out, tag: 0, block_size: 512, blocks: 0, buf, uas }
+    fn new(slot: u32, bulk_in: (u32, u32), bulk_out: (u32, u32), uas: Option<Pipes>, buf: u64) -> UsbDisk {
+        UsbDisk { slot, bulk_in, bulk_out, tag: 0, block_size: 512, blocks: 0, buf, uas }
     }
 }
 
@@ -215,7 +214,7 @@ fn dci(address: u8) -> u32 {
 }
 
 /// Set up a bulk-only mass storage interface and publish the drive.
-pub fn attach(slot: u32, interface: u8, eps: &[Endpoint], path: Vec<u8>, vendor: u16, product: u16) {
+pub fn attach(slot: u32, eps: &[Endpoint], path: Vec<u8>, vendor: u16, product: u16) {
     let bulk = |dir: u8| eps.iter().find(|e| e.attributes & 3 == 2 && e.address & 0x80 == dir).copied();
     let (Some(i), Some(o)) = (bulk(0x80), bulk(0)) else {
         warn!("usb", "drive without bulk endpoints"; slot = slot);
@@ -230,14 +229,14 @@ pub fn attach(slot: u32, interface: u8, eps: &[Endpoint], path: Vec<u8>, vendor:
         warn!("usb", "no DMA memory for the drive"; slot = slot);
         return;
     };
-    let disk = UsbDisk::new(slot, interface, (dci(i.address), i.max_packet as u32 & 0x7ff), (dci(o.address), o.max_packet as u32 & 0x7ff), None, buf);
+    let disk = UsbDisk::new(slot, (dci(i.address), i.max_packet as u32 & 0x7ff), (dci(o.address), o.max_packet as u32 & 0x7ff), None, buf);
     finish(disk, path, vendor, product);
 }
 
 /// Set up the UAS alternate setting of an interface and publish the drive:
 /// the endpoints by their pipe IDs (1 command, 2 status, 3 data in, 4 data
 /// out), the three that are not the command pipe with streams.
-pub fn attach_uas(slot: u32, interface: u8, eps: &[Endpoint], path: Vec<u8>, vendor: u16, product: u16) {
+pub fn attach_uas(slot: u32, eps: &[Endpoint], path: Vec<u8>, vendor: u16, product: u16) {
     let pipe = |id: u8| eps.iter().find(|e| e.pipe == id).copied();
     let (Some(command), Some(status), Some(data_in), Some(data_out)) = (pipe(1), pipe(2), pipe(3), pipe(4)) else {
         warn!("usb", "UAS interface without its four pipes"; slot = slot);
@@ -254,7 +253,7 @@ pub fn attach_uas(slot: u32, interface: u8, eps: &[Endpoint], path: Vec<u8>, ven
     };
     let mps = |e: Endpoint| (dci(e.address), e.max_packet as u32 & 0x7ff);
     let pipes = Pipes { command: mps(command), status: mps(status), data_in: mps(data_in), data_out: mps(data_out) };
-    let disk = UsbDisk::new(slot, interface, mps(data_in), mps(data_out), Some(pipes), buf);
+    let disk = UsbDisk::new(slot, mps(data_in), mps(data_out), Some(pipes), buf);
     finish(disk, path, vendor, product);
 }
 

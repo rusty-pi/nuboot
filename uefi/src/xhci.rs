@@ -818,17 +818,17 @@ fn enumerate(root_port: u32, route: u32, depth: u32, speed: u32, tt: (u32, u32),
             Ok(()) => {
                 info!("usb", "drive driven through UAS"; slot = slot, vendor = Hex(vendor), product = Hex(product));
                 let eps = config.interfaces.swap_remove(i).endpoints;
-                crate::usbdisk::attach_uas(slot, number, &eps, path, vendor, product);
+                crate::usbdisk::attach_uas(slot, &eps, path, vendor, product);
             }
             Err(e) => {
                 warn!("usb", "UAS interface not selected, using bulk-only"; slot = slot, error = crate::log::dbg(&e));
                 let eps = config.interfaces.swap_remove(storage.unwrap_or(i)).endpoints;
-                crate::usbdisk::attach(slot, storage.unwrap_or(i) as u8, &eps, path, vendor, product);
+                crate::usbdisk::attach(slot, &eps, path, vendor, product);
             }
         }
     } else if let Some(i) = storage {
         let eps = config.interfaces.swap_remove(i).endpoints;
-        crate::usbdisk::attach(slot, i as u8, &eps, path, vendor, product);
+        crate::usbdisk::attach(slot, &eps, path, vendor, product);
     } else {
         info!("usb", "device ignored"; vendor = Hex(vendor), product = Hex(product), class = Hex(dev[4]));
     }

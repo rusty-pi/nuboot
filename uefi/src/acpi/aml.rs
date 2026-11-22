@@ -25,7 +25,6 @@ const DEVICE_OP: u8 = 0x82;
 const THERMAL_ZONE_OP: u8 = 0x85;
 const STALL_OP: u8 = 0x21;
 const STORE_OP: u8 = 0x70;
-const ADD_OP: u8 = 0x72;
 const SUBTRACT_OP: u8 = 0x74;
 const INCREMENT_OP: u8 = 0x75;
 const MULTIPLY_OP: u8 = 0x77;
@@ -194,10 +193,6 @@ pub fn bit_and(left: &[u8], right: &[u8]) -> Bytes {
 
 pub fn bit_and_into(left: &[u8], right: &[u8], target: &[u8]) -> Bytes {
     [&[AND_OP][..], left, right, target].concat()
-}
-
-pub fn add(left: &[u8], right: &[u8]) -> Bytes {
-    [&[ADD_OP][..], left, right, &[ZERO_OP]].concat()
 }
 
 pub fn subtract(left: &[u8], right: &[u8]) -> Bytes {

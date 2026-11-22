@@ -7,6 +7,7 @@ fn main() {
     // USB boot.
     println!("cargo:rustc-link-arg-bin=start4=-Wl,-q");
     println!("cargo:rerun-if-changed=start4.ld");
+    println!("cargo:rustc-link-arg-bins=-Wl,--no-warn-rwx-segments");
     println!("cargo:rustc-link-arg-bin=start4-update=-T{dir}/start4-update.ld");
     println!("cargo:rerun-if-changed=start4-update.ld");
     commit();

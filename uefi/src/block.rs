@@ -393,7 +393,7 @@ pub fn fat_signature(boot: &[u8]) -> bool {
 /// them. `path` is the disk's device path.
 pub fn add_disk(disk: Box<dyn Disk>, path: Vec<u8>, name: &'static str) {
     if crate::rtmode::active() {
-        crate::rtmode::offer(disk, name);
+        crate::rtmode::offer(disk);
         return;
     }
     let disk: *mut dyn Disk = Box::into_raw(disk);

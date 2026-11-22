@@ -219,6 +219,7 @@ unsafe extern "C" {
 }
 
 #[repr(align(64))]
+#[allow(dead_code)]
 struct Buffer([u32; 16]);
 
 static mut LEVEL_BUFFER: Buffer = Buffer([0; 16]);
@@ -238,10 +239,10 @@ fn at_level(el1: bool) {
     let buffer = &raw mut LEVEL_BUFFER as *mut u32;
     unsafe { core::ptr::write_bytes(buffer, 0, 16) };
     flush(buffer as usize, 64);
-    flush(level_payload as usize, 512);
+    flush(level_payload as *const () as usize, 512);
     unsafe { core::arch::asm!("ic ialluis", "dsb sy", "isb") };
     say(if el1 { "otp probe: reading from EL1\r\n" } else { "otp probe: reading from EL0\r\n" });
-    let esr = unsafe { level_run(level_payload as usize, buffer, el1 as u64) };
+    let esr = unsafe { level_run(level_payload as *const () as usize, buffer, el1 as u64) };
     flush(buffer as usize, 64);
     say("otp probe: back, esr_el2 = ");
     hex(esr as u32);

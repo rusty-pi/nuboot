@@ -35,10 +35,17 @@ case " $* " in
         exit 1
       fi
     fi
-    exec "$rustc" "$@" \
+    # libgccjit warns about every `#[used]` static the VC4 GCC cannot honour
+    # with `retain`; the sections are kept by the linker script anyway.
+    errors="$(mktemp)"
+    "$rustc" "$@" \
       --remap-path-prefix="$src=/rustc/$commit" \
       -Zcodegen-backend="$root/toolchain/librustc_codegen_gcc.so" \
-      --sysroot="$root/toolchain/sysroot"
+      --sysroot="$root/toolchain/sysroot" 2>"$errors"
+    status=$?
+    grep -v "^libgccjit.so: warning: : 'retain' attribute ignored" "$errors" >&2
+    rm -f "$errors"
+    exit $status
     ;;
 esac
 exec "$rustc" "$@"
