@@ -71,6 +71,7 @@ struct Found {
     slot: usize,
 }
 
+const ATTR_READ_ONLY: u8 = 0x01;
 const ATTR_DIR: u8 = 0x10;
 const ATTR_VOLUME: u8 = 0x08;
 const ATTR_LFN: u8 = 0x0f;
@@ -465,6 +466,11 @@ extern "efiapi" fn open(
     }
     let writable = mode & file::MODE_WRITE != 0;
     if mode & file::MODE_CREATE != 0 || (writable && !(file.is_some() && counted_directory(&stack).is_some())) {
+        info!("fat", "open for writing refused"; reason = "not an existing file of a boot entry directory", path = W(name));
+        return efi::Status::WRITE_PROTECTED;
+    }
+    if writable && file.as_ref().is_some_and(|e| e.attr & ATTR_READ_ONLY != 0) {
+        info!("fat", "open for writing refused"; reason = "the file has the read-only attribute, so its boot counter stays", path = W(name));
         return efi::Status::WRITE_PROTECTED;
     }
     let (entry, parents) = match file {
@@ -663,13 +669,13 @@ extern "efiapi" fn set_info(this_: *mut file::Protocol, ty: *mut efi::Guid, size
     }
     let f = this(this_);
     if unsafe { *ty } != file::INFO_ID {
-        debug!("fat", "SetInfo refused"; reason = "not EFI_FILE_INFO", file = W(&f.entry.name));
+        warn!("fat", "SetInfo refused"; reason = "not EFI_FILE_INFO", file = W(&f.entry.name));
         return efi::Status::WRITE_PROTECTED;
     }
     match rename_by_info(f, buf as *const u8, size) {
         Ok(()) => efi::Status::SUCCESS,
         Err((status, reason)) => {
-            debug!("fat", "SetInfo refused"; reason = reason, file = W(&f.entry.name), status = status.as_usize());
+            warn!("fat", "SetInfo refused"; reason = reason, file = W(&f.entry.name), status = status.as_usize());
             status
         }
     }
@@ -701,7 +707,7 @@ fn rename_by_info(f: &mut File, buf: *const u8, size: usize) -> Result<(), Refus
     if !f.writable {
         return Err((efi::Status::ACCESS_DENIED, "opened read-only"));
     }
-    if f.entry.attr & 0x01 != 0 {
+    if f.entry.attr & ATTR_READ_ONLY != 0 {
         return Err((efi::Status::WRITE_PROTECTED, "read-only file"));
     }
     if info.file_size != f.entry.size as u64 {

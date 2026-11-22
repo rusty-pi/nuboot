@@ -82,4 +82,20 @@ if [ -n "$suffix" ]; then
   scripts/mkbootimg.py out/test-keys/boot.key out/start4-test.elf out --prefix boot-owner-junk --add out/test-keys/owner-junk.der:owner-db.der
   head -c 5000 /dev/zero >out/test-keys/owner-oversize.der
   scripts/mkbootimg.py out/test-keys/boot.key out/start4-test.elf out --prefix boot-owner-oversize --add out/test-keys/owner-oversize.der:owner-db.der
+  # A 512 MiB FAT32 disk (MBR, one partition) with systemd-boot 262 and the
+  # unified kernel image `system_1+3-0.efi` read-only, as systemd-sysupdate's
+  # Mode=0444 leaves a file on a vfat file system.
+  esp=out/esp-partition.tmp
+  truncate -s 512M "$esp"
+  mkfs.vfat -F 32 -n ESP "$esp" >/dev/null
+  mmd -i "$esp" ::EFI ::EFI/BOOT ::EFI/Linux ::loader
+  mcopy -i "$esp" out/start4-test.elf ::start4.elf
+  mcopy -i "$esp" out/systemd-bootaa64-262.efi ::EFI/BOOT/BOOTAA64.EFI
+  mcopy -i "$esp" out/uki.efi "::EFI/Linux/system_1+3-0.efi"
+  printf 'timeout 0\nconsole-mode keep\n' | mcopy -i "$esp" - ::loader/loader.conf
+  mattrib -i "$esp" +r "::EFI/Linux/system_1+3-0.efi"
+  truncate -s 513M out/esp-read-only-entry.img
+  printf 'label: dos\nstart=2048, size=1048576, type=c\n' | sfdisk -q out/esp-read-only-entry.img
+  dd if="$esp" of=out/esp-read-only-entry.img bs=1M seek=1 conv=notrunc status=none
+  rm -f "$esp"
 fi

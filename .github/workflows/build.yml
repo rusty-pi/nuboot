@@ -197,7 +197,9 @@ jobs:
             out/shimaa64.efi
             out/shimaa64-stock.efi
             out/systemd-bootaa64.efi
+            out/systemd-bootaa64-262.efi
             out/uki.efi
+            out/esp-read-only-entry.img
             out/grubaa64.efi
           if-no-files-found: error
           retention-days: 1

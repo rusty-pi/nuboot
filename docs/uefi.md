@@ -217,10 +217,15 @@ that writes to the file system:
 
 - The file is a regular file of `\EFI\Linux` or `\loader\entries`, opened
   with `EFI_FILE_MODE_WRITE` (no other file opens for writing; creating a file
-  is refused). `Write`, `Delete` and every other `SetInfo` return
-  `EFI_WRITE_PROTECTED`: another information type, a size or attribute that
-  differs from the file's, a read-only file. Times in the information are
-  ignored. A handle opened read-only gets `EFI_ACCESS_DENIED`.
+  is refused, and so is opening a file that has the FAT read-only attribute).
+  `Write`, `Delete` and every other `SetInfo` return `EFI_WRITE_PROTECTED`:
+  another information type, a size or attribute that differs from the file's.
+  Times in the information are ignored. A handle opened read-only gets
+  `EFI_ACCESS_DENIED`.
+- A refused open for writing and a refused `SetInfo` are logged on the serial
+  console (`open for writing refused`, `SetInfo refused`, with the reason and
+  the path), so an entry whose counter does not move can be told from one that
+  is never asked.
 - The new name keeps everything of the old one but the counter: the same stem
   and extension, both with a counter (`+N` or `+N-M`, `+N` meaning `+N-0`),
   the tries left no larger and the tries done no smaller than before. A name
@@ -233,6 +238,14 @@ that writes to the file system:
   a USB drive alike. The handle that was renamed reads and reports the new
   name; other handles of the file keep the old name.
 
+systemd-boot 262 and later leave the counter of an entry whose file has the
+read-only attribute alone, as a hint from the OS that the entry is not to be
+counted. On a vfat file system Linux sets that attribute on a file with no
+write permission bit, which is what `Mode=0444` in a systemd-sysupdate
+transfer for `\EFI\Linux` creates. With `Mode=0644` the attribute is not set
+and the entry is counted. A read-only entry boots by its own name, with no rename and no
+`LoaderBootCountPath`.
+
 Secure Boot does not matter here: the rename changes no content, and an image's
 signature covers its bytes, not its name, so an entry verifies the same
 by its new name. The rule keeps the rename from being more than that: a
@@ -241,7 +254,12 @@ payload cannot use it to move a file to a name that something else reads.
 `scenarios/bootcount.yaml` (SD card) and `scenarios/bootcount-usb.yaml` do the
 renames and the refusals from an EFI application and read the directory again
 after a reset; `scenarios/systemd-boot-counting.yaml` has systemd-boot itself
-bump the counter of an entry and start it by the new name.
+bump the counter of an entry and start it by the new name, and
+`scenarios/systemd-boot-counting-262.yaml` does the same with systemd-boot 262
+from a 512 MiB FAT32 partition of a USB drive.
+`scenarios/systemd-boot-read-only-entry.yaml` has systemd-boot 262 find the
+entry read-only: the open for writing is refused and logged, and the entry
+starts by its own name.
 
 ### The owner's db
 

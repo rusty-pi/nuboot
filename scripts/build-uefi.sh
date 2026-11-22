@@ -54,6 +54,8 @@
 #   out/systemd-bootaa64.efi, out/uki.efi
 #                     Debian's systemd-boot, and a unified kernel image of its
 #                     systemd-stub around hello.efi, signed with the test key
+#   out/systemd-bootaa64-262.efi
+#                     Debian's systemd-boot 262, signed with the test key
 #   out/shimaa64.efi, out/grubaa64.efi
 #                     Ubuntu's shim, signed by Microsoft and with the test
 #                     key, and its GRUB, signed by Canonical
@@ -69,6 +71,8 @@ GRUB_DEB="${GRUB_DEB:-pool/main/g/grub2-signed/grub-efi-arm64-signed_1.202.5+2.1
 GRUB_SHA256="${GRUB_SHA256:-728d506c28c56d3e4372f5f5b143d837d96b202c82ed05cbbd3ec27a5d4de955}"
 SYSTEMD_BOOT_URL="${SYSTEMD_BOOT_URL:-https://deb.debian.org/debian/pool/main/s/systemd/systemd-boot-efi_257.13-1~deb13u1_arm64.deb}"
 SYSTEMD_BOOT_SHA256="${SYSTEMD_BOOT_SHA256:-0e4529d9a72b35c31f34151ef8a0df20f322cfef679f4f5439394e60505b91a2}"
+SYSTEMD_BOOT_262_URL="${SYSTEMD_BOOT_262_URL:-https://deb.debian.org/debian/pool/main/s/systemd/systemd-boot-efi_262.2-1_arm64.deb}"
+SYSTEMD_BOOT_262_SHA256="${SYSTEMD_BOOT_262_SHA256:-a6137774e8ae0d0493ede8c3a1e05d37f762ff784f0de3777c74d160085df680}"
 SHIM_DEB="${SHIM_DEB:-pool/main/s/shim-signed/shim-signed_1.58+15.8-0ubuntu1_arm64.deb}"
 SHIM_SHA256="${SHIM_SHA256:-58b0f8a0f43bdff2122af8f52b05a5eb73b1964079e36e3eed8d06b4d5164917}"
 
@@ -326,6 +330,12 @@ printf 'console=ttyAMA0 root=/dev/test' >"$tmp/cmdline"
 "$here/scripts/mkuki.py" "$tmp/systemd-boot/usr/lib/systemd/boot/efi/linuxaa64.efi.stub" "$tmp/uki.efi" \
   --section .osrel="$tmp/osrel" --section .cmdline="$tmp/cmdline" --section .linux="$tmp/kernel-signed.efi"
 sign "$tmp/uki.efi" "$out/uki.efi"
+# systemd-boot 262, which leaves the boot counter of a read-only entry alone.
+mkdir -p "$tmp/systemd-boot-262"
+curl -sSfL -o "$tmp/systemd-boot-262/p.deb" "$SYSTEMD_BOOT_262_URL"
+echo "$SYSTEMD_BOOT_262_SHA256  $tmp/systemd-boot-262/p.deb" | sha256sum -c --quiet
+(cd "$tmp/systemd-boot-262" && ar x p.deb && tar xf data.tar.*)
+sign "$tmp/systemd-boot-262/usr/lib/systemd/boot/efi/systemd-bootaa64.efi" "$out/systemd-bootaa64-262.efi"
 deb shim "$SHIM_DEB" "$SHIM_SHA256"
 cp "$tmp/shim/usr/lib/shim/shimaa64.efi.signed.latest" "$out/shimaa64-stock.efi"
 sign "$out/shimaa64-stock.efi" "$out/shimaa64.efi"
