@@ -56,6 +56,7 @@ fn what_the_resource_manager_reads_of_a_save_and_a_flush() {
         assert_eq!(response_code(&execute(&save)), RC_REFERENCE_H0, "{handle:08x} is not loaded");
     }
 
-    let flush = command(ST_NO_SESSIONS, CC_FLUSH_CONTEXT, &0x0300_0000u32.to_be_bytes());
-    assert_eq!(response_code(&execute(&flush)), 0x08b | 0x40 | 0x100, "flushing what is not loaded is a handle error on the parameter");
+    let flush = command(ST_NO_SESSIONS, CC_FLUSH_CONTEXT, &handle.to_be_bytes());
+    assert_eq!(response_code(&execute(&flush)), 0, "the handle of a saved session flushes it");
+    assert_eq!(response_code(&execute(&flush)), 0x08b | 0x40 | 0x100, "flushing what is neither loaded nor saved is a handle error on the parameter");
 }
