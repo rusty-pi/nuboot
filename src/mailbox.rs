@@ -127,6 +127,19 @@ const TAG_GET_OWNER_DB: u32 = 0x0003_00a8;
 /// says it: its code, whether a `boot.img` was loaded (`BSTM` says ramdisk
 /// and nothing about the medium under it) and that image's length.
 const TAG_GET_BOOT_MEDIUM: u32 = 0x0003_00ab;
+/// Where the HDMI framebuffer is ([`crate::hdmi`]): its address in the ARM's
+/// memory, width, height and pitch in bytes, all zero when HDMI is not lit.
+#[cfg(feature = "hdmi")]
+const TAG_GET_FRAMEBUFFER: u32 = 0x0003_00b0;
+#[cfg(feature = "hdmi")]
+static FRAMEBUFFER: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Say whether the framebuffer is lit, for [`TAG_GET_FRAMEBUFFER`].
+#[cfg(feature = "hdmi")]
+pub fn set_framebuffer(lit: bool) {
+    FRAMEBUFFER.store(lit, core::sync::atomic::Ordering::Relaxed);
+}
+
 const OWNER_DB_NONE: u32 = 0;
 const OWNER_DB_PRESENT: u32 = 1;
 const OWNER_DB_INVALID: u32 = 2;
@@ -510,6 +523,17 @@ fn respond(bus: u32, runtime: bool) {
                 set(value + 1, present);
                 set(value + 2, length);
                 set(i + 2, RESPONSE | 12);
+            }
+            #[cfg(feature = "hdmi")]
+            TAG_GET_FRAMEBUFFER if room >= 16 => {
+                let lit = FRAMEBUFFER.load(core::sync::atomic::Ordering::Relaxed);
+                let (base, width, height, pitch) =
+                    if lit { (crate::hdmi::BASE, crate::hdmi::WIDTH, crate::hdmi::HEIGHT, crate::hdmi::PITCH) } else { (0, 0, 0, 0) };
+                set(value, base);
+                set(value + 1, width);
+                set(value + 2, height);
+                set(value + 3, pitch);
+                set(i + 2, RESPONSE | 16);
             }
             TAG_GET_OWNER_DB if room >= 8 + ramdisk::MAX_OWNER_DB as u32 => {
                 let der = ramdisk::owner_db();

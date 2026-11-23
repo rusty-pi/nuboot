@@ -57,6 +57,7 @@ from `start4.elf`'s:
 | ESRT | Three resources in the `EFI_SYSTEM_RESOURCE_TABLE`: the firmware as an update bundle, the firmware as an image the owner signs, and the EEPROM bootloader, the first two with the commit's time as their version. `OsIndicationsSupported` offers file capsule delivery, and `OsIndications` takes the OS's write |
 | Device tree | Passed on to the OS as the `EFI_DTB_TABLE` configuration table. On top of the stock tree: `/memory@0` from the board's SDRAM; a `vpu-tpm` node ([os-image.md](os-image.md)) and the reserved pages of the TPM's command response buffer ([tpm2.md](tpm2.md#the-command-response-buffer)) and of the watchdog's registers; the Ethernet controller's `local-mac-address`, the address in the OTP's MAC rows, or on a board whose rows are blank a locally administered one from a hash of the serial number, the same at every boot; and the board's identity, `serial-number` and `rusty-pi,board-revision`, in the root. The wireless chip's SD host (`/soc/mmcnr`) and Bluetooth are disabled, and on BCM2711 C0 the SD host's bus (`/emmc2bus`) has its DMA window of the low 4 GiB, as the stock firmware gives it |
 | SMBIOS | Version 3.1.1, as the `EFI_SMBIOS3_TABLE` configuration table, whichever way the OS describes the board: the firmware (its vendor, the commit and its date), the system (maker, the board's name from its revision code, the revision code, the serial number and a UUID made from it), the board and its enclosure, the processor and the memory. `/sys/class/dmi/id`, `dmidecode`, `hostnamectl` and fwupd's hardware IDs read them, and an OS on the ACPI tables has no device tree to get the model and serial number from |
+| GOP (`hdmi` build only) | `EFI_GRAPHICS_OUTPUT_PROTOCOL` with one mode, the 1280x720 XRGB8888 framebuffer of HDMI0 at `0x3E80_0000`, which the device tree reserves ([logging.md](logging.md#on-hdmi)). `Blt` is not implemented |
 | ACPI | The tables of the [next section](#acpi), as the `EFI_ACPI_20_TABLE_GUID` configuration table |
 | Variables | Held in RAM, with the non-volatile ones also in the variable store on the boot disk ([below](#the-variable-store)) |
 
@@ -631,4 +632,4 @@ signs.
   when the store is on the SD card or on a drive on the VL805 ([above](#variables-the-os-writes)).
   A write after 64 KiB of records since boot, or with no room left in the bank,
   fails.
-- No NVMe, no network protocols, no USB keyboards.
+- No NVMe, no network protocols, no USB keyboards. The graphics output protocol has one mode and no `Blt`, and the console of the boot services is the serial line only.

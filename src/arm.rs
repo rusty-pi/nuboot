@@ -62,6 +62,19 @@ pub fn crb() -> tpm_crb::Window {
 /// describes ([`crate::wdat`]). The device tree reserves it and the UEFI
 /// firmware tells the OS about it in the tables.
 pub const WDAT_BASE: u32 = CRB_BASE - wdat::SIZE;
+#[cfg(feature = "hdmi")]
+const FRAMEBUFFER_NODE: &[u8] = b"framebuffer@3e800000";
+#[cfg(feature = "hdmi")]
+const _: () = assert!(crate::hdmi::BASE == 0x3e80_0000);
+
+#[cfg(feature = "hdmi")]
+fn framebuffer_reg() -> [u8; 12] {
+    let mut reg = [0u8; 12];
+    reg[4..8].copy_from_slice(&crate::hdmi::BASE.to_be_bytes());
+    reg[8..12].copy_from_slice(&crate::hdmi::SIZE.to_be_bytes());
+    reg
+}
+
 const WDAT_NODE: &[u8] = b"os-watchdog@3ebfe000";
 const _: () = assert!(WDAT_BASE == 0x3ebf_e000);
 
@@ -393,15 +406,30 @@ pub fn start(image: &[u8], tree: &[u8], serial: u32, revision: u32, arm_mhz: u32
         &[(b"reg", &wdat_reg()), (b"no-map", b"")],
     )
     .ok_or(Error::Tree)?;
+    #[cfg(feature = "hdmi")]
+    let (tree_at, tree_len) = (
+        window_at(2),
+        fdt::copy_with_node(
+            arm_memory(window_at(1), with_watchdog),
+            arm_memory(window_at(2), window),
+            &[b"", b"reserved-memory"],
+            FRAMEBUFFER_NODE,
+            &[(b"reg", &framebuffer_reg()), (b"no-map", b"")],
+        )
+        .ok_or(Error::Tree)?,
+    );
+    #[cfg(not(feature = "hdmi"))]
+    let (tree_at, tree_len) = (window_at(1), with_watchdog);
+    let other_window = |at: u32| if at == window_at(1) { window_at(2) } else { window_at(1) };
     let (with_address_at, with_address) = match fdt::copy_with_new_property(
-        arm_memory(window_at(1), with_watchdog),
-        arm_memory(window_at(2), window),
+        arm_memory(tree_at, tree_len),
+        arm_memory(other_window(tree_at), window),
         ETHERNET_NODE,
         b"local-mac-address",
         &ethernet,
     ) {
-        Some(len) => (window_at(2), len),
-        None => (window_at(1), with_watchdog),
+        Some(len) => (other_window(tree_at), len),
+        None => (tree_at, tree_len),
     };
     // The board's identity, where the tree has none: its serial number, which
     // the device tree specification names, and its revision code.

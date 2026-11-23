@@ -35,6 +35,8 @@ const TAG_TPM2_COMMAND: u32 = 0x0003_00a3;
 const TAG_GET_EARLY_EVENT: u32 = 0x0003_00a4;
 const TAG_GET_OWNER_DB: u32 = 0x0003_00a8;
 const TAG_GET_BOOT_MEDIUM: u32 = 0x0003_00ab;
+#[cfg(feature = "hdmi")]
+const TAG_GET_FRAMEBUFFER: u32 = 0x0003_00b0;
 /// The largest `owner-db.der` (`src/ramdisk.rs`).
 const OWNER_DB_MAX: usize = 4096;
 /// The largest TPM command or response (`src/tpm2.rs`).
@@ -382,4 +384,24 @@ pub fn boot_medium() -> Option<BootMedium> {
     }
     let word = |i: usize| unsafe { read_volatile(buf.add(5 + i)) };
     Some(BootMedium { code: word(0), ramdisk_len: (word(1) != 0).then(|| word(2) as u64) })
+}
+
+/// The HDMI framebuffer the VPU lit: its address, width, height and pitch in
+/// bytes. `None` when it is not lit or the VPU is an older one.
+#[cfg(feature = "hdmi")]
+pub struct Framebuffer {
+    pub base: u64,
+    pub width: u32,
+    pub height: u32,
+    pub pitch: u32,
+}
+
+#[cfg(feature = "hdmi")]
+pub fn framebuffer() -> Option<Framebuffer> {
+    if !call(TAG_GET_FRAMEBUFFER, &[0; 4]) {
+        return None;
+    }
+    let buf = BUFFER.0.get() as *const u32;
+    let word = |i: usize| unsafe { read_volatile(buf.add(5 + i)) };
+    (word(0) != 0).then(|| Framebuffer { base: word(0) as u64, width: word(1), height: word(2), pitch: word(3) })
 }

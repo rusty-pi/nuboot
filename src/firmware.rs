@@ -83,6 +83,14 @@ const MONITOR_PRIORITY: sched::Priority = sched::Priority(0);
 const MONITOR_STACK_WORDS: usize = 2048;
 static mut MONITOR_STACK: [u32; MONITOR_STACK_WORDS] = [0; MONITOR_STACK_WORDS];
 
+#[cfg(feature = "hdmi")]
+fn start_hdmi() {
+    let display = nuboot::hdmi::start();
+    nuboot::fb::attach();
+    nuboot::mailbox::set_framebuffer(true);
+    info!("hdmi", "HDMI0 started"; width = nuboot::hdmi::WIDTH, height = nuboot::hdmi::HEIGHT, display = display);
+}
+
 #[unsafe(no_mangle)]
 fn firmware_main() -> ! {
     let main_stack = unsafe { stack::Stack::paint_running(&raw mut __stack_bottom, &raw const __stack_top) };
@@ -97,6 +105,8 @@ fn firmware_main() -> ! {
     }
     nuboot::cm::start_scb_clock();
     nuboot::genet::start_clocks();
+    #[cfg(feature = "hdmi")]
+    start_hdmi();
 
     let board = Board::read();
     match thermal::start() {

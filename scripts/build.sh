@@ -7,6 +7,9 @@
 # It also leaves out/start4-update.bin: the same firmware linked for the
 # update slot, which scripts/mkbundle.py signs as an update.
 #
+# --hdmi builds out/start4-hdmi.elf: the firmware with the HDMI0 text console
+# of the log (docs/logging.md), for a board with no serial line to read.
+#
 # --test-keys builds out/start4-test.elf instead, whose UEFI firmware also
 # trusts the test key the scenarios' EFI applications are signed with
 # (`cargo build --features test-keys`), and out/start4-update-test.bin, whose
@@ -32,12 +35,18 @@ mkdir -p out
 fetch out/stock-pieeprom.bin "$STOCK_URL" "$STOCK_SHA256"
 
 suffix=""
-if [ "${1:-}" = "--test-keys" ]; then
-  shift
-  suffix="-test"
-  set -- --features test-keys "$@"
-fi
-cargo build --locked --release "$@"
+test_suffix=""
+features=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --test-keys) test_suffix="-test"; features="${features:+$features,}test-keys"; shift ;;
+    --hdmi) features="${features:+$features,}hdmi"; shift ;;
+    *) break ;;
+  esac
+done
+suffix="$test_suffix"
+case ",$features," in *,hdmi,*) suffix="$suffix-hdmi" ;; esac
+cargo build --locked --release ${features:+--features "$features"} "$@"
 
 mkdir -p out
 # start4.elf goes on the medium without its debug information, but with the
@@ -54,7 +63,7 @@ toolchain/bin/vc4-elf-objcopy -O binary target/vc4-none-elf/release/start4-updat
 # once with one it does not; and with the owner's db in it (owner-db.der, the
 # CA scripts/build-uefi.sh --test-apps makes), and with a file in its place that
 # is no certificate and one that is too long.
-if [ -n "$suffix" ]; then
+if [ -n "$test_suffix" ]; then
   mkdir -p out/test-keys
   for name in boot boot-stranger; do
     [ -f "out/test-keys/$name.key" ] || openssl genrsa -out "out/test-keys/$name.key" 2048 2>/dev/null

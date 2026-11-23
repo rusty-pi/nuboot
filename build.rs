@@ -100,8 +100,9 @@ fn arm_files(dir: &str) {
         }
     }
     let test = std::env::var_os("CARGO_FEATURE_TEST_KEYS").is_some();
-    build_uefi(dir, test);
-    let image = if test { "pi4-uefi-test.bin" } else { "pi4-uefi.bin" };
+    let hdmi = std::env::var_os("CARGO_FEATURE_HDMI").is_some();
+    build_uefi(dir, test, hdmi);
+    let image = format!("pi4-uefi{}{}.bin", if test { "-test" } else { "" }, if hdmi { "-hdmi" } else { "" });
     let tree = format!("{out}/bcm2711-rpi-4-b.dtb");
     fetch(&tree, DTB_URL, DTB_SHA256);
     println!("cargo:rustc-env=ARM_IMAGE={out}/{image}");
@@ -115,11 +116,14 @@ const DTB_SHA256: &str = "75761b73c284e26623e4d1624bff13e67bce2ae620880efd81d657
 
 /// Run scripts/build-uefi.sh, a cargo build of its own on another nightly
 /// and target: none of what this cargo set for its build script goes with it.
-fn build_uefi(dir: &str, test: bool) {
+fn build_uefi(dir: &str, test: bool, hdmi: bool) {
     let mut cmd = Command::new("bash");
     cmd.arg(format!("{dir}/scripts/build-uefi.sh"));
     if test {
         cmd.arg("--test-keys");
+    }
+    if hdmi {
+        cmd.arg("--hdmi");
     }
     for (key, _) in std::env::vars_os() {
         let key = key.to_string_lossy().into_owned();

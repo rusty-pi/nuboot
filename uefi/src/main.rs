@@ -30,6 +30,8 @@ mod entry;
 mod esrt;
 mod event;
 mod fat;
+#[cfg(feature = "hdmi")]
+mod gop;
 mod fdt;
 mod image;
 mod mailbox;
@@ -206,6 +208,8 @@ extern "C" fn pi4_main(tree_addr: u64) -> ! {
     tables::init(console, con_in, con_out);
     tables::install_table(tables::DTB_GUID, tree_addr as *mut c_void);
     rng::install();
+    #[cfg(feature = "hdmi")]
+    gop::install();
     tcg2::init();
     esrt::init();
     sd::init();

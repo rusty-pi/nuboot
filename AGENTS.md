@@ -3,9 +3,10 @@
 - Keep changes focused on the requested firmware or workflow task.
 - Read the relevant code and existing documentation before editing; preserve
   repository conventions and avoid unrelated cleanup.
-- This is firmware for headless servers on the Raspberry Pi 4 family. Display,
-  camera, audio and anything else a headless server does not use is out of
-  scope.
+- This is firmware for headless servers on the Raspberry Pi 4 family. Camera,
+  audio and anything else a headless server does not use is out of scope.
+  The only display is the HDMI0 text console of the `hdmi` build, for debugging
+  a board with no serial line, at one fixed mode.
 - **Zero config.** A behaviour takes its default from the board and the boot
   medium, not from a settings file. Do not add a `config.txt`-style key, or
   any other setting, without asking first.

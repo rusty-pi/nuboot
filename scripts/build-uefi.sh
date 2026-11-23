@@ -80,11 +80,13 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 out="$here/out"
 test_apps=0
 test_keys=0
+hdmi=0
 cargo_args=()
 for arg in "$@"; do
   case "$arg" in
     --test-apps) test_apps=1 ;;
     --test-keys) test_keys=1 ;;
+    --hdmi) hdmi=1 ;;
     *) cargo_args+=("$arg") ;;
   esac
 done
@@ -146,6 +148,10 @@ if [[ $test_keys == 1 ]]; then
   test_key
   suffix="-test"
   test_cert="$keys/db.der"
+fi
+if [[ $hdmi == 1 ]]; then
+  suffix="$suffix-hdmi"
+  cargo_args+=(--features hdmi)
 fi
 
 # The LZMA literal/position bits that suit AArch64 code: lc=1, lp=2, pb=2.

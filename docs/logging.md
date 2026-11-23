@@ -44,6 +44,21 @@ runs off its stack end with an `ERROR` record on the console and stop the VPU:
   12.004113 ERROR panic    index out of bounds: the len is 4 but the index is 4  at=src/firmware.rs:120
 ```
 
+## On HDMI
+
+Only the `hdmi` build has this: `scripts/build.sh --hdmi` leaves
+`out/start4-hdmi.elf`, and the release `start4.elf` lights nothing. It is for a
+board with no serial line to read. HDMI0, the micro-HDMI port next to the USB-C power port, shows the same lines
+as text: 1280x720 at 60 Hz, white 8x8 characters drawn twice as tall, 160
+columns by 45 rows. When the text reaches the bottom the screen is cleared and
+the next line starts at the top. The mode is fixed, no EDID is read and the
+output is DVI-style RGB without audio. HDMI1 stays dark.
+
+The same framebuffer is the OS's console: UEFI gives it the framebuffer as a
+`EFI_GRAPHICS_OUTPUT_PROTOCOL` ([uefi.md](uefi.md#what-it-provides)), with the
+ACPI tables and the device tree alike, and a kernel with `efifb` or `simpledrm`
+draws on it. `console=tty0` puts the kernel's log there.
+
 ## In the code
 
 ```rust

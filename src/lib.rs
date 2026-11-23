@@ -21,10 +21,14 @@ pub mod critical;
 pub mod eeprom;
 pub mod elf;
 pub mod expander;
+#[cfg(feature = "hdmi")]
+pub mod fb;
 pub mod fdt;
 pub mod genet;
 pub mod gpio;
 pub mod handover;
+#[cfg(feature = "hdmi")]
+pub mod hdmi;
 pub mod i2c;
 pub mod idle;
 pub mod kdf;

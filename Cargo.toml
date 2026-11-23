@@ -28,6 +28,10 @@ color = []
 # built-in ones, and leave the image as out/start4-test.elf: the scenarios'
 # EFI applications are signed with that key. Never for a real board.
 test-keys = []
+# Light HDMI0 as a text console of the log and give the OS the framebuffer
+# (UEFI GOP, a reserved region in the device tree). For debugging a board with
+# no serial line: scripts/build.sh --hdmi leaves out/start4-hdmi.elf.
+hdmi = []
 
 [dependencies]
 

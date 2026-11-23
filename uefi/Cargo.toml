@@ -12,6 +12,8 @@ r-efi = "5.3"
 [features]
 # ANSI colours in the log, as the VPU firmware's `color` feature.
 color = []
+# The graphics output protocol for the framebuffer the VPU lit on HDMI0.
+hdmi = []
 
 [[bin]]
 name = "pi4-uefi"
