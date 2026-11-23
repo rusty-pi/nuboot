@@ -3,14 +3,17 @@
 metadata that says which device it is for.
 
     mkcab.py CAPSULE OUT.cab VERSION [--class firmware|eeprom|update] [--date YYYY-MM-DD] [--notes TEXT]
+        [--sign CERT KEY]
 
 CAPSULE is what scripts/mkcapsule.py wrote and VERSION what it carries, a
 release `X.Y.Z` or a number, which the ESRT reports once the update is applied. `fwupdmgr install OUT.cab`
 installs it, and `fwupdtool get-details OUT.cab` shows what fwupd makes of it.
-Needs `gcab`.
+Needs `gcab`. `--sign` adds the `firmware.jcat` that fwupd checks against the certificates in
+`/etc/pki/fwupd` (a signature and the SHA-256 and SHA-512 checksums of both files), which needs `jcat-tool`.
 """
 
 import datetime
+import hashlib
 import os
 import subprocess
 import sys
@@ -73,8 +76,26 @@ def metainfo(resource, version, date, notes, release):
 """
 
 
+def jcat(tmp, names, cert, key):
+    catalog = os.path.join(tmp, "firmware.jcat")
+    for name in names:
+        subprocess.run(["jcat-tool", "sign", catalog, name, cert, key], cwd=tmp, check=True)
+        for algorithm in ("sha256", "sha512"):
+            digest = hashlib.new(algorithm, open(os.path.join(tmp, name), "rb").read()).hexdigest()
+            checksum = os.path.join(tmp, f"{name}.{algorithm}")
+            open(checksum, "w").write(digest)
+            subprocess.run(["jcat-tool", "--kind", algorithm, "import", catalog, name, checksum], cwd=tmp, check=True)
+            os.remove(checksum)
+    return "firmware.jcat"
+
+
 def main():
     args = sys.argv[1:]
+    signer = None
+    if "--sign" in args:
+        at = args.index("--sign")
+        signer = [os.path.abspath(path) for path in args[at + 1 : at + 3]]
+        del args[at : at + 3]
     options = {"--class": "firmware", "--date": None, "--notes": None}
     for flag in options:
         if flag in args:
@@ -96,7 +117,10 @@ def main():
             path = os.path.join(tmp, name)
             open(path, "wb").write(data)
             os.utime(path, (stamp, stamp))
-        subprocess.run(["gcab", "--create", "--nopath", os.path.abspath(out), *files], cwd=tmp, check=True)
+        members = list(files)
+        if signer:
+            members.append(jcat(tmp, files, *signer))
+        subprocess.run(["gcab", "--create", "--nopath", os.path.abspath(out), *members], cwd=tmp, check=True)
 
 
 main()

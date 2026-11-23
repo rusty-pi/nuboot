@@ -120,7 +120,12 @@ the same way with `--class eeprom` for `mkcapsule.py` and `mkcab.py`, a
 with the configuration and the public key already in `pieeprom.bin`) and `TIME`
 as the version.
 
-`scripts/mkcab.py` needs `gcab`. `fwupdtool get-details` shows what fwupd
+`scripts/mkcab.py` needs `gcab`. fwupd installs a cabinet only if it carries a
+`firmware.jcat` signed by a certificate in `/etc/pki/fwupd`: add
+`--sign CERT KEY` (needs `jcat-tool`; the certificate needs the
+`digitalSignature` key usage). The release workflow signs with the
+`PI4_FWUPD_KEY` and `PI4_FWUPD_CERT` secrets and publishes the certificate as
+`nuboot-fwupd.pem`, which an OS image installs there. `fwupdtool get-details` shows what fwupd
 makes of the cabinet, the device GUID and the version among them.
 
 ```mermaid

@@ -95,7 +95,7 @@ jobs:
         if: runner.environment == 'github-hosted'
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3 sbsigntool openssl mtools dosfstools make gcab gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+          sudo apt-get install -y --no-install-recommends python3 sbsigntool openssl mtools dosfstools make gcab jcat gcc-aarch64-linux-gnu libc6-dev-arm64-cross
 
       - uses: dtolnay/rust-toolchain@stable
       - name: Install Rust
@@ -165,22 +165,28 @@ jobs:
         env:
           UPDATE_KEY: ${{ secrets.PI4_UPDATE_KEY }}
           DB_KEY: ${{ secrets.PI4_DB_KEY }}
+          FWUPD_KEY: ${{ secrets.PI4_FWUPD_KEY }}
+          FWUPD_CERT: ${{ secrets.PI4_FWUPD_CERT }}
         run: |
-          if [ -z "$UPDATE_KEY" ] || [ -z "$DB_KEY" ]; then
-            echo "::error::the PI4_UPDATE_KEY and PI4_DB_KEY secrets are not both set"
+          if [ -z "$UPDATE_KEY" ] || [ -z "$DB_KEY" ] || [ -z "$FWUPD_KEY" ] || [ -z "$FWUPD_CERT" ]; then
+            echo "::error::the PI4_UPDATE_KEY, PI4_DB_KEY, PI4_FWUPD_KEY and PI4_FWUPD_CERT secrets are not all set"
             exit 1
           fi
           certs="$RUNNER_TEMP/certs"
-          trap 'rm -f "$certs/update.key" "$certs/db.key"' EXIT
+          trap 'rm -f "$certs/update.key" "$certs/db.key" "$certs/fwupd.key"' EXIT
           printf '%s\n' "$UPDATE_KEY" >"$certs/update.key"
           printf '%s\n' "$DB_KEY" >"$certs/db.key"
-          chmod 600 "$certs/update.key" "$certs/db.key"
+          printf '%s\n' "$FWUPD_KEY" >"$certs/fwupd.key"
+          printf '%s\n' "$FWUPD_CERT" >"$certs/fwupd.pem"
+          chmod 600 "$certs/update.key" "$certs/db.key" "$certs/fwupd.key"
+          cp "$certs/fwupd.pem" out/nuboot-fwupd.pem
           openssl x509 -inform DER -in "$certs/DB.der" -out "$certs/db.crt"
           version="$FIRMWARE_VERSION"
           scripts/mkbundle.py "$certs/update.key" out/start4-update.bin "$version" "$RUNNER_TEMP/bundle.bin"
           scripts/mkcapsule.py "$certs/db.key" "$certs/db.crt" "$version" "$RUNNER_TEMP/update.cap" \
             --class update --bundle "$RUNNER_TEMP/bundle.bin"
-          scripts/mkcab.py "$RUNNER_TEMP/update.cap" "out/nuboot-update-$version.cab" "$version" --class update
+          scripts/mkcab.py "$RUNNER_TEMP/update.cap" "out/nuboot-update-$version.cab" "$version" --class update \
+            --sign "$certs/fwupd.pem" "$certs/fwupd.key"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -188,6 +194,7 @@ jobs:
           path: |
             out/start4.elf
             out/*.cab
+            out/nuboot-fwupd.pem
           if-no-files-found: error
           retention-days: 1
 
@@ -229,7 +236,7 @@ jobs:
           ---
 
           - \`start4.elf\`: the VPU firmware with the UEFI firmware and the board's device tree in it, for a board's boot partition under Raspberry Pi's own bootloader. A board's owner signs it once (\`scripts/mkbootimg.py\`).
-          - \`nuboot-update-*.cab\`: this release as an update for a board that already runs a \`start4.elf\` of this project, for \`fwupdmgr install\`. It needs no signature by the owner.
+          - \`nuboot-update-*.cab\`: this release as an update for a board that already runs a \`start4.elf\` of this project, for \`fwupdmgr install\`. It needs no signature by the owner. It is signed for fwupd with the certificate in \`nuboot-fwupd.pem\`, which an OS image puts in \`/etc/pki/fwupd\`.
           EOF
 
           # A re-dispatch on a tag whose release already exists replaces it
@@ -237,8 +244,8 @@ jobs:
           # again.
           if gh release view "$VERSION" >/dev/null 2>&1; then
             gh release edit "$VERSION" --title "$VERSION" --notes-file notes.md
-            gh release upload "$VERSION" out/start4.elf out/*.cab --clobber
+            gh release upload "$VERSION" out/start4.elf out/*.cab out/nuboot-fwupd.pem --clobber
           else
             gh release create "$VERSION" --verify-tag --title "$VERSION" \
-              --notes-file notes.md out/start4.elf out/*.cab
+              --notes-file notes.md out/start4.elf out/*.cab out/nuboot-fwupd.pem
           fi
