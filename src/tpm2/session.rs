@@ -17,7 +17,7 @@ use super::{
 use crate::{aes, kdf, keystore, p256, rng, sha256};
 
 /// How many sessions of each family, HMAC and policy, the TPM holds.
-pub const SESSION_SLOTS: usize = 4;
+pub const SESSION_SLOTS: usize = 16;
 pub const TABLE_SLOTS: usize = 2 * SESSION_SLOTS;
 const HMAC_SESSION_FIRST: u32 = 0x0200_0000;
 const POLICY_SESSION_FIRST: u32 = 0x0300_0000;

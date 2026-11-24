@@ -407,7 +407,7 @@ fn start_hmac_session_raw() -> u32 {
 #[test]
 fn a_client_that_saves_sessions_and_never_flushes_them_loses_the_oldest() {
     let _tpm = ONE_TPM.lock().unwrap_or_else(|e| e.into_inner());
-    let handles: Vec<u32> = (0..4).map(|_| start_hmac_session_raw()).collect();
+    let handles: Vec<u32> = (0..tpm2::SESSION_SLOTS).map(|_| start_hmac_session_raw()).collect();
     let contexts: Vec<Vec<u8>> = handles.iter().map(|h| Manager::save_context(*h).unwrap()).collect();
     let newest = start_hmac_session_raw();
     assert_eq!(newest, handles[0], "the slot of the session saved longest ago is taken");
@@ -415,6 +415,77 @@ fn a_client_that_saves_sessions_and_never_flushes_them_loses_the_oldest() {
     assert_ne!(rc(&gone), 0, "the context of the session that lost its handle does not load");
     assert_eq!(Manager::load_context(&contexts[1]), handles[1], "the others load");
     for handle in handles[1..].iter().chain([&newest]) {
+        assert_eq!(rc(&raw(ST_NO_SESSIONS, CC_FLUSH_CONTEXT, &handle.to_be_bytes())), 0);
+    }
+}
+
+/// Two clients behind the resource manager whose commands interleave, as two
+/// processes' do on a board: each runs the flow of
+/// `a_client_behind_a_resource_manager_creates_and_loads_a_key` one command
+/// at a time, the second after the first.
+#[test]
+fn two_clients_with_interleaved_commands_each_get_their_key() {
+    let _tpm = ONE_TPM.lock().unwrap_or_else(|e| e.into_inner());
+    let mut a = Manager::default();
+    let mut b = Manager::default();
+    let endorsement = [(RS_PW, password()[4..].to_vec())];
+
+    let ek_a = a.run(CC_CREATE_PRIMARY, &[RH_ENDORSEMENT], &endorsement, &create_params(&ek_template()), true).handle.unwrap();
+    let ek_b = b.run(CC_CREATE_PRIMARY, &[RH_ENDORSEMENT], &endorsement, &create_params(&ek_template()), true).handle.unwrap();
+
+    let session_a = start_policy_session(&mut a);
+    let session_b = start_policy_session(&mut b);
+    policy_secret(&mut a, session_a);
+    policy_secret(&mut b, session_b);
+
+    let attributes = ATTR_CONTINUE | ATTR_DECRYPT | ATTR_ENCRYPT;
+    let created_a = a.run_encrypted(CC_CREATE, &[ek_a], &[(session_a, policy_authorization(session_a, attributes)[4..].to_vec())], &create_params(&ak_template()), false, Some(session_a));
+    let created_b = b.run_encrypted(CC_CREATE, &[ek_b], &[(session_b, policy_authorization(session_b, attributes)[4..].to_vec())], &create_params(&ak_template()), false, Some(session_b));
+    a.run(CC_FLUSH_CONTEXT, &[], &[], &session_a.to_be_bytes(), false);
+    b.run(CC_FLUSH_CONTEXT, &[], &[], &session_b.to_be_bytes(), false);
+
+    let (private_a, at) = sized_at(&created_a.params, 0);
+    let (public_a, _) = sized_at(&created_a.params, at);
+    let (private_b, at) = sized_at(&created_b.params, 0);
+    let (public_b, _) = sized_at(&created_b.params, at);
+
+    let session_a = start_policy_session(&mut a);
+    let session_b = start_policy_session(&mut b);
+    policy_secret(&mut a, session_a);
+    policy_secret(&mut b, session_b);
+    let mut load_a = sized(private_a);
+    load_a.extend(sized(public_a));
+    let mut load_b = sized(private_b);
+    load_b.extend(sized(public_b));
+    let attributes = ATTR_DECRYPT | ATTR_ENCRYPT;
+    let loaded_a = a.run_encrypted(CC_LOAD, &[ek_a], &[(session_a, policy_authorization(session_a, attributes)[4..].to_vec())], &load_a, true, Some(session_a));
+    let loaded_b = b.run_encrypted(CC_LOAD, &[ek_b], &[(session_b, policy_authorization(session_b, attributes)[4..].to_vec())], &load_b, true, Some(session_b));
+    let ak_a = loaded_a.handle.unwrap();
+    let ak_b = loaded_b.handle.unwrap();
+
+    for (rm, ak) in [(&mut a, ak_a), (&mut b, ak_b)] {
+        let quote = rm.run(CC_QUOTE, &[ak], &[(RS_PW, password()[4..].to_vec())], &pcr_quote_params(), false);
+        assert!(!quote.params.is_empty(), "each client's key signs after the interleaved contexts");
+    }
+}
+
+/// `tpm2_createek` starts three sessions at once and flushes them at the end,
+/// and the kernel's resource manager saves them between its commands. Two
+/// processes at a time therefore hold six sessions that the TPM has to keep,
+/// loaded or saved, while it advertises many more as active sessions.
+#[test]
+fn two_clients_that_hold_three_sessions_each_keep_all_six() {
+    let _tpm = ONE_TPM.lock().unwrap_or_else(|e| e.into_inner());
+    let a: Vec<u32> = (0..3).map(|_| start_hmac_session_raw()).collect();
+    let saved_a: Vec<Vec<u8>> = a.iter().map(|h| Manager::save_context(*h).unwrap()).collect();
+    let b: Vec<u32> = (0..3).map(|_| start_hmac_session_raw()).collect();
+    let saved_b: Vec<Vec<u8>> = b.iter().map(|h| Manager::save_context(*h).unwrap()).collect();
+    for (handle, context) in a.iter().zip(&saved_a).chain(b.iter().zip(&saved_b)) {
+        let response = raw(ST_NO_SESSIONS, CC_CONTEXT_LOAD, context);
+        assert_eq!(rc(&response), 0, "the context of session {handle:08x} loads after the other client started its sessions");
+        assert_eq!(u32::from_be_bytes(response[10..14].try_into().unwrap()), *handle);
+    }
+    for handle in a.iter().chain(&b) {
         assert_eq!(rc(&raw(ST_NO_SESSIONS, CC_FLUSH_CONTEXT, &handle.to_be_bytes())), 0);
     }
 }
