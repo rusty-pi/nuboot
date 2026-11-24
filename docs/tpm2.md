@@ -171,7 +171,7 @@ the hierarchy and the hash of the template. A sealed object is kept as the blob
 `TPM2_Create` returned (AES-128-CFB under a key from the parent's seed and the
 object's name, with an HMAC), and is plaintext only inside `Unseal`.
 
-The TPM has four object slots, four HMAC sessions and four policy or trial sessions. A tool that runs one
+The TPM has four object slots, sixteen HMAC sessions and sixteen policy or trial sessions. A session that a client has saved keeps its slot until it is loaded or flushed, so the sessions that the clients of a resource manager hold between their commands have to fit in them together: `tpm2_createek` holds three. A tool that runs one
 command per process, such as `tpm2-tools`, leaves its objects loaded, so
 the kernel's resource manager (`/dev/tpmrm0`) is what to use: it saves and
 loads around each command, with `ContextSave`, `ContextLoad` and

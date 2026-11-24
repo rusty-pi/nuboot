@@ -28,6 +28,8 @@ pub use nv::{ExportError as NvExportError, ImportError as NvImportError, RECORD_
 mod object;
 #[path = "tpm2/session.rs"]
 mod session;
+/// How many HMAC sessions, and as many policy sessions, the TPM holds loaded or saved.
+pub use session::SESSION_SLOTS;
 #[path = "tpm2/sign.rs"]
 mod sign;
 
@@ -262,7 +264,7 @@ const PROPERTIES: [(u32, u32); 58] = [
     (0x10e, 3),
     (0x10f, 7),
     (0x110, 3),
-    (0x111, 64),
+    (0x111, session::TABLE_SLOTS as u32),
     (0x112, PCRS as u32),
     (0x113, 3),
     (0x114, 0xffff),
