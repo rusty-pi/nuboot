@@ -178,9 +178,11 @@ fn checksum(bytes: &[u8]) -> u8 {
 fn fadt(dsdt: u64) -> Vec<u8> {
     const HARDWARE_REDUCED: u32 = 1 << 20;
     const ENTERPRISE_SERVER: u8 = 4;
+    const PSCI_COMPLIANT: u16 = 1;
     let mut t = Table::new(b"FACP", 6, 1);
     t.zeros(276 - HEADER);
     t.bytes[112..116].copy_from_slice(&HARDWARE_REDUCED.to_le_bytes());
+    t.bytes[129..131].copy_from_slice(&PSCI_COMPLIANT.to_le_bytes());
     t.bytes[131] = 3;
     t.bytes[140..148].copy_from_slice(&dsdt.to_le_bytes());
     t.bytes[45] = ENTERPRISE_SERVER;
