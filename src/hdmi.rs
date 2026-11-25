@@ -1,29 +1,92 @@
-//! HDMI0 at 1280x720, 60 Hz: one XRGB8888 framebuffer in the ARM's memory
-//! ([`BASE`]) scanned out by the HVS through PixelValve 2 to the HDMI
-//! encoder, as DVI (no infoframes, no audio) in full-range RGB. No EDID is read:
-//! the mode is the same for every display.
+//! HDMI0 in the mode its display prefers: one XRGB8888 framebuffer in the
+//! ARM's memory ([`BASE`]) scanned out by the HVS through PixelValve 2 to the
+//! HDMI encoder, as DVI (no infoframes, no audio) in full-range RGB. The mode
+//! is the first detailed timing of the display's EDID that the output can
+//! make ([`MAX_PIXEL_KHZ`], [`MAX_SIZE`]), and 1280x720 at 60 Hz when no
+//! display answers.
 //!
-//! The register sequence is the one Linux's vc4 driver runs for this mode on
-//! BCM2711, with the clocks the stock firmware gives it.
+//! The register sequence is the one Linux's vc4 driver runs on BCM2711, with
+//! the clocks the stock firmware gives it.
 
-use crate::{cm, mmio, timer};
+use core::sync::atomic::{AtomicU32, Ordering};
+
+use crate::edid::{self, Mode};
+use crate::{cm, ddc, mmio, timer};
 
 /// The framebuffer's address in the ARM's memory, which the device tree
-/// reserves ([`crate::arm`]).
-pub const BASE: u32 = 0x3e80_0000;
-pub const WIDTH: u32 = 1280;
-pub const HEIGHT: u32 = 720;
-pub const PITCH: u32 = WIDTH * 4;
-pub const SIZE: u32 = PITCH * HEIGHT;
+/// reserves ([`crate::arm`]), and the most it takes: up to the watchdog's
+/// page, room for 1920x1200.
+pub const BASE: u32 = 0x3e30_0000;
+pub const MAX_SIZE: u32 = 0x008f_e000;
+const _: () = assert!(1920 * 1200 * 4 <= MAX_SIZE);
+
+/// The fastest pixel clock the output is set up for: single-link DVI's.
+pub const MAX_PIXEL_KHZ: u32 = 165_000;
+const MIN_PIXEL_KHZ: u32 = 25_000;
+
+/// CEA mode 4.
+const MODE_720P: Mode = Mode {
+    pixel_khz: 74_250,
+    width: 1280,
+    hfp: 110,
+    hsync: 40,
+    hbp: 220,
+    height: 720,
+    vfp: 5,
+    vsync: 5,
+    vbp: 20,
+    hsync_positive: true,
+    vsync_positive: true,
+};
+
+/// CEA mode 16, for a display whose own mode is beyond the output.
+const MODE_1080P: Mode = Mode {
+    pixel_khz: 148_500,
+    width: 1920,
+    hfp: 88,
+    hsync: 44,
+    hbp: 148,
+    height: 1080,
+    vfp: 4,
+    vsync: 5,
+    vbp: 36,
+    hsync_positive: true,
+    vsync_positive: true,
+};
+
+static WIDTH: AtomicU32 = AtomicU32::new(0);
+static HEIGHT: AtomicU32 = AtomicU32::new(0);
+
+/// The lit mode's size in pixels, zero before [`start`].
+pub fn width() -> u32 {
+    WIDTH.load(Ordering::Relaxed)
+}
+
+pub fn height() -> u32 {
+    HEIGHT.load(Ordering::Relaxed)
+}
+
+/// The length of a line in bytes, and of the framebuffer.
+pub fn pitch() -> u32 {
+    width() * 4
+}
+
+pub fn size() -> u32 {
+    pitch() * height()
+}
 
 /// The bus address of the framebuffer, through the ARM's uncached alias.
 const BUS: u32 = 0xc000_0000 | BASE;
 
 /// The generator of the HSM clock, which the HDMI registers need: bus access
-/// to them hangs while it is stopped. `0x5000` is 120 MHz, the least Linux
-/// asks for; PLLC's channel feeds the pixel BVB clock, at least 75 MHz.
+/// to them hangs while it is stopped. It runs faster than the pixel clock:
+/// PLLD's channel by five up to 100 MHz, by three above. PLLC's channel
+/// feeds the pixel BVB clock, at least 75 MHz and twice that above 148.5 MHz.
 const HSM_DIV: u32 = 0x5000;
+const HSM_DIV_FAST: u32 = 0x3000;
+const HSM_FAST_ABOVE_KHZ: u32 = 100_000;
 const BVB_DIV: u32 = 0x8a40;
+const BVB_FAST_ABOVE_KHZ: u32 = 148_500;
 
 const HVS: u32 = 0x7e40_0000;
 const HVS_DISPCTRL: u32 = HVS;
@@ -80,9 +143,14 @@ fn rmw(addr: u32, clear: u32, set: u32) {
     mmio::write(addr, mmio::read(addr) & !clear | set);
 }
 
-fn start_clocks() {
-    cm::switch_generator(cm::GEN_22C_CTL, HSM_DIV, cm::SRC_PLLD_PER);
-    cm::switch_generator(cm::GEN_208_CTL, BVB_DIV, cm::SRC_PLLC_PER);
+fn start_hsm(div: u32) {
+    cm::switch_generator(cm::GEN_22C_CTL, div, cm::SRC_PLLD_PER);
+}
+
+fn start_clocks(mode: &Mode) {
+    start_hsm(if mode.pixel_khz > HSM_FAST_ABOVE_KHZ { HSM_DIV_FAST } else { HSM_DIV });
+    let bvb = if mode.pixel_khz > BVB_FAST_ABOVE_KHZ { BVB_DIV / 2 } else { BVB_DIV };
+    cm::switch_generator(cm::GEN_208_CTL, bvb, cm::SRC_PLLC_PER);
 }
 
 fn start_hvs() {
@@ -96,16 +164,16 @@ fn start_hvs() {
 }
 
 /// One XRGB8888 plane over the whole screen, then the end of the list.
-fn write_display_list() {
+fn write_display_list(mode: &Mode) {
     let words = [
         0x4800_d807,
         0,
         0x4000_fff0,
-        (HEIGHT << 16) | WIDTH,
+        (mode.height << 16) | mode.width,
         0xc0c0_c0c0,
         BUS,
         0xc0c0_c0c0,
-        PITCH,
+        mode.width * 4,
         0x8000_0000,
     ];
     for (i, word) in words.iter().enumerate() {
@@ -116,12 +184,44 @@ fn write_display_list() {
     mmio::write(HVS_DISPCTRL0, 0);
     mmio::write(HVS_DISPCTRL0, 1 << 30);
     mmio::write(HVS_DISPCTRL0, 0);
-    mmio::write(HVS_DISPCTRL0, 1 << 31 | WIDTH << 16 | HEIGHT);
+    mmio::write(HVS_DISPCTRL0, 1 << 31 | mode.width << 16 | mode.height);
 }
 
-/// The PHY's PLL at 3.7125 GHz (five times 74.25 MHz times ten, from the
-/// 54 MHz crystal) and its lanes' drive.
-fn start_phy() {
+const CRYSTAL_HZ: u64 = 54_000_000;
+const VCO_MIN_HZ: u64 = 3_000_000_000;
+
+/// The PLL's oscillator: ten times the pixel clock times the least divider
+/// that takes it to 3 GHz.
+fn vco(pixel_khz: u32) -> (u64, u32) {
+    let bit_hz = pixel_khz as u64 * 10_000;
+    let div = VCO_MIN_HZ.div_ceil(bit_hz) as u32;
+    (bit_hz * div as u64, div)
+}
+
+/// The oscillator's rate against the crystal, in the rate manager's 9.22
+/// fixed point.
+fn rm_offset(vco_hz: u64) -> u32 {
+    ((((vco_hz * 2) << 22) / CRYSTAL_HZ) >> 2) as u32
+}
+
+fn vco_gain(vco_hz: u64) -> u32 {
+    match vco_hz {
+        ..3_350_000_000 => 0xf,
+        ..3_700_000_000 => 0xc,
+        ..4_050_000_000 => 0x6,
+        ..4_800_000_000 => 0x5,
+        ..5_200_000_000 => 0x7,
+        _ => 0x2,
+    }
+}
+
+/// The PHY's PLL on the mode's pixel clock, from the 54 MHz crystal, and its
+/// lanes' drive.
+fn start_phy(mode: &Mode) {
+    let (vco_hz, vco_div) = vco(mode.pixel_khz);
+    let high_band = vco_hz > 4_500_000_000;
+    let charge_pump = if vco_hz < 3_700_000_000 { 0x1c } else { 0x18 };
+    let (data_drive, clock_drive, clock_termination) = if mode.pixel_khz <= 50_000 { (0x0a, 0x0a, 0) } else { (0x09, 0x0c, 3) };
     mmio::write(PHY, 0x0f);
     mmio::write(PHY + 0x04, 0x400);
     mmio::write(PHY + 0x04, 0x10);
@@ -129,33 +229,34 @@ fn start_phy() {
     rmw(RM, 0, 0x000a_0010);
     rmw(PHY + 0x50, 0x0fff_ffff, 0);
     rmw(PHY + 0x54, 0x0fff_ffff, 0);
-    mmio::write(RM + 0x18, 0x8898_0000);
-    mmio::write(PHY + 0x28, 0x0000_0500);
+    mmio::write(RM + 0x18, 1 << 31 | rm_offset(vco_hz));
+    mmio::write(PHY + 0x28, vco_div << 8);
     mmio::write(PHY + 0x5c, 0x0e14_e147);
-    mmio::write(PHY + 0x1c, 0x0000_2060);
+    mmio::write(PHY + 0x1c, 0x0000_2060 | (high_band as u32) << 9);
     rmw(PHY + 0x20, 0, 0x008a_7800);
     rmw(RM + 0x1c, 0, 0x0200_0000);
     rmw(PHY + 0x34, 0, 1);
     mmio::write(PHY + 0x44, 0);
-    mmio::write(PHY + 0x14, 0x0008_65d8);
-    mmio::write(PHY + 0x08, 0x0909_090c);
+    mmio::write(PHY + 0x14, 0x0008_65c0 | charge_pump);
+    mmio::write(PHY + 0x08, data_drive << 24 | data_drive << 16 | data_drive << 8 | clock_drive);
     rmw(PHY + 0x0c, 0, 0x0009_4a58);
-    mmio::write(PHY + 0x10, 0x0006_0003);
+    mmio::write(PHY + 0x10, vco_gain(vco_hz) << 16 | clock_termination);
     mmio::write(PHY + 0x4c, 0x0000_3210);
     rmw(PHY, 0x30, 0);
     rmw(PHY, 0, 0x30);
     timer::delay_us(1000);
 }
 
-/// CEA mode 4: 1650 by 750 in all, syncs positive.
-fn set_timings() {
+fn set_timings(mode: &Mode) {
     rmw(HDMI_SCHEDULER_CONTROL, 0, 1 << 15 | 1 << 5);
-    mmio::write(HDMI_HORZA, 0x006e_c500);
-    mmio::write(HDMI_HORZB, 0x00dc_0028);
-    mmio::write(HDMI_VERTA0, 0x0505_02d0);
-    mmio::write(HDMI_VERTA1, 0x0505_02d0);
-    mmio::write(HDMI_VERTB0, 0x0000_0014);
-    mmio::write(HDMI_VERTB1, 0x0339_0014);
+    mmio::write(HDMI_HORZA, mode.hfp << 16 | (mode.vsync_positive as u32) << 15 | (mode.hsync_positive as u32) << 14 | mode.width);
+    mmio::write(HDMI_HORZB, mode.hbp << 16 | mode.hsync);
+    let verta = mode.vsync << 24 | mode.vfp << 16 | mode.height;
+    mmio::write(HDMI_VERTA0, verta);
+    mmio::write(HDMI_VERTA1, verta);
+    mmio::write(HDMI_VERTB0, mode.vbp);
+    let line = mode.width + mode.hfp + mode.hsync + mode.hbp;
+    mmio::write(HDMI_VERTB1, (line / 2) << 16 | mode.vbp);
     rmw(HDMI_DEEP_COLOR_CONFIG_1, 0x70f, 0x200);
     rmw(HDMI_GCP_WORD_1, 0xffff, 0x10);
     rmw(HDMI_GCP_CONFIG, 0, 1 << 31);
@@ -165,15 +266,15 @@ fn set_timings() {
 
 /// The pixel valve takes two pixels a clock, so its horizontal values are
 /// half the mode's.
-fn start_pixel_valve() {
+fn start_pixel_valve(mode: &Mode) {
     rmw(PV_CONTROL, 1, 0);
     rmw(PV_CONTROL, 0, 1 << 1);
-    mmio::write(PV_HORZA, 0x006e_0014);
-    mmio::write(PV_HORZB, 0x0037_0280);
+    mmio::write(PV_HORZA, (mode.hbp / 2) << 16 | mode.hsync / 2);
+    mmio::write(PV_HORZB, (mode.hfp / 2) << 16 | mode.width / 2);
     mmio::write(PV_V_CONTROL, 0x2);
     mmio::write(PV_VSYNCD_EVEN, 0);
-    mmio::write(PV_VERTA, 0x0014_0005);
-    mmio::write(PV_VERTB, 0x0005_02d0);
+    mmio::write(PV_VERTA, mode.vbp << 16 | mode.vsync);
+    mmio::write(PV_VERTB, mode.vfp << 16 | mode.height);
     mmio::write(PV_MUX_CFG, 0x20);
     mmio::write(PV_CONTROL, 0x0617_7002);
     mmio::write(PV_CONTROL, 0x0617_7003);
@@ -208,18 +309,70 @@ fn recenter_fifo() {
     timer::wait(1000, || mmio::read(HDMI_FIFO_CTL) & 1 << 14 != 0);
 }
 
-/// Light HDMI0, scanning out the framebuffer. Whether a display answered the
-/// hot-plug line.
-pub fn start() -> bool {
-    start_clocks();
+const EDID_ADDRESS: u8 = 0x50;
+
+fn fits(mode: &Mode) -> bool {
+    (MIN_PIXEL_KHZ..=MAX_PIXEL_KHZ).contains(&mode.pixel_khz)
+        && mode.width % 2 == 0
+        && mode.width * mode.height * 4 <= MAX_SIZE
+        && mode.hfp < 1 << 13
+        && mode.hbp < 1 << 11
+        && mode.hsync < 1 << 11
+        && mode.vfp < 1 << 7
+        && mode.vsync < 1 << 5
+        && mode.vbp < 1 << 8
+}
+
+/// Where the mode came from, for the log.
+#[derive(Clone, Copy, Debug)]
+pub enum Source {
+    /// No display answered with an EDID.
+    Default,
+    /// A detailed timing of the display's EDID.
+    Edid,
+    /// The display's own timings are beyond the output, and it is at least
+    /// 1920x1080.
+    Reduced,
+}
+
+fn choose() -> (Mode, Source) {
+    let mut block = [0u8; edid::BLOCK];
+    if !ddc::read(EDID_ADDRESS, 0, &mut block) || !edid::valid(&block) {
+        return (MODE_720P, Source::Default);
+    }
+    if let Some(mode) = edid::modes(&block).find(fits) {
+        return (mode, Source::Edid);
+    }
+    match edid::modes(&block).next() {
+        Some(native) if native.width >= MODE_1080P.width && native.height >= MODE_1080P.height => (MODE_1080P, Source::Reduced),
+        _ => (MODE_720P, Source::Default),
+    }
+}
+
+/// What [`start`] found and lit.
+pub struct Started {
+    pub source: Source,
+    pub refresh_hz: u32,
+    /// Whether a display answered the hot-plug line.
+    pub display: bool,
+}
+
+/// Light HDMI0 in the display's mode, scanning out the framebuffer.
+pub fn start() -> Started {
+    start_hsm(HSM_DIV);
+    let (mode, source) = choose();
+    WIDTH.store(mode.width, Ordering::Relaxed);
+    HEIGHT.store(mode.height, Ordering::Relaxed);
+    start_clocks(&mode);
     mmio::write(HD_DVP_CTL, 0);
     rmw(DVP_CLOCK_STOP, 0, 1 << 1);
     start_hvs();
-    write_display_list();
-    start_phy();
-    set_timings();
-    start_pixel_valve();
+    write_display_list(&mode);
+    start_phy(&mode);
+    set_timings(&mode);
+    start_pixel_valve(&mode);
     start_encoder();
     recenter_fifo();
-    mmio::read(HDMI_HOTPLUG) & 1 != 0
+    let total = (mode.width + mode.hfp + mode.hsync + mode.hbp) * (mode.height + mode.vfp + mode.vsync + mode.vbp);
+    Started { source, refresh_hz: (mode.pixel_khz * 1000 + total / 2) / total, display: mmio::read(HDMI_HOTPLUG) & 1 != 0 }
 }

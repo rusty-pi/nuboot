@@ -63,15 +63,15 @@ pub fn crb() -> tpm_crb::Window {
 /// firmware tells the OS about it in the tables.
 pub const WDAT_BASE: u32 = CRB_BASE - wdat::SIZE;
 #[cfg(feature = "hdmi")]
-const FRAMEBUFFER_NODE: &[u8] = b"framebuffer@3e800000";
+const FRAMEBUFFER_NODE: &[u8] = b"framebuffer@3e300000";
 #[cfg(feature = "hdmi")]
-const _: () = assert!(crate::hdmi::BASE == 0x3e80_0000);
+const _: () = assert!(crate::hdmi::BASE == 0x3e30_0000 && crate::hdmi::BASE + crate::hdmi::MAX_SIZE <= WDAT_BASE);
 
 #[cfg(feature = "hdmi")]
 fn framebuffer_reg() -> [u8; 12] {
     let mut reg = [0u8; 12];
     reg[4..8].copy_from_slice(&crate::hdmi::BASE.to_be_bytes());
-    reg[8..12].copy_from_slice(&crate::hdmi::SIZE.to_be_bytes());
+    reg[8..12].copy_from_slice(&crate::hdmi::size().next_multiple_of(0x1000).to_be_bytes());
     reg
 }
 
