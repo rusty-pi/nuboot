@@ -55,10 +55,14 @@ line starts at the top. The output is DVI-style RGB without audio. HDMI1 stays
 dark.
 
 The mode is the display's own: the first detailed timing in the base block of
-its EDID that is progressive, has a pixel clock of 25 to 165 MHz and is at most
-1920x1200. A display whose timings are all beyond that and that is at least
-1920x1080 gets 1920x1080 at 60 Hz. With no display, or an EDID that does not
-check, the mode is 1280x720 at 60 Hz. The EDID is read once, when the firmware
+its EDID that is progressive, has a pixel clock of 25 to 140 MHz and is at most
+1920x1200. A display whose first timing is faster gets that resolution in
+reduced-blanking timings (VESA CVT-RB at 60 Hz), 1920x1080 at 138.5 MHz for
+1080p, or 1920x1080 when that resolution is too large as well. With no
+display, or an EDID that does not check, the mode is 1280x720 at 60 Hz. The
+output shows a ripple at 148.5 MHz on a Raspberry Pi 4B d03115, which is why
+the limit is below it.
+The EDID is read once, when the firmware
 starts: a display plugged in later shows the mode chosen then.
 
 The same framebuffer is the OS's console: UEFI gives it the framebuffer as a

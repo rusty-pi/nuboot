@@ -20,8 +20,10 @@ pub const BASE: u32 = 0x3e30_0000;
 pub const MAX_SIZE: u32 = 0x008f_e000;
 const _: () = assert!(1920 * 1200 * 4 <= MAX_SIZE);
 
-/// The fastest pixel clock the output is set up for: single-link DVI's.
-pub const MAX_PIXEL_KHZ: u32 = 165_000;
+/// The fastest pixel clock the output is set up for. A Raspberry Pi 4B
+/// d03115 shows 138.5 MHz and every slower mode steady and 148.5 MHz with a
+/// ripple, so reduced-blanking timings stand in for a faster mode.
+pub const MAX_PIXEL_KHZ: u32 = 140_000;
 const MIN_PIXEL_KHZ: u32 = 25_000;
 
 /// CEA mode 4.
@@ -35,21 +37,6 @@ const MODE_720P: Mode = Mode {
     vfp: 5,
     vsync: 5,
     vbp: 20,
-    hsync_positive: true,
-    vsync_positive: true,
-};
-
-/// CEA mode 16, for a display whose own mode is beyond the output.
-const MODE_1080P: Mode = Mode {
-    pixel_khz: 148_500,
-    width: 1920,
-    hfp: 88,
-    hsync: 44,
-    hbp: 148,
-    height: 1080,
-    vfp: 4,
-    vsync: 5,
-    vbp: 36,
     hsync_positive: true,
     vsync_positive: true,
 };
@@ -330,9 +317,42 @@ pub enum Source {
     Default,
     /// A detailed timing of the display's EDID.
     Edid,
-    /// The display's own timings are beyond the output, and it is at least
-    /// 1920x1080.
+    /// The EDID's resolution in reduced-blanking timings (VESA CVT-RB at 60
+    /// Hz), for a display whose own timing is beyond [`MAX_PIXEL_KHZ`].
     Reduced,
+}
+
+/// A refresh rate of 60 Hz in the reduced-blanking timings of VESA CVT 1.2: a
+/// blanking of 160 pixels a line and at least 460 us a frame, a pixel clock
+/// in steps of 250 kHz.
+fn reduced_blanking(width: u32, height: u32) -> Mode {
+    const HBLANK: u32 = 160;
+    const MIN_VBLANK_US: u64 = 460;
+    const FRONT_PORCH: u32 = 3;
+    const BACK_PORCH_MIN: u32 = 6;
+    let vsync = match (width * 9 == height * 16, width * 10 == height * 16, width * 3 == height * 4, width * 4 == height * 5) {
+        (true, _, _, _) => 5,
+        (_, true, _, _) => 6,
+        (_, _, true, _) => 4,
+        (_, _, _, true) => 7,
+        _ => 10,
+    };
+    let line_ns = (1_000_000_000 / 60 - MIN_VBLANK_US * 1000) / height as u64;
+    let vblank = ((MIN_VBLANK_US * 1000 / line_ns) as u32 + 1).max(FRONT_PORCH + vsync + BACK_PORCH_MIN);
+    let total = (width + HBLANK) as u64 * (height + vblank) as u64;
+    Mode {
+        pixel_khz: (total * 60 / 250_000 * 250) as u32,
+        width,
+        hfp: 48,
+        hsync: 32,
+        hbp: 80,
+        height,
+        vfp: FRONT_PORCH,
+        vsync,
+        vbp: vblank - FRONT_PORCH - vsync,
+        hsync_positive: true,
+        vsync_positive: false,
+    }
 }
 
 fn choose() -> (Mode, Source) {
@@ -343,10 +363,15 @@ fn choose() -> (Mode, Source) {
     if let Some(mode) = edid::modes(&block).find(fits) {
         return (mode, Source::Edid);
     }
-    match edid::modes(&block).next() {
-        Some(native) if native.width >= MODE_1080P.width && native.height >= MODE_1080P.height => (MODE_1080P, Source::Reduced),
-        _ => (MODE_720P, Source::Default),
+    let native = edid::modes(&block).next();
+    let reduced = native.into_iter().map(|m| (m.width, m.height)).chain([(1920, 1080)]);
+    for (width, height) in reduced {
+        let mode = reduced_blanking(width, height);
+        if width >= MODE_720P.width && height >= MODE_720P.height && fits(&mode) {
+            return (mode, Source::Reduced);
+        }
     }
+    (MODE_720P, Source::Default)
 }
 
 /// What [`start`] found and lit.
