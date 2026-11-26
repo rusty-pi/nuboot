@@ -51,7 +51,7 @@ milestones:
     line: "ACPI: SPCR: console: pl011,mmio32,0xfe201000,115200"
   - why: "The kernel's UART driver takes the DSDT's console device at the same registers."
     line: "ARMH0011:00: ttyAMA0 at MMIO 0xfe201000"
-  - why: "The kernel starts the other three cores through the parking protocol the tables name."
+  - why: "The kernel starts the other three cores through PSCI, which the FADT names."
     line: "smp: Brought up 1 node, 4 CPUs"
   - why: "The firmware told the kernel Secure Boot is on, so the kernel locked itself down."
     line: "Kernel is locked down from EFI Secure Boot"

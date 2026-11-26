@@ -25,7 +25,7 @@ fn the_rsdp_leads_to_every_table() {
     assert_eq!(rsdp[15], 2);
     assert_eq!(block.rsdp % 16, 0);
     let signatures: Vec<String> = walk(&block, BASE).into_iter().map(|t| t.signature).collect();
-    assert_eq!(signatures, ["XSDT", "FACP", "DSDT", "APIC", "GTDT", "SPCR", "PPTT", "TPM2", "WDAT", "IORT"]);
+    assert_eq!(signatures, ["XSDT", "FACP", "DSDT", "APIC", "GTDT", "SPCR", "DBG2", "PPTT", "TPM2", "WDAT", "IORT"]);
 }
 
 #[test]
@@ -121,7 +121,7 @@ fn the_madt_enables_the_cores_asked_for() {
             (u32::from_le_bytes(gicc[16..20].try_into().unwrap()), u64::from_le_bytes(gicc[24..32].try_into().unwrap()))
         })
         .collect();
-    assert_eq!(parking, [(0, 0), (1, 0x810), (1, 0x820), (1, 0x830)]);
+    assert_eq!(parking, [(0, 0); 4]);
     assert_eq!(entries[4 * 80], 0xc);
     assert_eq!(entries[4 * 80 + 1], 24);
 }

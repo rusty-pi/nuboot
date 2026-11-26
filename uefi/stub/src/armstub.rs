@@ -9,7 +9,7 @@
 //! primary core goes on to decompress the payload with `x0` = the device tree
 //! the VPU firmware wrote at `0xf8`; the others wait on the spin table the
 //! device tree points at (`cpu-release-addr = <0 0xd8>` ... `<0 0xf0>`), on
-//! the mailboxes of the ACPI parking protocol, and on a PSCI `CPU_ON`.
+//! the mailboxes of the ACPI parking protocol (which the tables no longer name), and on a PSCI `CPU_ON`.
 //!
 //! EL3 stays as the PSCI implementation the ACPI tables name: an SMC from the
 //! operating system comes back here for the version, the cores' power state,
