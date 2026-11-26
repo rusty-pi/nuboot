@@ -9,15 +9,23 @@ use core::mem::size_of;
 
 use r_efi::efi::{self, Handle, MemoryDescriptor, SystemTable};
 
-const UART0: usize = 0xFE20_1000;
+pub const UART0: usize = 0xFE20_1000;
 const FR: usize = 0x18;
 const TXFF: u32 = 1 << 5;
 
+static mut UART: usize = UART0;
+
+/// Talk to the serial port at another address, once translation moves it.
+pub fn use_uart_at(address: usize) {
+    unsafe { UART = address };
+}
+
 pub fn say(text: &str) {
+    let uart = unsafe { UART };
     for b in text.bytes() {
         unsafe {
-            while core::ptr::read_volatile((UART0 + FR) as *const u32) & TXFF != 0 {}
-            core::ptr::write_volatile(UART0 as *mut u32, b as u32);
+            while core::ptr::read_volatile((uart + FR) as *const u32) & TXFF != 0 {}
+            core::ptr::write_volatile(uart as *mut u32, b as u32);
         }
     }
 }
@@ -45,6 +53,15 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 }
 
 static mut MAP: [u8; 16384] = [0; 16384];
+static mut MAP_SIZE: usize = 0;
+static mut MAP_DESC_SIZE: usize = 0;
+static mut MAP_VERSION: u32 = 0;
+
+/// The memory map the last `ExitBootServices` succeeded with: its bytes, the
+/// size of its descriptors and its version.
+pub fn final_map() -> (*mut MemoryDescriptor, usize, usize, u32) {
+    unsafe { ((&raw mut MAP).cast(), MAP_SIZE, MAP_DESC_SIZE, MAP_VERSION) }
+}
 
 /// Exit boot services, and give back the runtime services table.
 pub fn exit_boot_services(image: Handle, system_table: *mut SystemTable) -> *mut efi::RuntimeServices {
@@ -59,6 +76,11 @@ pub fn exit_boot_services(image: Handle, system_table: *mut SystemTable) -> *mut
             continue;
         }
         if !unsafe { ((*bs).exit_boot_services)(image, key) }.is_error() {
+            unsafe {
+                MAP_SIZE = size;
+                MAP_DESC_SIZE = desc_size;
+                MAP_VERSION = version;
+            }
             return unsafe { (*system_table).runtime_services };
         }
     }
