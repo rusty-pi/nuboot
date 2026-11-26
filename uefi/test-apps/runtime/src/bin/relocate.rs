@@ -119,9 +119,6 @@ pub extern "efiapi" fn efi_main(image: Handle, system_table: *mut SystemTable) -
     let mut guid = OURS;
     let data = [7u8, 8, 9];
     let status = set_variable(var, &mut guid, BS_RT_NV, data.len(), data.as_ptr() as *mut c_void);
-    say("runtime test: SetVariable status ");
-    runtime_efi::say_hex(status.as_usize() as u64);
-    say("\r\n");
     check("a variable is set through the moved runtime services", status == Status::SUCCESS);
     let (mut out, mut length, mut attributes) = ([0u8; 8], 8usize, 0u32);
     let status = get_variable(var, &mut guid, &mut attributes, &mut length, out.as_mut_ptr() as *mut c_void);
