@@ -230,7 +230,8 @@ fn respond(bus: u32, runtime: bool) {
 
     let size = os_word(0);
     if !(12..=MAX_BUFFER).contains(&size) || size % 4 != 0 {
-        error!("mailbox", "property buffer with a bad size"; bus = format_args!("{bus:#010x}"), size = size);
+        error!("mailbox", "property buffer with a bad size"; bus = format_args!("{bus:#010x}"), size = size,
+            words = format_args!("{:#x} {:#x} {:#x} {:#x}", os_word(1), os_word(2), os_word(3), os_word(4)));
         os_set(1, CODE_ERROR);
         return;
     }

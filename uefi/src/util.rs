@@ -22,12 +22,35 @@ impl<T> Global<T> {
     }
 }
 
+const MMIO_REMAPS: usize = 16;
+
+static REMAP: Global<[(u64, u64, u64); MMIO_REMAPS]> = Global::new([(0, 0, 0); MMIO_REMAPS]);
+static REMAP_COUNT: Global<usize> = Global::new(0);
+
+/// Note where an OS mapped a register window at `SetVirtualAddressMap`: the
+/// runtime services reach it there from then on.
+pub fn remap_mmio(physical: u64, virtual_start: u64, bytes: u64) {
+    let count = REMAP_COUNT.get();
+    if *count < MMIO_REMAPS {
+        REMAP.get()[*count] = (physical, virtual_start, bytes);
+        *count += 1;
+    }
+}
+
+fn mmio_address(addr: u64) -> u64 {
+    let count = *REMAP_COUNT.get();
+    REMAP.get()[..count]
+        .iter()
+        .find(|(physical, _, bytes)| (*physical..*physical + *bytes).contains(&addr))
+        .map_or(addr, |(physical, virtual_start, _)| virtual_start + (addr - physical))
+}
+
 pub fn read32(addr: u64) -> u32 {
-    unsafe { core::ptr::read_volatile(addr as *const u32) }
+    unsafe { core::ptr::read_volatile(mmio_address(addr) as *const u32) }
 }
 
 pub fn write32(addr: u64, value: u32) {
-    unsafe { core::ptr::write_volatile(addr as *mut u32, value) }
+    unsafe { core::ptr::write_volatile(mmio_address(addr) as *mut u32, value) }
 }
 
 /// A field value in hex.

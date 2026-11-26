@@ -814,6 +814,9 @@ extern "efiapi" fn set_virtual_address_map(size: usize, desc_size: usize, _versi
             continue;
         }
         in_place &= d.virtual_start == d.physical_start;
+        if d.r#type == efi::MEMORY_MAPPED_IO {
+            crate::util::remap_mmio(d.physical_start, d.virtual_start, d.number_of_pages * mem::PAGE);
+        }
         if (d.physical_start..d.physical_start + d.number_of_pages * mem::PAGE).contains(&stub) {
             stub_at = Some(d.virtual_start + (stub - d.physical_start));
         }
