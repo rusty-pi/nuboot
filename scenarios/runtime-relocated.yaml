@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/rusty-pi/pimu/main/schemas/boot-scenario.schema.json
+name: "runtime-relocated"
+description: "An EFI application exits boot services, hands SetVirtualAddressMap a map that moves the runtime regions, switches to translation tables that show them only there, and writes a variable through the runtime services, as Windows does."
+
+boot:
+  eeprom: "../out/stock-pieeprom.bin"
+  boot_order: "0x1"
+  sd:
+    partitions:
+      - type: esp
+        format: vfat
+        files:
+          start4.elf: "../out/start4-test.elf"
+          EFI/BOOT/BOOTAA64.EFI: "../out/runtime-relocate.efi"
+  until: "runtime test: done"
+  wall_secs: 600
+
+milestones:
+  - why: "The firmware takes the map an OS that moves the runtime regions hands it."
+    line: "runtime test: SetVirtualAddressMap takes the moved map ok"
+  - why: "The runtime regions are reachable only at their new addresses from here on."
+    line: "runtime test: the tables with the runtime regions moved are in use"
+  - why: "A write goes through the mailbox to the VPU by the address the OS mapped it at, not the physical one."
+    line: "runtime test: a variable is set through the moved runtime services ok"
+  - why: "The variable reads back."
+    line: "runtime test: it reads back ok"
+  - why: "Every check ran."
+    line: "runtime test: done"

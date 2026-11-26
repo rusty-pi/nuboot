@@ -33,11 +33,6 @@ const GIC_VIRTUAL_CPU_INTERFACE: u64 = 0xff84_6000;
 const MAINTENANCE_GSIV: u32 = 25;
 const PMU_GSIV: u32 = 48;
 
-/// Where the armstub's mailboxes for the ACPI parking protocol are, one for
-/// each core, and the version of the protocol they speak.
-const PARKING_MAILBOXES: u64 = 0x800;
-const PARKING_MAILBOX_SIZE: u64 = 16;
-const PARKING_VERSION: u32 = 1;
 
 const SECURE_TIMER_GSIV: u32 = 29;
 const NON_SECURE_TIMER_GSIV: u32 = 30;
@@ -73,6 +68,9 @@ const WDAT_MAX_S: u32 = 3600;
 
 const RNG: u32 = 0xfe10_4000;
 const RNG_SIZE: u32 = 0x28;
+const MAILBOX: u32 = 0xfe00_b880;
+const MAILBOX_SIZE: u32 = 0x24;
+const MAILBOX_GSIV: u32 = 65;
 
 /// The temperature channel of the AVS monitor, where Linux's `bcm2711_thermal`
 /// reads it: the sample in the low ten bits, and two bits that say it is
@@ -178,9 +176,11 @@ fn checksum(bytes: &[u8]) -> u8 {
 fn fadt(dsdt: u64) -> Vec<u8> {
     const HARDWARE_REDUCED: u32 = 1 << 20;
     const ENTERPRISE_SERVER: u8 = 4;
+    const PSCI_COMPLIANT: u16 = 1;
     let mut t = Table::new(b"FACP", 6, 1);
     t.zeros(276 - HEADER);
     t.bytes[112..116].copy_from_slice(&HARDWARE_REDUCED.to_le_bytes());
+    t.bytes[129..131].copy_from_slice(&PSCI_COMPLIANT.to_le_bytes());
     t.bytes[131] = 3;
     t.bytes[140..148].copy_from_slice(&dsdt.to_le_bytes());
     t.bytes[45] = ENTERPRISE_SERVER;
@@ -201,10 +201,9 @@ fn madt(cores: u32) -> Vec<u8> {
         t.u32(core);
         t.u32(core);
         t.u32(if core < cores { ENABLED } else { 0 });
-        let parked = core > 0;
-        t.u32(if parked { PARKING_VERSION } else { 0 });
+        t.u32(0);
         t.u32(PMU_GSIV + core);
-        t.u64(if parked { PARKING_MAILBOXES + PARKING_MAILBOX_SIZE * core as u64 } else { 0 });
+        t.u64(0);
         t.u64(GIC_CPU_INTERFACE);
         t.u64(GIC_VIRTUAL_CPU_INTERFACE);
         t.u64(GIC_HYPERVISOR);
@@ -223,6 +222,38 @@ fn madt(cores: u32) -> Vec<u8> {
     t.u32(0);
     t.u8(2);
     t.zeros(3);
+    t.finish()
+}
+
+/// The debug port table: the PL011 `SPCR` names, for the debugger an OS starts
+/// on it (Windows' `kdcom`, with `debugtype serial` in its boot configuration).
+fn dbg2() -> Vec<u8> {
+    const SERIAL: u16 = 0x8000;
+    const PL011: u16 = 3;
+    const DWORD_ACCESS: u8 = 3;
+    const DEVICE_OFFSET: u32 = 44;
+    const DEVICE_HEADER: u16 = 22;
+    const ADDRESS_SIZE_OFFSET: u16 = DEVICE_HEADER + 12;
+    const NAMESPACE: &[u8] = b"\\_SB_.URT0\0";
+    let namespace_offset = ADDRESS_SIZE_OFFSET + 4;
+    let mut t = Table::new(b"DBG2", 0, 1);
+    t.u32(DEVICE_OFFSET);
+    t.u32(1);
+    t.u8(0);
+    t.u16(namespace_offset + NAMESPACE.len() as u16);
+    t.u8(1);
+    t.u16(NAMESPACE.len() as u16);
+    t.u16(namespace_offset);
+    t.u16(0);
+    t.u16(0);
+    t.u16(SERIAL);
+    t.u16(PL011);
+    t.u16(0);
+    t.u16(DEVICE_HEADER);
+    t.u16(ADDRESS_SIZE_OFFSET);
+    t.register(UART0 as u64, 32, DWORD_ACCESS);
+    t.u32(0x1000);
+    t.bytes.extend(NAMESPACE);
     t.finish()
 }
 
@@ -512,6 +543,17 @@ fn random_number_generator() -> Bytes {
     ])
 }
 
+/// The VideoCore mailbox, which Windows looks up in ACPI by its `BCM2849` id.
+fn mailbox() -> Bytes {
+    aml::device("RPIQ", &[
+        aml::name("_HID", &aml::string("BCM2849")),
+        aml::name("_CID", &aml::string("BCM2849")),
+        aml::name("_UID", &aml::integer(0)),
+        aml::name("_CCA", &aml::integer(0)),
+        aml::name("_CRS", &aml::resources(&[aml::memory32(MAILBOX, MAILBOX_SIZE), aml::interrupts(&[MAILBOX_GSIV], true)])),
+    ])
+}
+
 /// The SD host: the regulator that would switch the card to 1.8 V is behind
 /// the VPU, so the card stays at 3.3 V, and a slot has no card-detect line
 /// to wait for.
@@ -569,7 +611,7 @@ fn usb(registers: u64) -> Bytes {
 
 fn dsdt(machine: &Machine) -> Vec<u8> {
     let mut devices: Vec<Bytes> = (0..machine.cores).map(processor).collect();
-    devices.extend([console(), random_number_generator(), sd_host(), ethernet(machine.ethernet)]);
+    devices.extend([console(), mailbox(), random_number_generator(), sd_host(), ethernet(machine.ethernet)]);
     if let Some(crb) = machine.tpm {
         devices.push(tpm(crb));
     }
@@ -631,7 +673,7 @@ fn replace(block: &mut [u8], at: usize, bytes: &[u8]) {
 /// is, so the tables that point at others go in first and are written again
 /// once the others have their places.
 pub fn assemble(machine: &Machine, base: u64) -> Block {
-    let count = 5 + machine.tpm.is_some() as usize + machine.wdat.is_some() as usize + machine.xhci.is_some() as usize;
+    let count = 6 + machine.tpm.is_some() as usize + machine.wdat.is_some() as usize + machine.xhci.is_some() as usize;
     let mut block = Vec::new();
     let rsdp_at = place(&mut block, &rsdp(0));
     let xsdt_at = place(&mut block, &xsdt(&alloc::vec![0; count]));
@@ -641,6 +683,7 @@ pub fn assemble(machine: &Machine, base: u64) -> Block {
     entries.push(place(&mut block, &madt(machine.cores)));
     entries.push(place(&mut block, &gtdt()));
     entries.push(place(&mut block, &spcr()));
+    entries.push(place(&mut block, &dbg2()));
     entries.push(place(&mut block, &pptt(machine.cores)));
     if let Some(crb) = machine.tpm {
         entries.push(place(&mut block, &tpm2(crb)));

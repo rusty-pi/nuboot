@@ -18,6 +18,10 @@ pub mod dvfs;
 pub mod console;
 pub mod crypto;
 pub mod critical;
+#[cfg(feature = "hdmi")]
+pub mod ddc;
+#[cfg(feature = "hdmi")]
+pub mod edid;
 pub mod eeprom;
 pub mod elf;
 pub mod expander;

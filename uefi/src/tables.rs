@@ -479,6 +479,7 @@ extern "efiapi" fn exit_boot_services(_handle: efi::Handle, key: usize) -> efi::
     d.rt.set_variable = rtvar::set_variable;
     d.rt.query_variable_info = rtvar::query_variable_info;
     d.rt.reset_system = crate::watchdog::runtime_reset_system;
+    d.rt.set_virtual_address_map = set_virtual_address_map;
     d.st.boot_services = core::ptr::null_mut();
     d.st.con_in = core::ptr::null_mut();
     d.st.console_in_handle = core::ptr::null_mut();
@@ -743,8 +744,45 @@ extern "efiapi" fn set_mem(buf: *mut c_void, len: usize, value: u8) {
 
 // --- runtime services, as they are before ExitBootServices ---
 
-extern "efiapi" fn get_time(_time: *mut efi::Time, _caps: *mut efi::TimeCapabilities) -> efi::Status {
-    efi::Status::UNSUPPORTED
+/// The board has no clock that keeps the time: it starts at the first second of
+/// 2026 and counts what has run since, which an OS that needs a valid time to
+/// boot (Windows) takes and sets its own from.
+const TIME_ORIGIN_UNIX_S: u64 = 1_767_225_600;
+
+extern "efiapi" fn get_time(time: *mut efi::Time, caps: *mut efi::TimeCapabilities) -> efi::Status {
+    if time.is_null() {
+        return efi::Status::INVALID_PARAMETER;
+    }
+    let seconds = TIME_ORIGIN_UNIX_S + crate::util::counter_us() / 1_000_000;
+    let (days, rest) = ((seconds / 86_400) as i64, seconds % 86_400);
+    let shifted = days + 719_468;
+    let era = shifted / 146_097;
+    let day_of_era = shifted % 146_097;
+    let year_of_era = (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_index = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
+    let month = if month_index < 10 { month_index + 3 } else { month_index - 9 };
+    let year = year_of_era + era * 400 + (month <= 2) as i64;
+    unsafe {
+        *time = efi::Time {
+            year: year as u16,
+            month: month as u8,
+            day: day as u8,
+            hour: (rest / 3600) as u8,
+            minute: (rest % 3600 / 60) as u8,
+            second: (rest % 60) as u8,
+            pad1: 0,
+            nanosecond: 0,
+            timezone: efi::UNSPECIFIED_TIMEZONE,
+            daylight: 0,
+            pad2: 0,
+        };
+        if !caps.is_null() {
+            *caps = efi::TimeCapabilities { resolution: 1, accuracy: 0, sets_to_zero: efi::Boolean::FALSE };
+        }
+    }
+    efi::Status::SUCCESS
 }
 
 extern "efiapi" fn set_time(_time: *mut efi::Time) -> efi::Status {
@@ -759,8 +797,44 @@ extern "efiapi" fn set_wakeup_time(_e: efi::Boolean, _t: *mut efi::Time) -> efi:
     efi::Status::UNSUPPORTED
 }
 
-extern "efiapi" fn set_virtual_address_map(_size: usize, _desc_size: usize, _version: u32, _map: *mut efi::MemoryDescriptor) -> efi::Status {
-    efi::Status::UNSUPPORTED
+/// A map that keeps every runtime region where it is is refused, as an OS that
+/// maps them in place (Linux) goes on without it. A map that moves them cannot
+/// be served by the code in the image, which is linked where it is: every
+/// runtime service becomes the stub page, which has no address in it, at its
+/// new place, and says it is unsupported.
+extern "efiapi" fn set_virtual_address_map(size: usize, desc_size: usize, _version: u32, map: *mut efi::MemoryDescriptor) -> efi::Status {
+    if !rt_data().st.boot_services.is_null() || desc_size < core::mem::size_of::<efi::MemoryDescriptor>() {
+        return efi::Status::UNSUPPORTED;
+    }
+    let stub = *RT_CODE.get();
+    let (mut in_place, mut stub_at) = (true, None);
+    for i in 0..size / desc_size {
+        let d = unsafe { &*((map as *const u8).add(i * desc_size) as *const efi::MemoryDescriptor) };
+        if d.attribute & efi::MEMORY_RUNTIME == 0 {
+            continue;
+        }
+        in_place &= d.virtual_start == d.physical_start;
+        if d.r#type == efi::MEMORY_MAPPED_IO {
+            crate::util::remap_mmio(d.physical_start, d.virtual_start, d.number_of_pages * mem::PAGE);
+        }
+        if (d.physical_start..d.physical_start + d.number_of_pages * mem::PAGE).contains(&stub) {
+            stub_at = Some(d.virtual_start + (stub - d.physical_start));
+        }
+    }
+    if in_place {
+        return efi::Status::UNSUPPORTED;
+    }
+    let Some(stub_at) = stub_at else { return efi::Status::NOT_FOUND };
+    let rt = &mut rt_data().rt;
+    unsafe {
+        let all = core::slice::from_raw_parts_mut(
+            (rt as *mut efi::RuntimeServices as *mut u8).add(core::mem::size_of::<efi::TableHeader>()) as *mut usize,
+            (core::mem::size_of::<efi::RuntimeServices>() - core::mem::size_of::<efi::TableHeader>()) / 8,
+        );
+        all.fill(stub_at as usize);
+    }
+    reseal();
+    efi::Status::SUCCESS
 }
 
 extern "efiapi" fn convert_pointer(_debug: usize, _addr: *mut *mut c_void) -> efi::Status {

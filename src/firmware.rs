@@ -85,10 +85,10 @@ static mut MONITOR_STACK: [u32; MONITOR_STACK_WORDS] = [0; MONITOR_STACK_WORDS];
 
 #[cfg(feature = "hdmi")]
 fn start_hdmi() {
-    let display = nuboot::hdmi::start();
+    let started = nuboot::hdmi::start();
     nuboot::fb::attach();
     nuboot::mailbox::set_framebuffer(true);
-    info!("hdmi", "HDMI0 started"; width = nuboot::hdmi::WIDTH, height = nuboot::hdmi::HEIGHT, display = display);
+    info!("hdmi", "HDMI0 started"; width = nuboot::hdmi::width(), height = nuboot::hdmi::height(), refresh_hz = started.refresh_hz, mode = nuboot::log::dbg(&started.source), display = started.display);
 }
 
 #[unsafe(no_mangle)]

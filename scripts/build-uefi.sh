@@ -27,7 +27,8 @@
 #                     the same crate: send the TPM on the VPU a series of
 #                     commands
 #   out/runtime-variables.efi, out/crypto.efi, out/persist.efi, out/nv-persist.efi,
-#   out/store-compact.efi, out/runtime-shutdown.efi, out/firmware-setup.efi
+#   out/store-compact.efi, out/runtime-shutdown.efi, out/runtime-relocate.efi,
+#   out/firmware-setup.efi
 #                     uefi/test-apps/runtime: exit boot services and use the
 #                     variable services the OS is left with, fill the flash
 #                     store with them, and shut down
@@ -285,6 +286,7 @@ sign "$rt/target/aarch64-unknown-uefi/release/nvpersist.efi" "$out/nv-persist.ef
 sign "$rt/target/aarch64-unknown-uefi/release/setup.efi" "$out/firmware-setup.efi"
 sign "$rt/target/aarch64-unknown-uefi/release/compact.efi" "$out/store-compact.efi"
 sign "$rt/target/aarch64-unknown-uefi/release/shutdown.efi" "$out/runtime-shutdown.efi"
+sign "$rt/target/aarch64-unknown-uefi/release/relocate.efi" "$out/runtime-relocate.efi"
 
 bc="$here/uefi/test-apps/bootcount"
 (cd "$bc" && cargo build --release --target aarch64-unknown-uefi)

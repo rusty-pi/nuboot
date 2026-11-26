@@ -49,10 +49,21 @@ runs off its stack end with an `ERROR` record on the console and stop the VPU:
 Only the `hdmi` build has this: `scripts/build.sh --hdmi` leaves
 `out/start4-hdmi.elf`, and the release `start4.elf` lights nothing. It is for a
 board with no serial line to read. HDMI0, the micro-HDMI port next to the USB-C power port, shows the same lines
-as text: 1280x720 at 60 Hz, white 8x8 characters drawn twice as tall, 160
-columns by 45 rows. When the text reaches the bottom the screen is cleared and
-the next line starts at the top. The mode is fixed, no EDID is read and the
-output is DVI-style RGB without audio. HDMI1 stays dark.
+as text: white 8x8 characters drawn twice as tall, 240 columns by 67 rows at
+1920x1080. When the text reaches the bottom the screen is cleared and the next
+line starts at the top. The output is DVI-style RGB without audio. HDMI1 stays
+dark.
+
+The mode is the display's own: the first detailed timing in the base block of
+its EDID that is progressive, has a pixel clock of 25 to 140 MHz and is at most
+1920x1200. A display whose first timing is faster gets that resolution in
+reduced-blanking timings (VESA CVT-RB at 60 Hz), 1920x1080 at 138.5 MHz for
+1080p, or 1920x1080 when that resolution is too large as well. With no
+display, or an EDID that does not check, the mode is 1280x720 at 60 Hz. The
+output shows a ripple at 148.5 MHz on a Raspberry Pi 4B d03115, which is why
+the limit is below it.
+The EDID is read once, when the firmware
+starts: a display plugged in later shows the mode chosen then.
 
 The same framebuffer is the OS's console: UEFI gives it the framebuffer as a
 `EFI_GRAPHICS_OUTPUT_PROTOCOL` ([uefi.md](uefi.md#what-it-provides)), with the

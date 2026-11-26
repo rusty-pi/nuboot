@@ -6,7 +6,7 @@
 - This is firmware for headless servers on the Raspberry Pi 4 family. Camera,
   audio and anything else a headless server does not use is out of scope.
   The only display is the HDMI0 text console of the `hdmi` build, for debugging
-  a board with no serial line, at one fixed mode.
+  a board with no serial line, in the mode the display's EDID prefers.
 - **Zero config.** A behaviour takes its default from the board and the boot
   medium, not from a settings file. Do not add a `config.txt`-style key, or
   any other setting, without asking first.

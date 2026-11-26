@@ -13,9 +13,10 @@ board's device tree, and starts the ARM in them:
    memory starts, and all the memory above 1 GiB.
 2. `pi4-uefi.bin` (`uefi/stub/`) starts with an armstub: each core sets up
    the local timer, the generic timer, the GIC and EL3's controls, and drops
-   to non-secure EL2. The secondary cores wait on the spin table at `0xd8`
-   that the device tree names, and on the mailboxes at `0x800` that the ACPI
-   tables name.
+   to non-secure EL2. EL3 stays as the PSCI 1.0 implementation the ACPI tables
+   name (`CPU_ON`, `CPU_OFF`, `AFFINITY_INFO`, `SYSTEM_OFF` and `SYSTEM_RESET`).
+   The secondary cores wait on the spin table at `0xd8` that the device tree
+   names, and on `CPU_ON`.
 3. The primary core decompresses the payload, coded with xz's ARM64 filter
    and LZMA, to `0x100_0000` and enters it with `x0` holding the device tree.
 4. The payload sets up an identity map, builds the memory map from the
@@ -44,7 +45,7 @@ from `start4.elf`'s:
 |---|---|
 | Memory | An identity map: RAM below `0xFC00_0000` and from 4 to 8 GiB normal write-back, the 2 MiB at `0x20_0000` non-cacheable for DMA, the rest device. The memory map is `/memory` from the device tree, less `/memreserve/`, `/reserved-memory`, the armstub's page at 0, the tree and the firmware itself |
 | Boot services | Memory, pools, events and timers (polled; there are no interrupts), protocol handlers, `LoadImage`/`StartImage`/`Exit` for PE32+ AArch64 images, `ExitBootServices` |
-| Runtime services | `GetVariable`, `GetNextVariableName`, `SetVariable`, `QueryVariableInfo` and `ResetSystem` after `ExitBootServices`; every other one returns `EFI_UNSUPPORTED`. The firmware image is typed as runtime services code and data, the variables are a 128 KiB table in it, the DMA arena is runtime data, and the pages of the mailbox, the power manager, the SD host and the VL805's windows are typed as memory-mapped I/O for the OS to map. The OS reads the variables the firmware holds and creates or changes others, and the writes outlast a reset ([below](#variables-the-os-writes)). `PK` and the Secure Boot state refuse writes. The `EFI_RT_PROPERTIES_TABLE` lists only these five, so `SetVirtualAddressMap` is not offered and the OS maps the runtime regions where they are |
+| Runtime services | `GetVariable`, `GetNextVariableName`, `SetVariable`, `QueryVariableInfo` and `ResetSystem` after `ExitBootServices`; `GetTime` before `ExitBootServices` as well, from the first second of 2026 on and counting the time since power on, as the board has no clock; every other one returns `EFI_UNSUPPORTED`. `SetVirtualAddressMap` is refused for an OS that keeps the runtime regions where they are, as Linux does, and accepted for one that moves them, as Windows does: every runtime service is then the one stub page at its new address and returns `EFI_UNSUPPORTED`, because the code in the image is linked where it is. The firmware image is typed as runtime services code and data, the variables are a 128 KiB table in it, the DMA arena is runtime data, and the pages of the mailbox, the power manager, the SD host and the VL805's windows are typed as memory-mapped I/O for the OS to map. The OS reads the variables the firmware holds and creates or changes others, and the writes outlast a reset ([below](#variables-the-os-writes)). `PK` and the Secure Boot state refuse writes. The `EFI_RT_PROPERTIES_TABLE` lists only these five, so `SetVirtualAddressMap` is not offered and the OS maps the runtime regions where they are |
 | `ResetSystem` | The power manager's watchdog (`PM_RSTC`/`PM_WDOG`): every kind but a shutdown resets the board, and a shutdown resets it with `PM_RSTS` partition 63 set, where the bootloader halts ([boot.md](boot.md#wake-on-lan)). The same after `ExitBootServices`, which is how Linux resets and powers off |
 | Console | `SimpleTextOutput` and `SimpleTextInput` on the PL011 at `0xFE20_1000`, with VT100 keys |
 | Storage | The SD card on EMMC2 (`0xFE34_0000`), and USB drives (bulk-only mass storage, and UAS on a SuperSpeed port, [below](#usb-attached-scsi)) on the VL805's root ports or behind a hub. `BlockIo`, `DiskIo`, MBR and GPT partitions, and a FAT12/16/32 `SimpleFileSystem` that is read-only except for boot counting ([below](#boot-counting)) |
@@ -57,7 +58,7 @@ from `start4.elf`'s:
 | ESRT | Three resources in the `EFI_SYSTEM_RESOURCE_TABLE`: the firmware as an update bundle, the firmware as an image the owner signs, and the EEPROM bootloader, the first two with the commit's time as their version. `OsIndicationsSupported` offers file capsule delivery, and `OsIndications` takes the OS's write |
 | Device tree | Passed on to the OS as the `EFI_DTB_TABLE` configuration table. On top of the stock tree: `/memory@0` from the board's SDRAM; a `vpu-tpm` node ([os-image.md](os-image.md)) and the reserved pages of the TPM's command response buffer ([tpm2.md](tpm2.md#the-command-response-buffer)) and of the watchdog's registers; the Ethernet controller's `local-mac-address`, the address in the OTP's MAC rows, or on a board whose rows are blank a locally administered one from a hash of the serial number, the same at every boot; and the board's identity, `serial-number` and `rusty-pi,board-revision`, in the root. The wireless chip's SD host (`/soc/mmcnr`) and Bluetooth are disabled, and on BCM2711 C0 the SD host's bus (`/emmc2bus`) has its DMA window of the low 4 GiB, as the stock firmware gives it |
 | SMBIOS | Version 3.1.1, as the `EFI_SMBIOS3_TABLE` configuration table, whichever way the OS describes the board: the firmware (its vendor, the commit and its date), the system (maker, the board's name from its revision code, the revision code, the serial number and a UUID made from it), the board and its enclosure, the processor and the memory. `/sys/class/dmi/id`, `dmidecode`, `hostnamectl` and fwupd's hardware IDs read them, and an OS on the ACPI tables has no device tree to get the model and serial number from |
-| GOP (`hdmi` build only) | `EFI_GRAPHICS_OUTPUT_PROTOCOL` with one mode, the 1280x720 XRGB8888 framebuffer of HDMI0 at `0x3E80_0000`, which the device tree reserves ([logging.md](logging.md#on-hdmi)). `Blt` is not implemented |
+| GOP (`hdmi` build only) | `EFI_GRAPHICS_OUTPUT_PROTOCOL` with one mode, the XRGB8888 framebuffer of HDMI0 at `0x3E30_0000` in the display's own resolution, which the device tree reserves ([logging.md](logging.md#on-hdmi)). `Blt` is not implemented |
 | ACPI | The tables of the [next section](#acpi), as the `EFI_ACPI_20_TABLE_GUID` configuration table |
 | Variables | Held in RAM, with the non-volatile ones also in the variable store on the boot disk ([below](#the-variable-store)) |
 
@@ -75,10 +76,11 @@ them the OS finds the TPM on the VPU through its own driver, with no module
 
 | table | holds |
 |---|---|
-| FADT | Hardware-reduced ACPI 6.3, with no PSCI: the cores start through the parking protocol |
+| FADT | Hardware-reduced ACPI 6.3, PSCI compliant over SMC: the cores start through `CPU_ON` |
 | MADT | The four cores, each with the interrupt of its performance monitor (`perf` works), and the GIC-400 |
 | GTDT | The generic timers |
 | SPCR | The PL011 on GPIO 14 and 15 as the console, at 115200 baud |
+| DBG2 | The PL011 as the debug port, for the kernel debugger an OS starts on it |
 | PPTT | Each core's caches (48 KiB for instructions, 32 KiB for data) and the 1 MiB they share |
 | IORT | How much memory the USB controller reaches: the lower 2 GiB |
 | WDAT | The watchdog: four words of a reserved page of memory below the TPM's, which the VPU serves, so the generic `wdat_wdt` driver arms, pings and stops the board's dog ([boot.md](boot.md#boot-watchdog)) |
@@ -99,9 +101,9 @@ The DSDT has a device for each of:
 | the USB controller | `PNP0D10`, in a container device (`ACPI0004`) that says what it reaches | the kernel's generic xHCI driver (`xhci-plat-hcd`) |
 
 The secondary cores wait in the armstub on the spin table the device tree names
-and on a mailbox for each core, the ACPI parking protocol's: the OS writes the
-core's number and an entry point there and sends software interrupt 0, which
-wakes the core, and the core takes the entry point.
+and on PSCI's `CPU_ON`, which the OS calls with an SMC: the core takes the entry
+point and the context the call gave it. The MADT does not name the ACPI parking
+protocol's mailboxes, as Windows clears the mailbox page of a core that has one.
 
 The USB controller, the VL805 behind the PCIe root complex, is a platform
 xHCI device: UEFI has brought the link up, given the controller its firmware

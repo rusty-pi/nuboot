@@ -5,13 +5,11 @@
 use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::hdmi::{BASE, HEIGHT, WIDTH};
+use crate::hdmi::{self, BASE};
 use crate::log::{self, Record, Sink};
 
 const CELL_W: u32 = 8;
 const CELL_H: u32 = 16;
-const COLUMNS: u32 = WIDTH / CELL_W;
-const ROWS: u32 = HEIGHT / CELL_H;
 const FOREGROUND: u32 = 0x00ff_ffff;
 const BACKGROUND: u32 = 0;
 
@@ -25,16 +23,17 @@ fn pixels() -> *mut u32 {
 
 /// Set the framebuffer to the background colour.
 pub fn clear() {
-    for i in 0..(WIDTH * HEIGHT) as usize {
+    for i in 0..(hdmi::width() * hdmi::height()) as usize {
         unsafe { pixels().add(i).write_volatile(BACKGROUND) };
     }
 }
 
 fn draw(column: u32, row: u32, c: u8) {
+    let width = hdmi::width();
     let glyph = &FONT[(if (0x20..0x7f).contains(&c) { c } else { b'?' } - 0x20) as usize];
     for (y, bits) in glyph.iter().enumerate() {
         for dy in 0..2 {
-            let line = (row * CELL_H + y as u32 * 2 + dy) * WIDTH + column * CELL_W;
+            let line = (row * CELL_H + y as u32 * 2 + dy) * width + column * CELL_W;
             for x in 0..CELL_W {
                 let on = bits >> x & 1 != 0;
                 unsafe { pixels().add((line + x) as usize).write_volatile(if on { FOREGROUND } else { BACKGROUND }) };
@@ -55,7 +54,7 @@ impl Screen {
     fn newline(&mut self) {
         COLUMN.store(0, Ordering::Relaxed);
         let row = ROW.load(Ordering::Relaxed) + 1;
-        if row == ROWS {
+        if row >= hdmi::height() / CELL_H {
             clear();
             ROW.store(0, Ordering::Relaxed);
         } else {
@@ -75,7 +74,7 @@ impl Screen {
             b'\n' => self.newline(),
             b'\r' => COLUMN.store(0, Ordering::Relaxed),
             _ => {
-                if COLUMN.load(Ordering::Relaxed) == COLUMNS {
+                if COLUMN.load(Ordering::Relaxed) >= hdmi::width() / CELL_W {
                     self.newline();
                 }
                 let column = COLUMN.load(Ordering::Relaxed);

@@ -369,12 +369,12 @@ fn post(tag: u32, len: usize) -> Option<u32> {
     let bus = 0xc000_0000 | m as u32;
     let deadline = counter() + 5 * frequency();
     unsafe {
-        while core::ptr::read_volatile(MAIL1_STATUS as *const u32) & MAIL_FULL != 0 {
+        while crate::util::read32(MAIL1_STATUS) & MAIL_FULL != 0 {
             if counter() > deadline {
                 return None;
             }
         }
-        core::ptr::write_volatile(MAIL1_WRITE as *mut u32, bus | CHANNEL_RUNTIME);
+        crate::util::write32(MAIL1_WRITE, bus | CHANNEL_RUNTIME);
         loop {
             flush(m as usize, 4 * (words + 6));
             if core::ptr::read_volatile(m.add(1)) == RESPONSE {
