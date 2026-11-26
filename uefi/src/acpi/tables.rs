@@ -68,6 +68,9 @@ const WDAT_MAX_S: u32 = 3600;
 
 const RNG: u32 = 0xfe10_4000;
 const RNG_SIZE: u32 = 0x28;
+const MAILBOX: u32 = 0xfe00_b880;
+const MAILBOX_SIZE: u32 = 0x24;
+const MAILBOX_GSIV: u32 = 65;
 
 /// The temperature channel of the AVS monitor, where Linux's `bcm2711_thermal`
 /// reads it: the sample in the low ten bits, and two bits that say it is
@@ -540,6 +543,17 @@ fn random_number_generator() -> Bytes {
     ])
 }
 
+/// The VideoCore mailbox, which Windows looks up in ACPI by its `BCM2849` id.
+fn mailbox() -> Bytes {
+    aml::device("RPIQ", &[
+        aml::name("_HID", &aml::string("BCM2849")),
+        aml::name("_CID", &aml::string("BCM2849")),
+        aml::name("_UID", &aml::integer(0)),
+        aml::name("_CCA", &aml::integer(0)),
+        aml::name("_CRS", &aml::resources(&[aml::memory32(MAILBOX, MAILBOX_SIZE), aml::interrupts(&[MAILBOX_GSIV], true)])),
+    ])
+}
+
 /// The SD host: the regulator that would switch the card to 1.8 V is behind
 /// the VPU, so the card stays at 3.3 V, and a slot has no card-detect line
 /// to wait for.
@@ -597,7 +611,7 @@ fn usb(registers: u64) -> Bytes {
 
 fn dsdt(machine: &Machine) -> Vec<u8> {
     let mut devices: Vec<Bytes> = (0..machine.cores).map(processor).collect();
-    devices.extend([console(), random_number_generator(), sd_host(), ethernet(machine.ethernet)]);
+    devices.extend([console(), mailbox(), random_number_generator(), sd_host(), ethernet(machine.ethernet)]);
     if let Some(crb) = machine.tpm {
         devices.push(tpm(crb));
     }
